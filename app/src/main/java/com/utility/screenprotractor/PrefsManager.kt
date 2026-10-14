@@ -42,15 +42,21 @@ class PrefsManager(context: Context) {
             val right = prefs.getFloat(KEY_BOUND_RIGHT, screenWidth * (1f - DEFAULT_MARGIN_RATIO))
             val bottom = prefs.getFloat(KEY_BOUND_BOTTOM, screenHeight * (1f - DEFAULT_MARGIN_RATIO))
 
-            // Sanity check to avoid inverted or collapsed rectangles
-            if (right > left + 50f && bottom > top + 50f) {
-                return RectF(left, top, right, bottom)
+            // Sanity check to avoid inverted or collapsed rectangles and auto-clamp to screen
+            val minMargin = 30f
+            val clampedL = left.coerceIn(minMargin, screenWidth * 0.45f)
+            val clampedT = top.coerceIn(minMargin, screenHeight * 0.45f)
+            val clampedR = right.coerceIn(screenWidth * 0.55f, screenWidth - minMargin)
+            val clampedB = bottom.coerceIn(screenHeight * 0.55f, screenHeight - minMargin)
+
+            if (clampedR > clampedL + 50f && clampedB > clampedT + 50f) {
+                return RectF(clampedL, clampedT, clampedR, clampedB)
             }
         }
 
-        // Default bounds: 8% inset from screen margins
-        val insetX = (screenWidth * DEFAULT_MARGIN_RATIO).coerceAtLeast(40f)
-        val insetY = (screenHeight * DEFAULT_MARGIN_RATIO).coerceAtLeast(80f)
+        // Default bounds: proportional center (e.g. 18% insets)
+        val insetX = (screenWidth * 0.18f).coerceAtLeast(40f)
+        val insetY = (screenHeight * 0.18f).coerceAtLeast(40f)
         return RectF(insetX, insetY, screenWidth - insetX, screenHeight - insetY)
     }
 

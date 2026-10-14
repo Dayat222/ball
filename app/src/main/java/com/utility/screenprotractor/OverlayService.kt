@@ -61,9 +61,14 @@ class OverlayService : Service() {
     private lateinit var controlLayoutParams: WindowManager.LayoutParams
 
     private var fullToolbarContainer: View? = null
-    private var btnMinimizedBubble: TextView? = null
+    private var minimizedCapsule: View? = null
+    private var btnMiniDrag: TextView? = null
+    private var btnMiniToggleOnOff: TextView? = null
+    private var btnMiniExpand: TextView? = null
     private var btnGhost: TextView? = null
+    private var btnVisibility: TextView? = null
     private var btnCalibrate: TextView? = null
+    private var btnResetBound: TextView? = null
     private var btnSixLines: TextView? = null
     private var btnSettings: TextView? = null
     private var panelSettings: View? = null
@@ -228,6 +233,7 @@ class OverlayService : Service() {
             btnCalibrate?.text = getString(R.string.control_save_bound)
             btnCalibrate?.setBackgroundResource(R.drawable.bg_control_btn_active)
             btnCalibrate?.setTextColor(ContextCompat.getColor(this, R.color.green_status))
+            btnResetBound?.visibility = View.VISIBLE
         } else {
             canvas.setCalibrating(false)
 
@@ -247,6 +253,7 @@ class OverlayService : Service() {
             btnCalibrate?.text = getString(R.string.control_calibrate)
             btnCalibrate?.setBackgroundResource(R.drawable.bg_control_btn)
             btnCalibrate?.setTextColor(Color.WHITE)
+            btnResetBound?.visibility = View.GONE
 
             Toast.makeText(this, R.string.toast_calib_saved, Toast.LENGTH_SHORT).show()
         }
@@ -401,13 +408,17 @@ class OverlayService : Service() {
 
         // References to UI components
         fullToolbarContainer = controlView.findViewById(R.id.fullToolbarContainer)
-        btnMinimizedBubble = controlView.findViewById(R.id.btnMinimizedBubble)
+        minimizedCapsule = controlView.findViewById(R.id.minimizedCapsule)
+        btnMiniDrag = controlView.findViewById(R.id.btnMiniDrag)
+        btnMiniToggleOnOff = controlView.findViewById(R.id.btnMiniToggleOnOff)
+        btnMiniExpand = controlView.findViewById(R.id.btnMiniExpand)
 
         val btnDrag = controlView.findViewById<TextView>(R.id.btnDragHandle)
         btnGhost = controlView.findViewById(R.id.btnQuickGhost)
-        val btnVisibility = controlView.findViewById<TextView>(R.id.btnToggleVisibility)
+        btnVisibility = controlView.findViewById(R.id.btnToggleVisibility)
         val btnMode = controlView.findViewById<TextView>(R.id.btnCycleMode)
         btnCalibrate = controlView.findViewById(R.id.btnToggleCalibrate)
+        btnResetBound = controlView.findViewById(R.id.btnResetBound)
         btnSixLines = controlView.findViewById(R.id.btnToggleSixLines)
         btnSettings = controlView.findViewById(R.id.btnToggleSettings)
         val btnMinimize = controlView.findViewById<TextView>(R.id.btnMinimize)
@@ -422,6 +433,18 @@ class OverlayService : Service() {
         // 1. Dragging toolbar
         setupDraggableBar(btnDrag, controlView)
 
+        // Mini capsule dragging and controls
+        btnMiniDrag?.let { setupDraggableBar(it, controlView) }
+        btnMiniToggleOnOff?.setOnClickListener {
+            if (isGhostActive) {
+                restoreFromGhost()
+            }
+            toggleCanvasVisibility()
+        }
+        btnMiniExpand?.setOnClickListener {
+            expandToolbar()
+        }
+
         // 2. Quick-Ghost (Auto-Hide 4s)
         btnGhost?.setOnClickListener {
             if (isCalibrationActive) {
@@ -431,32 +454,14 @@ class OverlayService : Service() {
         }
 
         // 3. Hide / Show canvas overlay and handles manually
-        btnVisibility.setOnClickListener {
+        btnVisibility?.setOnClickListener {
             if (isCalibrationActive) {
                 setCalibrationMode(false)
             }
             if (isGhostActive) {
                 restoreFromGhost()
             }
-
-            isCanvasHidden = !isCanvasHidden
-            if (isCanvasHidden) {
-                canvasOverlayView?.visibility = View.GONE
-                handleViewA?.visibility = View.GONE
-                handleViewB?.visibility = View.GONE
-                handleViewC?.visibility = View.GONE
-
-                btnVisibility.text = getString(R.string.control_show)
-                btnVisibility.setBackgroundResource(R.drawable.bg_control_btn_active)
-            } else {
-                canvasOverlayView?.visibility = View.VISIBLE
-                handleViewA?.visibility = View.VISIBLE
-                handleViewB?.visibility = View.VISIBLE
-                syncHandleCVisibility()
-
-                btnVisibility.text = getString(R.string.control_hide)
-                btnVisibility.setBackgroundResource(R.drawable.bg_control_btn)
-            }
+            toggleCanvasVisibility()
         }
 
         // 4. Cycle Mode
@@ -475,15 +480,20 @@ class OverlayService : Service() {
             }
         }
 
-        // 5. Calibration Mode Toggle
+        // 5. Calibration Mode Toggle & Boundary Reset
         btnCalibrate?.setOnClickListener {
             if (isGhostActive) {
                 restoreFromGhost()
             }
             if (isCanvasHidden) {
-                btnVisibility.performClick()
+                toggleCanvasVisibility()
             }
             setCalibrationMode(!isCalibrationActive)
+        }
+
+        btnResetBound?.setOnClickListener {
+            canvasOverlayView?.resetToProportionalCenter()
+            Toast.makeText(this, R.string.toast_calib_reset, Toast.LENGTH_SHORT).show()
         }
 
         // 6. Feature 1: Toggle 6-Pocket Radial Lines on Target Ball
@@ -553,12 +563,10 @@ class OverlayService : Service() {
             }
         })
 
-        // 8. Feature 3: Collapsible Floating Control (Minimize Toolbar)
+        // 8. Collapsible Floating Control (Minimize Toolbar)
         btnMinimize.setOnClickListener {
             minimizeToolbar()
         }
-
-        setupMinimizedBubble(controlView)
 
         // 9. Close Overlay
         btnClose.setOnClickListener {
@@ -584,11 +592,15 @@ class OverlayService : Service() {
     }
 
     /**
-     * Feature 3: Minimize full toolbar into a 36dp x 36dp compact bubble.
+     * Requirement 3: Minimize full toolbar into a draggable mini capsule with ON/OFF switch.
      */
     private fun minimizeToolbar() {
+        if (isCalibrationActive) {
+            setCalibrationMode(false)
+        }
         fullToolbarContainer?.visibility = View.GONE
-        btnMinimizedBubble?.visibility = View.VISIBLE
+        minimizedCapsule?.visibility = View.VISIBLE
+        updateMiniOnOffButtonUI()
         floatingControlView?.let {
             try {
                 windowManager.updateViewLayout(it, controlLayoutParams)
@@ -599,8 +611,9 @@ class OverlayService : Service() {
     }
 
     private fun expandToolbar() {
-        btnMinimizedBubble?.visibility = View.GONE
+        minimizedCapsule?.visibility = View.GONE
         fullToolbarContainer?.visibility = View.VISIBLE
+        updateVisibilityButtonUI()
         floatingControlView?.let {
             try {
                 windowManager.updateViewLayout(it, controlLayoutParams)
@@ -610,47 +623,44 @@ class OverlayService : Service() {
         }
     }
 
-    @SuppressLint("ClickableViewAccessibility")
-    private fun setupMinimizedBubble(entireView: View) {
-        val bubble = btnMinimizedBubble ?: return
-        var initialX = 0
-        var initialY = 0
-        var initialTouchX = 0f
-        var initialTouchY = 0f
-        val touchSlop = 10f * resources.displayMetrics.density
+    /**
+     * Toggles overlay canvas and handles visibility.
+     * Synchronizes state between full toolbar and mini capsule.
+     */
+    private fun toggleCanvasVisibility() {
+        isCanvasHidden = !isCanvasHidden
+        if (isCanvasHidden) {
+            canvasOverlayView?.visibility = View.GONE
+            handleViewA?.visibility = View.GONE
+            handleViewB?.visibility = View.GONE
+            handleViewC?.visibility = View.GONE
+        } else {
+            canvasOverlayView?.visibility = View.VISIBLE
+            handleViewA?.visibility = View.VISIBLE
+            handleViewB?.visibility = View.VISIBLE
+            syncHandleCVisibility()
+        }
+        updateVisibilityButtonUI()
+        updateMiniOnOffButtonUI()
+    }
 
-        bubble.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    initialX = controlLayoutParams.x
-                    initialY = controlLayoutParams.y
-                    initialTouchX = event.rawX
-                    initialTouchY = event.rawY
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - initialTouchX).toInt()
-                    val dy = (event.rawY - initialTouchY).toInt()
-                    controlLayoutParams.x = initialX + dx
-                    controlLayoutParams.y = initialY + dy
-                    try {
-                        windowManager.updateViewLayout(entireView, controlLayoutParams)
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    val deltaX = abs(event.rawX - initialTouchX)
-                    val deltaY = abs(event.rawY - initialTouchY)
-                    if (deltaX < touchSlop && deltaY < touchSlop) {
-                        // Click detected -> Expand toolbar
-                        expandToolbar()
-                    }
-                    true
-                }
-                else -> false
-            }
+    private fun updateVisibilityButtonUI() {
+        if (isCanvasHidden) {
+            btnVisibility?.text = getString(R.string.control_show)
+            btnVisibility?.setBackgroundResource(R.drawable.bg_control_btn_active)
+        } else {
+            btnVisibility?.text = getString(R.string.control_hide)
+            btnVisibility?.setBackgroundResource(R.drawable.bg_control_btn)
+        }
+    }
+
+    private fun updateMiniOnOffButtonUI() {
+        if (isCanvasHidden) {
+            btnMiniToggleOnOff?.text = getString(R.string.control_off)
+            btnMiniToggleOnOff?.setBackgroundResource(R.drawable.bg_btn_off)
+        } else {
+            btnMiniToggleOnOff?.text = getString(R.string.control_on)
+            btnMiniToggleOnOff?.setBackgroundResource(R.drawable.bg_btn_on)
         }
     }
 
@@ -688,6 +698,8 @@ class OverlayService : Service() {
                 syncHandleCVisibility()
             }
         }
+        updateVisibilityButtonUI()
+        updateMiniOnOffButtonUI()
     }
 
     private fun syncHandleCVisibility() {

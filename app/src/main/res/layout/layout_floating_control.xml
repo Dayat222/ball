@@ -94,6 +94,22 @@
                 android:textSize="12sp"
                 android:textStyle="bold" />
 
+            <!-- Reset Calibration Boundary to Center (Landscape & Portrait safe) -->
+            <TextView
+                android:id="@+id/btnResetBound"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/bg_control_btn"
+                android:gravity="center"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:text="@string/control_reset_bound"
+                android:textColor="@color/yellow_accent"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
             <!-- 6-Pocket Radial Lines Toggle Button -->
             <TextView
                 android:id="@+id/btnToggleSixLines"
@@ -211,17 +227,60 @@
 
     </LinearLayout>
 
-    <!-- 2. Minimized Floating Bubble Button (36dp x 36dp) -->
-    <TextView
-        android:id="@+id/btnMinimizedBubble"
-        android:layout_width="36dp"
-        android:layout_height="36dp"
-        android:background="@drawable/bg_minimized_bubble"
-        android:gravity="center"
-        android:text="@string/control_maximize"
-        android:textColor="@color/cyan_accent"
-        android:textSize="18sp"
-        android:textStyle="bold"
-        android:visibility="gone" />
+    <!-- 2. Minimized Floating Capsule Bar (Draggable Mini Bar with Quick ON/OFF Switch & Expand Button) -->
+    <LinearLayout
+        android:id="@+id/minimizedCapsule"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_control_bar"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="6dp"
+        android:paddingTop="3dp"
+        android:paddingEnd="6dp"
+        android:paddingBottom="3dp"
+        android:visibility="gone">
+
+        <!-- Mini Drag Grip Handle -->
+        <TextView
+            android:id="@+id/btnMiniDrag"
+            android:layout_width="22dp"
+            android:layout_height="32dp"
+            android:gravity="center"
+            android:text="@string/control_drag_handle"
+            android:textColor="@color/cyan_accent"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <!-- Mini Quick ON / OFF Switch -->
+        <TextView
+            android:id="@+id/btnMiniToggleOnOff"
+            android:layout_width="wrap_content"
+            android:layout_height="30dp"
+            android:layout_marginStart="3dp"
+            android:background="@drawable/bg_btn_on"
+            android:gravity="center"
+            android:minWidth="44dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:text="@string/control_on"
+            android:textColor="@android:color/white"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <!-- Mini Expand Button [+] -->
+        <TextView
+            android:id="@+id/btnMiniExpand"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/bg_control_btn"
+            android:gravity="center"
+            android:text="@string/control_maximize"
+            android:textColor="@color/cyan_accent"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+    </LinearLayout>
 
 </FrameLayout>

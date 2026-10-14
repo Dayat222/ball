@@ -31,6 +31,7 @@
     <string name="control_show">Show</string>
     <string name="control_calibrate">Calib</string>
     <string name="control_save_bound">Save Bound</string>
+    <string name="control_reset_bound">Reset Bound</string>
     <string name="control_six_lines">6-Line</string>
     <string name="control_settings">⚙</string>
     <string name="control_mode_auto">Auto-Reflect</string>
@@ -38,6 +39,8 @@
     <string name="control_mode_edge">Edge-Marker</string>
     <string name="control_minimize">−</string>
     <string name="control_maximize">+</string>
+    <string name="control_on">ON</string>
+    <string name="control_off">OFF</string>
     <string name="control_close">✕</string>
 
     <!-- Settings Panel -->
@@ -47,5 +50,6 @@
     <!-- Calibration Info -->
     <string name="calib_instructions">Drag corner handles to align boundary box with target area.</string>
     <string name="toast_calib_saved">Boundary box calibration saved.</string>
+    <string name="toast_calib_reset">Boundary box reset to center.</string>
     <string name="toast_permission_needed">Please grant Overlay Permission to start the ruler.</string>
 </resources>

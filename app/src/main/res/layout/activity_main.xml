@@ -198,14 +198,14 @@
                     android:textSize="16sp"
                     android:textStyle="bold" />
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:lineSpacingExtra="3dp"
-                    android:text="• [::] Drag Handle: Hold and move the floating toolbar anywhere.\n• [Ghost 4s]: Auto-hide overlay for 4 seconds for instant unobstructed execution.\n• [Handles A/B/C]: Offset finger grip pads preventing finger obstruction with tether lines.\n• [6-Line]: Toggle 6-pocket radial guide lines from the target ball.\n• [Calib / Save Bound]: Interactive corner-drag table calibration.\n• [⚙]: Open thickness and opacity sliders sub-panel.\n• [− / +]: Minimize toolbar into a compact draggable bubble.\n• [✕]: Dismiss the overlay service completely."
-                    android:textColor="@color/text_secondary"
-                    android:textSize="13sp" />
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:lineSpacingExtra="3dp"
+                        android:text="• [::] Drag Handle: Hold and move the floating toolbar anywhere.\n• [Ghost 4s]: Auto-hide overlay for 4 seconds for instant unobstructed execution.\n• [Handles A/B/C]: Offset finger grip pads preventing finger obstruction with tether lines.\n• [6-Line]: Toggle 6-pocket radial guide lines from the target ball.\n• [Calib / Save Bound]: 8-handle calibration (auto-clamped in Landscape) & [Reset Bound]. Border is clean-hidden when saved.\n• [⚙]: Open thickness and opacity sliders sub-panel.\n• [− / +]: Minimize toolbar into a mini capsule with instant [ON] / [OFF] toggle.\n• [✕]: Dismiss the overlay service completely."
+                        android:textColor="@color/text_secondary"
+                        android:textSize="13sp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

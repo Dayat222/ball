@@ -21,7 +21,8 @@ import kotlin.math.sqrt
  * 1. Primary & Reflected geometry lines.
  * 2. 6-Pocket Radial Short Lines from target ball (Point B).
  * 3. Connecting stem/tether lines from offset finger grips to actual aim coordinates.
- * 4. Interactive boundary box calibration.
+ * 4. Interactive 8-handle boundary box calibration (auto-clamped for Landscape & Portrait,
+ *    and completely hidden when not calibrating for clean view).
  */
 class CanvasOverlayView @JvmOverloads constructor(
     context: Context,
@@ -38,7 +39,7 @@ class CanvasOverlayView @JvmOverloads constructor(
     private enum class DragTarget {
         NONE,
         CORNER_TOP_LEFT, CORNER_TOP_RIGHT, CORNER_BOTTOM_LEFT, CORNER_BOTTOM_RIGHT,
-        EDGE_LEFT, EDGE_TOP, EDGE_RIGHT, EDGE_BOTTOM
+        HANDLE_TOP_CENTER, HANDLE_BOTTOM_CENTER, HANDLE_LEFT_CENTER, HANDLE_RIGHT_CENTER
     }
 
     private val prefsManager = PrefsManager(context)
@@ -81,7 +82,8 @@ class CanvasOverlayView @JvmOverloads constructor(
     // Density scaled dimensions
     private val density = resources.displayMetrics.density
     private val edgeMarkerRadius = 8f * density
-    private val cornerHandleRadius = 18f * density
+    private val cornerHandleRadius = 16f * density
+    private val edgeHandleRadius = 14f * density
 
     // Paint: Primary Line (Point A -> Point B / Hit Point)
     private val primaryLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -132,13 +134,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
 
-    // Paint: Boundary Box
-    private val boundaryBoxPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#80FFFFFF")
-        style = Paint.Style.STROKE
-        strokeWidth = 2f * density
-    }
-
     // Paint: Boundary Box Active Calibration Highlight
     private val boundaryCalibPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#FFE082")
@@ -146,19 +141,19 @@ class CanvasOverlayView @JvmOverloads constructor(
         strokeWidth = 3f * density
     }
 
-    // Paint: Corner Handles in Calibration Mode
-    private val cornerOuterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    // Paint: 8 Handles in Calibration Mode
+    private val handleOuterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#E6FFE082")
         style = Paint.Style.FILL
     }
 
-    private val cornerStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val handleStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#FFB300")
         style = Paint.Style.STROKE
         strokeWidth = 2f * density
     }
 
-    private val cornerCenterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val handleCenterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         style = Paint.Style.FILL
     }
@@ -197,10 +192,11 @@ class CanvasOverlayView @JvmOverloads constructor(
         val screenW = w.toFloat()
         val screenH = h.toFloat()
 
-        // Load saved boundary box or compute defaults
+        // Load saved boundary box and auto-clamp to active screen size (Landscape/Portrait safe)
         boundaryBox = prefsManager.getBoundaryBox(screenW, screenH)
+        clampBoundaryBox(screenW, screenH)
 
-        // Load saved points or compute defaults
+        // Load saved points
         val (savedA, savedB, savedC) = prefsManager.getPoints(screenW, screenH)
         pointA = savedA
         pointB = savedB
@@ -220,6 +216,46 @@ class CanvasOverlayView @JvmOverloads constructor(
         // Load 6-pocket line preference and ball radius
         showSixPocketLines = prefsManager.getShowSixLines()
         ballRadius = prefsManager.getBallRadius()
+    }
+
+    /**
+     * Requirement 2: Auto-clamp boundaryBox to prevent overflowing screen edges in Landscape mode.
+     */
+    fun clampBoundaryBox(w: Float, h: Float) {
+        if (w <= 0 || h <= 0) return
+        val minMargin = 30f * density
+        val minWidth = 80f * density
+        val minHeight = 80f * density
+
+        var l = boundaryBox.left.coerceIn(minMargin, (w * 0.45f).coerceAtLeast(minMargin))
+        var t = boundaryBox.top.coerceIn(minMargin, (h * 0.45f).coerceAtLeast(minMargin))
+        var r = boundaryBox.right.coerceIn((w * 0.55f).coerceAtMost(w - minMargin), w - minMargin)
+        var b = boundaryBox.bottom.coerceIn((h * 0.55f).coerceAtMost(h - minMargin), h - minMargin)
+
+        if (r <= l + minWidth) {
+            l = minMargin
+            r = w - minMargin
+        }
+        if (b <= t + minHeight) {
+            t = minMargin
+            b = h - minMargin
+        }
+        boundaryBox.set(l, t, r, b)
+    }
+
+    /**
+     * Requirement 2: Reset boundary box to proportional center rectangle.
+     */
+    fun resetToProportionalCenter() {
+        val w = width.toFloat().coerceAtLeast(200f)
+        val h = height.toFloat().coerceAtLeast(200f)
+        val l = w * 0.18f
+        val t = h * 0.18f
+        val r = w * 0.82f
+        val b = h * 0.85f
+        boundaryBox.set(l, t, r, b)
+        prefsManager.saveBoundaryBox(l, t, r, b)
+        invalidate()
     }
 
     /**
@@ -308,40 +344,39 @@ class CanvasOverlayView @JvmOverloads constructor(
         val screenH = height.toFloat().coerceAtLeast(100f)
         prefsManager.resetBoundaryBox()
         boundaryBox = prefsManager.getBoundaryBox(screenW, screenH)
+        clampBoundaryBox(screenW, screenH)
         invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
-        // 1. Draw Boundary Box
-        drawBoundaryBox(canvas)
+        // Requirement 1: Clean View. ONLY draw boundary box and handles when isCalibrating == true
+        if (isCalibrating) {
+            drawBoundaryBox(canvas)
+            drawEightCalibrationHandles(canvas)
+        }
 
-        // 2. Draw stem/tether connecting lines from Grip Pads to Aim Points
+        // Draw stem/tether connecting lines from Grip Pads to Aim Points
         if (!isCalibrating) {
             drawStemTethers(canvas)
         }
 
-        // 3. Render geometry lines and markers according to mode
+        // Render geometry lines and markers according to mode
         when (currentMode) {
             RulerMode.AUTO_REFLECT -> drawAutoReflection(canvas)
             RulerMode.MANUAL_3_POINT -> drawManualThreePoint(canvas)
             RulerMode.EDGE_MARKER_ONLY -> drawEdgeMarkerOnly(canvas)
         }
 
-        // 4. Feature 1: Draw Target Ball circle and 6-Pocket Radial Lines on Point B
+        // Feature 1: Draw Target Ball circle and 6-Pocket Radial Lines on Point B
         if (!isCalibrating) {
             drawTargetBallAndRadialLines(canvas)
-        }
-
-        // 5. Render 4 draggable Corner Handles in calibration mode
-        if (isCalibrating) {
-            drawCornerHandles(canvas)
         }
     }
 
     /**
-     * Feature 2: Visual connection between finger Grip Pad and the actual Aim Point.
+     * Visual connection between finger Grip Pad and the actual Aim Point.
      */
     private fun drawStemTethers(canvas: Canvas) {
         if (hasGripA) {
@@ -371,7 +406,7 @@ class CanvasOverlayView @JvmOverloads constructor(
         canvas.drawCircle(bx, by, ballR, targetBallStrokePaint)
         canvas.drawCircle(bx, by, 3f * density, aimDotPaint)
 
-        // If 6-Line feature is active, draw the 6 pocket radial guide lines
+        // Draw the 6 pocket radial guide lines if enabled
         if (showSixPocketLines) {
             val pockets = arrayOf(
                 PointF(boundaryBox.left, boundaryBox.top),                     // Top-Left
@@ -399,7 +434,6 @@ class CanvasOverlayView @JvmOverloads constructor(
                     val endY = by + uy * endDist
 
                     canvas.drawLine(startX, startY, endX, endY, pocketLinePaint)
-                    // Small notch at line tip
                     canvas.drawCircle(endX, endY, 2.5f * density, aimDotPaint)
                 }
             }
@@ -407,46 +441,47 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     private fun drawBoundaryBox(canvas: Canvas) {
-        val paint = if (isCalibrating) boundaryCalibPaint else boundaryBoxPaint
-        canvas.drawRect(boundaryBox, paint)
+        canvas.drawRect(boundaryBox, boundaryCalibPaint)
 
-        // Draw Pocket corner / side pocket indicators on boundary box
-        val pocketMarkerRadius = 5f * density
-        canvas.drawCircle(boundaryBox.left, boundaryBox.top, pocketMarkerRadius, paint)
-        canvas.drawCircle(boundaryBox.centerX(), boundaryBox.top, pocketMarkerRadius, paint)
-        canvas.drawCircle(boundaryBox.right, boundaryBox.top, pocketMarkerRadius, paint)
-        canvas.drawCircle(boundaryBox.left, boundaryBox.bottom, pocketMarkerRadius, paint)
-        canvas.drawCircle(boundaryBox.centerX(), boundaryBox.bottom, pocketMarkerRadius, paint)
-        canvas.drawCircle(boundaryBox.right, boundaryBox.bottom, pocketMarkerRadius, paint)
-
-        if (isCalibrating) {
-            val label = "Calibration Mode: Drag corners or edges to align with game border"
-            textPaint.getTextBounds(label, 0, label.length, textBounds)
-            val textX = boundaryBox.left + 16f * density
-            val textY = (boundaryBox.top - 12f * density).coerceAtLeast(36f * density)
-            val padding = 6f * density
-            canvas.drawRect(
-                textX - padding,
-                textY - textBounds.height() - padding,
-                textX + textBounds.width() + padding,
-                textY + padding,
-                textBgPaint
-            )
-            canvas.drawText(label, textX, textY, textPaint)
-        }
+        val label = "Calibration Mode: Drag 8 handles to align table border"
+        textPaint.getTextBounds(label, 0, label.length, textBounds)
+        val textX = boundaryBox.left + 16f * density
+        val textY = (boundaryBox.top - 12f * density).coerceAtLeast(36f * density)
+        val padding = 6f * density
+        canvas.drawRect(
+            textX - padding,
+            textY - textBounds.height() - padding,
+            textX + textBounds.width() + padding,
+            textY + padding,
+            textBgPaint
+        )
+        canvas.drawText(label, textX, textY, textPaint)
     }
 
-    private fun drawCornerHandles(canvas: Canvas) {
-        drawCornerPin(canvas, boundaryBox.left, boundaryBox.top)
-        drawCornerPin(canvas, boundaryBox.right, boundaryBox.top)
-        drawCornerPin(canvas, boundaryBox.left, boundaryBox.bottom)
-        drawCornerPin(canvas, boundaryBox.right, boundaryBox.bottom)
+    /**
+     * Requirement 2: Render 8 draggable calibration handles (4 corners + 4 edge centers).
+     */
+    private fun drawEightCalibrationHandles(canvas: Canvas) {
+        val cx = boundaryBox.centerX()
+        val cy = boundaryBox.centerY()
+
+        // 4 Corners
+        drawHandlePin(canvas, boundaryBox.left, boundaryBox.top, cornerHandleRadius)
+        drawHandlePin(canvas, boundaryBox.right, boundaryBox.top, cornerHandleRadius)
+        drawHandlePin(canvas, boundaryBox.left, boundaryBox.bottom, cornerHandleRadius)
+        drawHandlePin(canvas, boundaryBox.right, boundaryBox.bottom, cornerHandleRadius)
+
+        // 4 Edge Centers
+        drawHandlePin(canvas, cx, boundaryBox.top, edgeHandleRadius)
+        drawHandlePin(canvas, cx, boundaryBox.bottom, edgeHandleRadius)
+        drawHandlePin(canvas, boundaryBox.left, cy, edgeHandleRadius)
+        drawHandlePin(canvas, boundaryBox.right, cy, edgeHandleRadius)
     }
 
-    private fun drawCornerPin(canvas: Canvas, cx: Float, cy: Float) {
-        canvas.drawCircle(cx, cy, cornerHandleRadius, cornerOuterPaint)
-        canvas.drawCircle(cx, cy, cornerHandleRadius, cornerStrokePaint)
-        canvas.drawCircle(cx, cy, 5f * density, cornerCenterPaint)
+    private fun drawHandlePin(canvas: Canvas, cx: Float, cy: Float, radius: Float) {
+        canvas.drawCircle(cx, cy, radius, handleOuterPaint)
+        canvas.drawCircle(cx, cy, radius, handleStrokePaint)
+        canvas.drawCircle(cx, cy, 4f * density, handleCenterPaint)
     }
 
     private fun drawAutoReflection(canvas: Canvas) {
@@ -549,6 +584,9 @@ class CanvasOverlayView @JvmOverloads constructor(
         canvas.drawText(text, x, y, textPaint)
     }
 
+    /**
+     * Requirement 2: 8-Handle touch dragging in calibration mode.
+     */
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!isCalibrating) {
@@ -595,17 +633,17 @@ class CanvasOverlayView @JvmOverloads constructor(
                             boundaryBox.right = curX.coerceAtLeast(boundaryBox.left + minSize)
                             boundaryBox.bottom = curY.coerceAtLeast(boundaryBox.top + minSize)
                         }
-                        DragTarget.EDGE_LEFT -> {
-                            boundaryBox.left = curX.coerceAtMost(boundaryBox.right - minSize)
-                        }
-                        DragTarget.EDGE_RIGHT -> {
-                            boundaryBox.right = curX.coerceAtLeast(boundaryBox.left + minSize)
-                        }
-                        DragTarget.EDGE_TOP -> {
+                        DragTarget.HANDLE_TOP_CENTER -> {
                             boundaryBox.top = curY.coerceAtMost(boundaryBox.bottom - minSize)
                         }
-                        DragTarget.EDGE_BOTTOM -> {
+                        DragTarget.HANDLE_BOTTOM_CENTER -> {
                             boundaryBox.bottom = curY.coerceAtLeast(boundaryBox.top + minSize)
+                        }
+                        DragTarget.HANDLE_LEFT_CENTER -> {
+                            boundaryBox.left = curX.coerceAtMost(boundaryBox.right - minSize)
+                        }
+                        DragTarget.HANDLE_RIGHT_CENTER -> {
+                            boundaryBox.right = curX.coerceAtLeast(boundaryBox.left + minSize)
                         }
                         DragTarget.NONE -> Unit
                     }
@@ -629,8 +667,12 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     private fun findTouchedCalibrationTarget(x: Float, y: Float): DragTarget {
         val cornerThreshold = 40f * density
-        val edgeThreshold = 24f * density
+        val edgeThreshold = 36f * density
 
+        val cx = boundaryBox.centerX()
+        val cy = boundaryBox.centerY()
+
+        // 1. Check 4 Corners
         if (GeometryUtils.distance(x, y, boundaryBox.left, boundaryBox.top) <= cornerThreshold) {
             return DragTarget.CORNER_TOP_LEFT
         }
@@ -644,32 +686,35 @@ class CanvasOverlayView @JvmOverloads constructor(
             return DragTarget.CORNER_BOTTOM_RIGHT
         }
 
-        if (Math.abs(x - boundaryBox.left) <= edgeThreshold && y >= boundaryBox.top && y <= boundaryBox.bottom) {
-            return DragTarget.EDGE_LEFT
+        // 2. Check 4 Edge Centers
+        if (GeometryUtils.distance(x, y, cx, boundaryBox.top) <= edgeThreshold) {
+            return DragTarget.HANDLE_TOP_CENTER
         }
-        if (Math.abs(x - boundaryBox.right) <= edgeThreshold && y >= boundaryBox.top && y <= boundaryBox.bottom) {
-            return DragTarget.EDGE_RIGHT
+        if (GeometryUtils.distance(x, y, cx, boundaryBox.bottom) <= edgeThreshold) {
+            return DragTarget.HANDLE_BOTTOM_CENTER
         }
-        if (Math.abs(y - boundaryBox.top) <= edgeThreshold && x >= boundaryBox.left && x <= boundaryBox.right) {
-            return DragTarget.EDGE_TOP
+        if (GeometryUtils.distance(x, y, boundaryBox.left, cy) <= edgeThreshold) {
+            return DragTarget.HANDLE_LEFT_CENTER
         }
-        if (Math.abs(y - boundaryBox.bottom) <= edgeThreshold && x >= boundaryBox.left && x <= boundaryBox.right) {
-            return DragTarget.EDGE_BOTTOM
+        if (GeometryUtils.distance(x, y, boundaryBox.right, cy) <= edgeThreshold) {
+            return DragTarget.HANDLE_RIGHT_CENTER
         }
 
         return DragTarget.NONE
     }
 
     private fun getTargetPos(target: DragTarget): PointF {
+        val cx = boundaryBox.centerX()
+        val cy = boundaryBox.centerY()
         return when (target) {
             DragTarget.CORNER_TOP_LEFT -> PointF(boundaryBox.left, boundaryBox.top)
             DragTarget.CORNER_TOP_RIGHT -> PointF(boundaryBox.right, boundaryBox.top)
             DragTarget.CORNER_BOTTOM_LEFT -> PointF(boundaryBox.left, boundaryBox.bottom)
             DragTarget.CORNER_BOTTOM_RIGHT -> PointF(boundaryBox.right, boundaryBox.bottom)
-            DragTarget.EDGE_LEFT -> PointF(boundaryBox.left, (boundaryBox.top + boundaryBox.bottom) / 2f)
-            DragTarget.EDGE_RIGHT -> PointF(boundaryBox.right, (boundaryBox.top + boundaryBox.bottom) / 2f)
-            DragTarget.EDGE_TOP -> PointF((boundaryBox.left + boundaryBox.right) / 2f, boundaryBox.top)
-            DragTarget.EDGE_BOTTOM -> PointF((boundaryBox.left + boundaryBox.right) / 2f, boundaryBox.bottom)
+            DragTarget.HANDLE_TOP_CENTER -> PointF(cx, boundaryBox.top)
+            DragTarget.HANDLE_BOTTOM_CENTER -> PointF(cx, boundaryBox.bottom)
+            DragTarget.HANDLE_LEFT_CENTER -> PointF(boundaryBox.left, cy)
+            DragTarget.HANDLE_RIGHT_CENTER -> PointF(boundaryBox.right, cy)
             DragTarget.NONE -> PointF(0f, 0f)
         }
     }

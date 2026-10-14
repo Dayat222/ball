@@ -8,16 +8,17 @@ A precision geometric screen overlay ruler and vector 2D reflection visualizer (
 
 - **Multi-Window Overlay Service:**
   - **Always Pass-Through Canvas Overlay (`MATCH_PARENT` x `MATCH_PARENT`):** Full-screen transparent canvas permanently set with `FLAG_NOT_TOUCHABLE` and `FLAG_NOT_FOCUSABLE`. All touches on screen pass directly through to underlying apps.
+  - **Clean View:** Boundary box and calibration pins are strictly visible only during calibration mode. Once saved, the border is completely hidden from view while retaining active reflection calculations.
   - **Offset Finger Grip Handles (Anti-Finger Obstruction):** Independent `HandleView` grip pads positioned below actual aim points with visual tether lines, preventing fingers from covering the target ball.
   - **6-Pocket Radial Short Lines:** Automatically calculates vectors from the target ball (Point B) towards the 6 table pockets and draws directional guide lines.
-  - **Collapsible Floating Toolbar:** Tap `[−]` to collapse toolbar into a tiny 36dp draggable `[+]` bubble, and tap `[+]` to restore.
-  - **Draggable Floating Control Bar (`WRAP_CONTENT` x `WRAP_CONTENT`):** Compact dark UI (`#CC1E1E1E`, 12dp rounded corners) with Quick-Ghost, 6-Line toggle, visibility toggles, and mode switches.
+  - **Collapsible Mini Capsule Bar:** Tap `[−]` to collapse toolbar into a draggable mini capsule containing quick `[ON]` / `[OFF]` switch and `[+]` expand button.
+  - **Draggable Floating Control Bar (`WRAP_CONTENT` x `WRAP_CONTENT`):** Compact dark UI (`#CC1E1E1E`, 12dp rounded corners) with Quick-Ghost, 6-Line toggle, calibration controls, and line sliders.
 - **Instant Controls & Quick-Ghost:**
-  - **Interactive Boundary Calibration:** Tap `[Calib]` to unlock boundary dragging with 4 corner pins. Tap `[Save Bound]` to lock the canvas back to pass-through mode and persist coordinates.
+  - **Landscape & Portrait 8-Handle Calibration:** 8 draggable handles (4 corners + 4 edge centers) with auto-clamping preventing borders from overflowing screen bounds, plus a `[Reset Bound]` button.
   - **Real-Time Line Customization (`[⚙]`):** Sub-panel with sliders for line thickness (`0.5dp` – `15dp`) and line opacity (`10%` – `100%`), saved automatically.
   - **Quick-Ghost (Auto-Hide 4s):** Temporarily hides all overlay graphics and handles for 4 seconds for unobstructed execution, auto-restoring automatically.
   - **Direct-Touch Interaction:** Move handles A, B, C freely at any time without having to toggle an Edit/Lock mode.
-  - **Hidden Mode:** Toggle overlay visibility on and off instantly.
+  - **Quick ON/OFF Switch:** Instant one-tap toggle on minimized bar (`[ON]` / `[OFF]`) for 100% clean screen during shots.
 - **3 Measurement & Reflection Modes:**
   - **Auto-Reflection ($\theta_i = \theta_r$):** Ray-box intersection from Point A through Point B hitting calibrated boundary walls, reflecting automatically with angle computation.
   - **Manual 3-Point:** Freely reposition Start (A), Pivot (B), and End (C) to measure angles ($\angle ABC$).

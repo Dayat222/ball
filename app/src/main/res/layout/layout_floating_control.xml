@@ -3,96 +3,176 @@
     android:id="@+id/controlBarRoot"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:background="@drawable/bg_control_bar"
-    android:gravity="center_vertical"
-    android:orientation="horizontal"
-    android:paddingStart="8dp"
-    android:paddingTop="4dp"
-    android:paddingEnd="8dp"
-    android:paddingBottom="4dp">
+    android:orientation="vertical">
 
-    <!-- Drag Handle Area -->
-    <TextView
-        android:id="@+id/btnDragHandle"
-        android:layout_width="32dp"
-        android:layout_height="36dp"
-        android:gravity="center"
-        android:text="@string/control_drag_handle"
-        android:textColor="@color/cyan_accent"
-        android:textSize="16sp"
-        android:textStyle="bold" />
-
-    <!-- Quick-Ghost (4s Auto-Hide) Button -->
-    <TextView
-        android:id="@+id/btnQuickGhost"
+    <!-- Top Toolbar Pill -->
+    <LinearLayout
         android:layout_width="wrap_content"
-        android:layout_height="32dp"
-        android:layout_marginStart="4dp"
-        android:background="@drawable/bg_control_btn"
-        android:gravity="center"
-        android:paddingStart="10dp"
-        android:paddingEnd="10dp"
-        android:text="@string/control_ghost"
-        android:textColor="@color/yellow_accent"
-        android:textSize="12sp"
-        android:textStyle="bold" />
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_control_bar"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="8dp"
+        android:paddingTop="4dp"
+        android:paddingEnd="8dp"
+        android:paddingBottom="4dp">
 
-    <!-- Hide / Show Canvas Toggle Button -->
-    <TextView
-        android:id="@+id/btnToggleVisibility"
-        android:layout_width="wrap_content"
-        android:layout_height="32dp"
-        android:layout_marginStart="4dp"
-        android:background="@drawable/bg_control_btn"
-        android:gravity="center"
-        android:paddingStart="10dp"
-        android:paddingEnd="10dp"
-        android:text="@string/control_hide"
-        android:textColor="@color/text_primary"
-        android:textSize="12sp"
-        android:textStyle="bold" />
+        <!-- Drag Handle Area -->
+        <TextView
+            android:id="@+id/btnDragHandle"
+            android:layout_width="30dp"
+            android:layout_height="36dp"
+            android:gravity="center"
+            android:text="@string/control_drag_handle"
+            android:textColor="@color/cyan_accent"
+            android:textSize="16sp"
+            android:textStyle="bold" />
 
-    <!-- Mode Cycle Button -->
-    <TextView
-        android:id="@+id/btnCycleMode"
-        android:layout_width="wrap_content"
-        android:layout_height="32dp"
-        android:layout_marginStart="4dp"
-        android:background="@drawable/bg_control_btn"
-        android:gravity="center"
-        android:paddingStart="10dp"
-        android:paddingEnd="10dp"
-        android:text="@string/control_mode_auto"
-        android:textColor="@color/cyan_accent"
-        android:textSize="12sp"
-        android:textStyle="bold" />
+        <!-- Quick-Ghost (4s Auto-Hide) Button -->
+        <TextView
+            android:id="@+id/btnQuickGhost"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/bg_control_btn"
+            android:gravity="center"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:text="@string/control_ghost"
+            android:textColor="@color/yellow_accent"
+            android:textSize="12sp"
+            android:textStyle="bold" />
 
-    <!-- Calibration Mode Toggle Button -->
-    <TextView
-        android:id="@+id/btnToggleCalibrate"
-        android:layout_width="wrap_content"
-        android:layout_height="32dp"
-        android:layout_marginStart="4dp"
-        android:background="@drawable/bg_control_btn"
-        android:gravity="center"
-        android:paddingStart="10dp"
-        android:paddingEnd="10dp"
-        android:text="@string/control_calibrate"
-        android:textColor="@color/text_primary"
-        android:textSize="12sp"
-        android:textStyle="bold" />
+        <!-- Hide / Show Canvas Toggle Button -->
+        <TextView
+            android:id="@+id/btnToggleVisibility"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/bg_control_btn"
+            android:gravity="center"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:text="@string/control_hide"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp"
+            android:textStyle="bold" />
 
-    <!-- Close / Stop Button -->
-    <TextView
-        android:id="@+id/btnCloseOverlay"
-        android:layout_width="32dp"
-        android:layout_height="32dp"
-        android:layout_marginStart="6dp"
-        android:background="@drawable/bg_control_btn"
-        android:gravity="center"
-        android:text="@string/control_close"
-        android:textColor="@color/red_danger"
-        android:textSize="14sp"
-        android:textStyle="bold" />
+        <!-- Mode Cycle Button -->
+        <TextView
+            android:id="@+id/btnCycleMode"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/bg_control_btn"
+            android:gravity="center"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:text="@string/control_mode_auto"
+            android:textColor="@color/cyan_accent"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <!-- Calibration Mode Toggle Button -->
+        <TextView
+            android:id="@+id/btnToggleCalibrate"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/bg_control_btn"
+            android:gravity="center"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:text="@string/control_calibrate"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <!-- Line Settings (Thickness / Opacity) Toggle Button -->
+        <TextView
+            android:id="@+id/btnToggleSettings"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/bg_control_btn"
+            android:gravity="center"
+            android:text="@string/control_settings"
+            android:textColor="@color/cyan_accent"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <!-- Close / Stop Button -->
+        <TextView
+            android:id="@+id/btnCloseOverlay"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/bg_control_btn"
+            android:gravity="center"
+            android:text="@string/control_close"
+            android:textColor="@color/red_danger"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+    </LinearLayout>
+
+    <!-- Sub-Panel: Line Thickness & Opacity Sliders -->
+    <LinearLayout
+        android:id="@+id/panelSettings"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:background="@drawable/bg_control_bar"
+        android:orientation="vertical"
+        android:paddingStart="12dp"
+        android:paddingTop="10dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="10dp"
+        android:visibility="gone">
+
+        <!-- Line Thickness Slider -->
+        <TextView
+            android:id="@+id/tvThicknessValue"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Thickness: 3.5 dp"
+            android:textColor="@color/cyan_accent"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <SeekBar
+            android:id="@+id/seekThickness"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:max="30"
+            android:min="1"
+            android:progress="7"
+            android:progressTint="@color/cyan_accent"
+            android:thumbTint="@color/cyan_accent" />
+
+        <!-- Line Opacity Slider -->
+        <TextView
+            android:id="@+id/tvOpacityValue"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Opacity: 86%"
+            android:textColor="@color/yellow_accent"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <SeekBar
+            android:id="@+id/seekOpacity"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:max="255"
+            android:min="25"
+            android:progress="220"
+            android:progressTint="@color/yellow_accent"
+            android:thumbTint="@color/yellow_accent" />
+
+    </LinearLayout>
 
 </LinearLayout>

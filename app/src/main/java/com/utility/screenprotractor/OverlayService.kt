@@ -9,6 +9,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.PointF
 import android.os.Build
@@ -20,6 +21,7 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
@@ -28,16 +30,17 @@ import kotlin.math.roundToInt
 
 /**
  * Multi-window foreground service managing:
- * 1. Always pass-through canvas overlay (FLAG_NOT_TOUCHABLE).
+ * 1. Pass-through canvas overlay (FLAG_NOT_TOUCHABLE by default, touch enabled during calibration).
  * 2. Independent floating handle windows for points A, B, and C.
- * 3. Draggable compact floating control bar with Quick-Ghost (4s auto-hide).
+ * 3. Draggable compact floating control bar with Quick-Ghost (4s auto-hide), calibration toggle,
+ *    and real-time line thickness & opacity sliders.
  */
 class OverlayService : Service() {
 
     private lateinit var windowManager: WindowManager
     private lateinit var prefsManager: PrefsManager
 
-    // Canvas Overlay View (Always pass-through touch)
+    // Canvas Overlay View
     private var canvasOverlayView: CanvasOverlayView? = null
     private lateinit var canvasLayoutParams: WindowManager.LayoutParams
 
@@ -55,9 +58,13 @@ class OverlayService : Service() {
     private var floatingControlView: View? = null
     private lateinit var controlLayoutParams: WindowManager.LayoutParams
     private var btnGhost: TextView? = null
+    private var btnCalibrate: TextView? = null
+    private var btnSettings: TextView? = null
+    private var panelSettings: View? = null
 
     // State Tracking
     private var isCanvasHidden = false
+    private var isCalibrationActive = false
     private var isGhostActive = false
     private val ghostHandler = Handler(Looper.getMainLooper())
     private val ghostRestoreRunnable = Runnable { restoreFromGhost() }
@@ -77,7 +84,7 @@ class OverlayService : Service() {
         // 1. Promote to Foreground Service
         startForegroundServiceWithNotification()
 
-        // 2. Initialize and attach Always Pass-Through Canvas Overlay View
+        // 2. Initialize and attach Canvas Overlay View
         setupCanvasOverlay()
 
         // 3. Initialize and attach 3 Independent Floating Handles
@@ -168,7 +175,9 @@ class OverlayService : Service() {
     }
 
     /**
-     * Requirement 1: CanvasOverlayView is PERMANENTLY pass-through (FLAG_NOT_TOUCHABLE).
+     * Requirement: CanvasOverlayView is pass-through (FLAG_NOT_TOUCHABLE) by default.
+     * When calibration mode is turned ON, FLAG_NOT_TOUCHABLE is removed so the user
+     * can touch and drag the 4 corner handles and edges of the boundary box.
      */
     private fun setupCanvasOverlay() {
         canvasOverlayView = CanvasOverlayView(this)
@@ -190,6 +199,63 @@ class OverlayService : Service() {
             windowManager.addView(canvasOverlayView, canvasLayoutParams)
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+    }
+
+    /**
+     * Requirement 1: Perbaikan Mode Kalibrasi (Boundary Box).
+     * Toggle touch on CanvasOverlayView and handle visibility.
+     */
+    private fun setCalibrationMode(enabled: Boolean) {
+        val canvas = canvasOverlayView ?: return
+        isCalibrationActive = enabled
+
+        if (enabled) {
+            // Remove FLAG_NOT_TOUCHABLE so CanvasOverlayView receives touch input
+            canvasLayoutParams.flags = canvasLayoutParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+            try {
+                windowManager.updateViewLayout(canvas, canvasLayoutParams)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            // Tell canvas to show corner handles
+            canvas.setCalibrating(true)
+
+            // Temporarily hide handles A, B, C so they do not block fingers
+            handleViewA?.visibility = View.GONE
+            handleViewB?.visibility = View.GONE
+            handleViewC?.visibility = View.GONE
+
+            // Update button UI to "Save Bound" with green status color
+            btnCalibrate?.text = getString(R.string.control_save_bound)
+            btnCalibrate?.setBackgroundResource(R.drawable.bg_control_btn_active)
+            btnCalibrate?.setTextColor(ContextCompat.getColor(this, R.color.green_status))
+        } else {
+            // Tell canvas calibration ended and save bounds
+            canvas.setCalibrating(false)
+
+            // Re-apply FLAG_NOT_TOUCHABLE so the canvas becomes permanently pass-through again
+            canvasLayoutParams.flags = canvasLayoutParams.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            try {
+                windowManager.updateViewLayout(canvas, canvasLayoutParams)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            // Restore handles A, B, C
+            if (!isCanvasHidden && !isGhostActive) {
+                handleViewA?.visibility = View.VISIBLE
+                handleViewB?.visibility = View.VISIBLE
+                syncHandleCVisibility()
+            }
+
+            // Reset button UI to "Calib"
+            btnCalibrate?.text = getString(R.string.control_calibrate)
+            btnCalibrate?.setBackgroundResource(R.drawable.bg_control_btn)
+            btnCalibrate?.setTextColor(Color.WHITE)
+
+            Toast.makeText(this, R.string.toast_calib_saved, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -293,7 +359,6 @@ class OverlayService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    // Persist positions when dragging finishes
                     persistHandlePositions()
                     true
                 }
@@ -329,24 +394,37 @@ class OverlayService : Service() {
             y = 140
         }
 
-        // References to buttons
+        // References to UI components
         val btnDrag = controlView.findViewById<TextView>(R.id.btnDragHandle)
         btnGhost = controlView.findViewById(R.id.btnQuickGhost)
         val btnVisibility = controlView.findViewById<TextView>(R.id.btnToggleVisibility)
         val btnMode = controlView.findViewById<TextView>(R.id.btnCycleMode)
-        val btnCalibrate = controlView.findViewById<TextView>(R.id.btnToggleCalibrate)
+        btnCalibrate = controlView.findViewById(R.id.btnToggleCalibrate)
+        btnSettings = controlView.findViewById(R.id.btnToggleSettings)
         val btnClose = controlView.findViewById<TextView>(R.id.btnCloseOverlay)
+
+        panelSettings = controlView.findViewById(R.id.panelSettings)
+        val tvThickness = controlView.findViewById<TextView>(R.id.tvThicknessValue)
+        val seekThickness = controlView.findViewById<SeekBar>(R.id.seekThickness)
+        val tvOpacity = controlView.findViewById<TextView>(R.id.tvOpacityValue)
+        val seekOpacity = controlView.findViewById<SeekBar>(R.id.seekOpacity)
 
         // 1. Dragging toolbar
         setupDraggableBar(btnDrag, controlView)
 
-        // 2. Requirement 3: Quick-Ghost (Auto-Hide 4 Detik)
+        // 2. Quick-Ghost (Auto-Hide 4s)
         btnGhost?.setOnClickListener {
+            if (isCalibrationActive) {
+                setCalibrationMode(false)
+            }
             toggleQuickGhost()
         }
 
         // 3. Hide / Show canvas overlay and handles manually
         btnVisibility.setOnClickListener {
+            if (isCalibrationActive) {
+                setCalibrationMode(false)
+            }
             if (isGhostActive) {
                 restoreFromGhost()
             }
@@ -382,17 +460,83 @@ class OverlayService : Service() {
                 CanvasOverlayView.RulerMode.EDGE_MARKER_ONLY -> getString(R.string.control_mode_edge)
             }
 
-            syncHandleCVisibility()
+            if (!isCalibrationActive) {
+                syncHandleCVisibility()
+            }
         }
 
-        // 5. Calibrate Boundary Box
-        btnCalibrate.setOnClickListener {
-            val canvas = canvasOverlayView ?: return@setOnClickListener
-            val newMargin = canvas.cycleBoundaryPreset()
-            Toast.makeText(this, "Boundary Margin: $newMargin", Toast.LENGTH_SHORT).show()
+        // 5. Calibration Mode Toggle (Requirement 1)
+        btnCalibrate?.setOnClickListener {
+            if (isGhostActive) {
+                restoreFromGhost()
+            }
+            if (isCanvasHidden) {
+                // Ensure canvas is visible if calibrating
+                btnVisibility.performClick()
+            }
+            setCalibrationMode(!isCalibrationActive)
         }
 
-        // 6. Close Overlay
+        // 6. Settings Sub-Panel (Requirement 2: Thickness & Opacity Sliders)
+        val initialStroke = prefsManager.getLineStrokeWidth()
+        val initialAlpha = prefsManager.getLineAlpha()
+
+        seekThickness.progress = (initialStroke / 0.5f).roundToInt().coerceIn(1, 30)
+        seekOpacity.progress = initialAlpha.coerceIn(25, 255)
+
+        tvThickness.text = getString(R.string.label_thickness, initialStroke)
+        val initialPct = (initialAlpha * 100 / 255)
+        tvOpacity.text = getString(R.string.label_opacity, initialPct)
+
+        btnSettings?.setOnClickListener {
+            val panel = panelSettings ?: return@setOnClickListener
+            val isPanelOpen = panel.visibility == View.VISIBLE
+            if (isPanelOpen) {
+                panel.visibility = View.GONE
+                btnSettings?.setBackgroundResource(R.drawable.bg_control_btn)
+            } else {
+                panel.visibility = View.VISIBLE
+                btnSettings?.setBackgroundResource(R.drawable.bg_control_btn_active)
+            }
+        }
+
+        seekThickness.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val strokeWidth = (progress.coerceAtLeast(1) * 0.5f)
+                tvThickness.text = getString(R.string.label_thickness, strokeWidth)
+                val alpha = seekOpacity.progress
+                canvasOverlayView?.updateLineStyle(strokeWidth, alpha)
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val progress = seekBar?.progress ?: 7
+                val strokeWidth = (progress.coerceAtLeast(1) * 0.5f)
+                val alpha = seekOpacity.progress
+                prefsManager.saveLineStyle(strokeWidth, alpha)
+            }
+        })
+
+        seekOpacity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val alpha = progress.coerceIn(25, 255)
+                val pct = (alpha * 100 / 255)
+                tvOpacity.text = getString(R.string.label_opacity, pct)
+                val strokeWidth = (seekThickness.progress.coerceAtLeast(1) * 0.5f)
+                canvasOverlayView?.updateLineStyle(strokeWidth, alpha)
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val alpha = (seekBar?.progress ?: 220).coerceIn(25, 255)
+                val strokeWidth = (seekThickness.progress.coerceAtLeast(1) * 0.5f)
+                prefsManager.saveLineStyle(strokeWidth, alpha)
+            }
+        })
+
+        // 7. Close Overlay
         btnClose.setOnClickListener {
             stopSelf()
         }
@@ -404,12 +548,8 @@ class OverlayService : Service() {
         }
     }
 
-    /**
-     * Requirement 3: Quick-Ghost 4s auto-hide implementation.
-     */
     private fun toggleQuickGhost() {
         if (isGhostActive) {
-            // Cancel early if pressed while ghosting
             restoreFromGhost()
             return
         }
@@ -441,14 +581,16 @@ class OverlayService : Service() {
         // Restore views if not manually hidden
         if (!isCanvasHidden) {
             canvasOverlayView?.visibility = View.VISIBLE
-            handleViewA?.visibility = View.VISIBLE
-            handleViewB?.visibility = View.VISIBLE
-            syncHandleCVisibility()
+            if (!isCalibrationActive) {
+                handleViewA?.visibility = View.VISIBLE
+                handleViewB?.visibility = View.VISIBLE
+                syncHandleCVisibility()
+            }
         }
     }
 
     private fun syncHandleCVisibility() {
-        if (isCanvasHidden || isGhostActive) {
+        if (isCanvasHidden || isGhostActive || isCalibrationActive) {
             handleViewC?.visibility = View.GONE
             return
         }
@@ -499,6 +641,11 @@ class OverlayService : Service() {
         isServiceRunning = false
 
         ghostHandler.removeCallbacksAndMessages(null)
+
+        if (isCalibrationActive) {
+            isCalibrationActive = false
+            canvasOverlayView?.setCalibrating(false)
+        }
 
         // Remove canvas view
         canvasOverlayView?.let {

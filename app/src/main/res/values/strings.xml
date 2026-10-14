@@ -30,10 +30,16 @@
     <string name="control_hide">Hide</string>
     <string name="control_show">Show</string>
     <string name="control_calibrate">Calib</string>
+    <string name="control_save_bound">Save Bound</string>
+    <string name="control_settings">⚙</string>
     <string name="control_mode_auto">Auto-Reflect</string>
     <string name="control_mode_manual">Manual 3-Pt</string>
     <string name="control_mode_edge">Edge-Marker</string>
     <string name="control_close">✕</string>
+
+    <!-- Settings Panel -->
+    <string name="label_thickness">Thickness: %1$.1f dp</string>
+    <string name="label_opacity">Opacity: %1$d%%</string>
 
     <!-- Calibration Info -->
     <string name="calib_instructions">Drag corner handles to align boundary box with target area.</string>

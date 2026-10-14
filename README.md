@@ -11,6 +11,8 @@ A precision geometric screen overlay ruler and vector 2D reflection visualizer (
   - **Independent Floating Handles (42dp x 42dp):** Precision `HandleView` windows for Point A, Point B, and Point C with real-time vector ray updates as you drag them.
   - **Draggable Floating Control Bar (`WRAP_CONTENT` x `WRAP_CONTENT`):** Compact dark UI (`#CC1E1E1E`, 12dp rounded corners) with Quick-Ghost, visibility toggles, and mode switches.
 - **Instant Controls & Quick-Ghost:**
+  - **Interactive Boundary Calibration:** Tap `[Calib]` to unlock boundary dragging with 4 corner pins. Tap `[Save Bound]` to lock the canvas back to pass-through mode and persist coordinates.
+  - **Real-Time Line Customization (`[⚙]`):** Sub-panel with sliders for line thickness (`0.5dp` – `15dp`) and line opacity (`10%` – `100%`), saved automatically.
   - **Quick-Ghost (Auto-Hide 4s):** Temporarily hides all overlay graphics and handles for 4 seconds for unobstructed execution, auto-restoring automatically.
   - **Direct-Touch Interaction:** Move handles A, B, C freely at any time without having to toggle an Edit/Lock mode.
   - **Hidden Mode:** Toggle overlay visibility on and off instantly.
@@ -18,7 +20,7 @@ A precision geometric screen overlay ruler and vector 2D reflection visualizer (
   - **Auto-Reflection ($\theta_i = \theta_r$):** Ray-box intersection from Point A through Point B hitting calibrated boundary walls, reflecting automatically with angle computation.
   - **Manual 3-Point:** Freely reposition Start (A), Pivot (B), and End (C) to measure angles ($\angle ABC$).
   - **Edge-Marker Only:** Minimalist mode displaying indicator dots ($16\text{dp}$) directly at the boundary wall bounce points without obstructing the middle of the screen.
-- **Persistent Calibration:** Boundary box coordinates and handle positions are persisted in `SharedPreferences`.
+- **Persistent Calibration:** Boundary box coordinates, line styles, and handle positions are persisted in `SharedPreferences`.
 - **Strict Offline & Safe Policy:**
   - 100% offline (No `android.permission.INTERNET`).
   - No `AccessibilityService`, `MediaProjection`, or `QUERY_ALL_PACKAGES`.

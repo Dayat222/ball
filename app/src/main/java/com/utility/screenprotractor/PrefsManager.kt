@@ -120,6 +120,25 @@ class PrefsManager(context: Context) {
         return Triple(defaultA, defaultB, defaultC)
     }
 
+    /**
+     * Save line stroke width and opacity alpha.
+     */
+    fun saveLineStyle(strokeWidth: Float, alpha: Int) {
+        prefs.edit().apply {
+            putFloat(KEY_LINE_STROKE_WIDTH, strokeWidth)
+            putInt(KEY_LINE_ALPHA, alpha)
+            apply()
+        }
+    }
+
+    fun getLineStrokeWidth(): Float {
+        return prefs.getFloat(KEY_LINE_STROKE_WIDTH, 3.5f)
+    }
+
+    fun getLineAlpha(): Int {
+        return prefs.getInt(KEY_LINE_ALPHA, 220)
+    }
+
     companion object {
         private const val PREFS_NAME = "screen_protractor_prefs"
         private const val DEFAULT_MARGIN_RATIO = 0.08f
@@ -139,5 +158,8 @@ class PrefsManager(context: Context) {
         private const val KEY_PT_C_X = "pt_c_x"
         private const val KEY_PT_C_Y = "pt_c_y"
         private const val KEY_POINTS_INITIALIZED = "points_initialized"
+
+        private const val KEY_LINE_STROKE_WIDTH = "line_stroke_width"
+        private const val KEY_LINE_ALPHA = "line_alpha"
     }
 }

@@ -139,6 +139,28 @@ class PrefsManager(context: Context) {
         return prefs.getInt(KEY_LINE_ALPHA, 220)
     }
 
+    /**
+     * Save and retrieve 6-Pocket Radial lines visibility toggle.
+     */
+    fun saveShowSixLines(show: Boolean) {
+        prefs.edit().putBoolean(KEY_SHOW_SIX_LINES, show).apply()
+    }
+
+    fun getShowSixLines(): Boolean {
+        return prefs.getBoolean(KEY_SHOW_SIX_LINES, true)
+    }
+
+    /**
+     * Save and retrieve ball radius.
+     */
+    fun saveBallRadius(radius: Float) {
+        prefs.edit().putFloat(KEY_BALL_RADIUS, radius).apply()
+    }
+
+    fun getBallRadius(): Float {
+        return prefs.getFloat(KEY_BALL_RADIUS, 28f)
+    }
+
     companion object {
         private const val PREFS_NAME = "screen_protractor_prefs"
         private const val DEFAULT_MARGIN_RATIO = 0.08f
@@ -161,5 +183,8 @@ class PrefsManager(context: Context) {
 
         private const val KEY_LINE_STROKE_WIDTH = "line_stroke_width"
         private const val KEY_LINE_ALPHA = "line_alpha"
+
+        private const val KEY_SHOW_SIX_LINES = "show_six_lines"
+        private const val KEY_BALL_RADIUS = "ball_radius"
     }
 }

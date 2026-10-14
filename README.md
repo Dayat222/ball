@@ -8,8 +8,10 @@ A precision geometric screen overlay ruler and vector 2D reflection visualizer (
 
 - **Multi-Window Overlay Service:**
   - **Always Pass-Through Canvas Overlay (`MATCH_PARENT` x `MATCH_PARENT`):** Full-screen transparent canvas permanently set with `FLAG_NOT_TOUCHABLE` and `FLAG_NOT_FOCUSABLE`. All touches on screen pass directly through to underlying apps.
-  - **Independent Floating Handles (42dp x 42dp):** Precision `HandleView` windows for Point A, Point B, and Point C with real-time vector ray updates as you drag them.
-  - **Draggable Floating Control Bar (`WRAP_CONTENT` x `WRAP_CONTENT`):** Compact dark UI (`#CC1E1E1E`, 12dp rounded corners) with Quick-Ghost, visibility toggles, and mode switches.
+  - **Offset Finger Grip Handles (Anti-Finger Obstruction):** Independent `HandleView` grip pads positioned below actual aim points with visual tether lines, preventing fingers from covering the target ball.
+  - **6-Pocket Radial Short Lines:** Automatically calculates vectors from the target ball (Point B) towards the 6 table pockets and draws directional guide lines.
+  - **Collapsible Floating Toolbar:** Tap `[−]` to collapse toolbar into a tiny 36dp draggable `[+]` bubble, and tap `[+]` to restore.
+  - **Draggable Floating Control Bar (`WRAP_CONTENT` x `WRAP_CONTENT`):** Compact dark UI (`#CC1E1E1E`, 12dp rounded corners) with Quick-Ghost, 6-Line toggle, visibility toggles, and mode switches.
 - **Instant Controls & Quick-Ghost:**
   - **Interactive Boundary Calibration:** Tap `[Calib]` to unlock boundary dragging with 4 corner pins. Tap `[Save Bound]` to lock the canvas back to pass-through mode and persist coordinates.
   - **Real-Time Line Customization (`[⚙]`):** Sub-panel with sliders for line thickness (`0.5dp` – `15dp`) and line opacity (`10%` – `100%`), saved automatically.
@@ -20,7 +22,7 @@ A precision geometric screen overlay ruler and vector 2D reflection visualizer (
   - **Auto-Reflection ($\theta_i = \theta_r$):** Ray-box intersection from Point A through Point B hitting calibrated boundary walls, reflecting automatically with angle computation.
   - **Manual 3-Point:** Freely reposition Start (A), Pivot (B), and End (C) to measure angles ($\angle ABC$).
   - **Edge-Marker Only:** Minimalist mode displaying indicator dots ($16\text{dp}$) directly at the boundary wall bounce points without obstructing the middle of the screen.
-- **Persistent Calibration:** Boundary box coordinates, line styles, and handle positions are persisted in `SharedPreferences`.
+- **Persistent Calibration:** Boundary box coordinates, line styles, 6-line toggle, and handle positions are persisted in `SharedPreferences`.
 - **Strict Offline & Safe Policy:**
   - 100% offline (No `android.permission.INTERNET`).
   - No `AccessibilityService`, `MediaProjection`, or `QUERY_ALL_PACKAGES`.

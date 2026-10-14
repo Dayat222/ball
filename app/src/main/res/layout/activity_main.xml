@@ -203,7 +203,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="10dp"
                     android:lineSpacingExtra="3dp"
-                    android:text="• [::] Drag Handle: Hold and move the floating toolbar anywhere.\n• [Ghost 4s]: Auto-hide overlay for 4 seconds for instant unobstructed execution.\n• [Handles A/B/C]: Direct draggable touch handles with always pass-through screen.\n• [Hide / Show]: Instantly toggle overlay visibility.\n• [Mode]: Switch Auto-Reflection (θi = θr) → Manual 3-Pt → Edge-Marker Only.\n• [Calib]: Cycle boundary margin presets (4%, 8%, 12%, 16%).\n• [✕]: Dismiss the overlay service completely."
+                    android:text="• [::] Drag Handle: Hold and move the floating toolbar anywhere.\n• [Ghost 4s]: Auto-hide overlay for 4 seconds for instant unobstructed execution.\n• [Handles A/B/C]: Offset finger grip pads preventing finger obstruction with tether lines.\n• [6-Line]: Toggle 6-pocket radial guide lines from the target ball.\n• [Calib / Save Bound]: Interactive corner-drag table calibration.\n• [⚙]: Open thickness and opacity sliders sub-panel.\n• [− / +]: Minimize toolbar into a compact draggable bubble.\n• [✕]: Dismiss the overlay service completely."
                     android:textColor="@color/text_secondary"
                     android:textSize="13sp" />
             </LinearLayout>

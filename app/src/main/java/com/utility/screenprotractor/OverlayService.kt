@@ -26,14 +26,15 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
  * Multi-window foreground service managing:
- * 1. Pass-through canvas overlay (FLAG_NOT_TOUCHABLE by default, touch enabled during calibration).
- * 2. Independent floating handle windows for points A, B, and C.
- * 3. Draggable compact floating control bar with Quick-Ghost (4s auto-hide), calibration toggle,
- *    and real-time line thickness & opacity sliders.
+ * 1. Pass-through canvas overlay with 6-pocket radial lines and offset tethers.
+ * 2. Independent floating handle windows with vertical offset to prevent finger obstruction.
+ * 3. Draggable compact floating control bar with collapsible minimize bubble,
+ *    Quick-Ghost 4s, calibration toggle, 6-line toggle, and line sliders.
  */
 class OverlayService : Service() {
 
@@ -44,7 +45,7 @@ class OverlayService : Service() {
     private var canvasOverlayView: CanvasOverlayView? = null
     private lateinit var canvasLayoutParams: WindowManager.LayoutParams
 
-    // Independent Floating Handles
+    // Independent Floating Handles (Grip Pads)
     private var handleViewA: HandleView? = null
     private var handleViewB: HandleView? = null
     private var handleViewC: HandleView? = null
@@ -53,12 +54,17 @@ class OverlayService : Service() {
     private lateinit var handleParamsB: WindowManager.LayoutParams
     private lateinit var handleParamsC: WindowManager.LayoutParams
     private var handleSizePx = 0
+    private var handleOffsetY = 140f
 
     // Floating Control Bar
     private var floatingControlView: View? = null
     private lateinit var controlLayoutParams: WindowManager.LayoutParams
+
+    private var fullToolbarContainer: View? = null
+    private var btnMinimizedBubble: TextView? = null
     private var btnGhost: TextView? = null
     private var btnCalibrate: TextView? = null
+    private var btnSixLines: TextView? = null
     private var btnSettings: TextView? = null
     private var panelSettings: View? = null
 
@@ -80,6 +86,7 @@ class OverlayService : Service() {
 
         val density = resources.displayMetrics.density
         handleSizePx = (42f * density).roundToInt()
+        handleOffsetY = 50f * density // ~140px on xxxhdpi / xxhdpi
 
         // 1. Promote to Foreground Service
         startForegroundServiceWithNotification()
@@ -87,10 +94,10 @@ class OverlayService : Service() {
         // 2. Initialize and attach Canvas Overlay View
         setupCanvasOverlay()
 
-        // 3. Initialize and attach 3 Independent Floating Handles
+        // 3. Initialize and attach 3 Independent Floating Handles with Anti-Finger Offset
         setupFloatingHandles()
 
-        // 4. Initialize and attach Floating Control View
+        // 4. Initialize and attach Floating Control View (with Collapsible Minimize)
         setupFloatingControl()
     }
 
@@ -174,11 +181,6 @@ class OverlayService : Service() {
         }
     }
 
-    /**
-     * Requirement: CanvasOverlayView is pass-through (FLAG_NOT_TOUCHABLE) by default.
-     * When calibration mode is turned ON, FLAG_NOT_TOUCHABLE is removed so the user
-     * can touch and drag the 4 corner handles and edges of the boundary box.
-     */
     private fun setupCanvasOverlay() {
         canvasOverlayView = CanvasOverlayView(this)
 
@@ -203,15 +205,13 @@ class OverlayService : Service() {
     }
 
     /**
-     * Requirement 1: Perbaikan Mode Kalibrasi (Boundary Box).
-     * Toggle touch on CanvasOverlayView and handle visibility.
+     * Calibration Mode: Enable touch on canvas and hide handles.
      */
     private fun setCalibrationMode(enabled: Boolean) {
         val canvas = canvasOverlayView ?: return
         isCalibrationActive = enabled
 
         if (enabled) {
-            // Remove FLAG_NOT_TOUCHABLE so CanvasOverlayView receives touch input
             canvasLayoutParams.flags = canvasLayoutParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             try {
                 windowManager.updateViewLayout(canvas, canvasLayoutParams)
@@ -219,23 +219,18 @@ class OverlayService : Service() {
                 e.printStackTrace()
             }
 
-            // Tell canvas to show corner handles
             canvas.setCalibrating(true)
 
-            // Temporarily hide handles A, B, C so they do not block fingers
             handleViewA?.visibility = View.GONE
             handleViewB?.visibility = View.GONE
             handleViewC?.visibility = View.GONE
 
-            // Update button UI to "Save Bound" with green status color
             btnCalibrate?.text = getString(R.string.control_save_bound)
             btnCalibrate?.setBackgroundResource(R.drawable.bg_control_btn_active)
             btnCalibrate?.setTextColor(ContextCompat.getColor(this, R.color.green_status))
         } else {
-            // Tell canvas calibration ended and save bounds
             canvas.setCalibrating(false)
 
-            // Re-apply FLAG_NOT_TOUCHABLE so the canvas becomes permanently pass-through again
             canvasLayoutParams.flags = canvasLayoutParams.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
             try {
                 windowManager.updateViewLayout(canvas, canvasLayoutParams)
@@ -243,14 +238,12 @@ class OverlayService : Service() {
                 e.printStackTrace()
             }
 
-            // Restore handles A, B, C
             if (!isCanvasHidden && !isGhostActive) {
                 handleViewA?.visibility = View.VISIBLE
                 handleViewB?.visibility = View.VISIBLE
                 syncHandleCVisibility()
             }
 
-            // Reset button UI to "Calib"
             btnCalibrate?.text = getString(R.string.control_calibrate)
             btnCalibrate?.setBackgroundResource(R.drawable.bg_control_btn)
             btnCalibrate?.setTextColor(Color.WHITE)
@@ -260,7 +253,8 @@ class OverlayService : Service() {
     }
 
     /**
-     * Requirement 2: Independent Floating HandleViews (42dp x 42dp) for Points A, B, and C.
+     * Feature 2: Anti-Finger Obstruction (Offset Touch Handles).
+     * The grip pad is positioned below the actual target ball to keep the ball visible.
      */
     private fun setupFloatingHandles() {
         val displayMetrics = resources.displayMetrics
@@ -269,44 +263,52 @@ class OverlayService : Service() {
 
         val (ptA, ptB, ptC) = prefsManager.getPoints(screenW, screenH)
 
-        // Initialize positions in canvas
-        canvasOverlayView?.let {
-            it.setPointA(ptA.x, ptA.y)
-            it.setPointB(ptB.x, ptB.y)
-            it.setPointC(ptC.x, ptC.y)
-        }
-
         // 1. Handle A
         handleViewA = HandleView(this, "A")
-        handleParamsA = createHandleLayoutParams(ptA)
-        setupHandleTouchListener(handleViewA!!, handleParamsA) { cx, cy ->
-            canvasOverlayView?.setPointA(cx, cy)
+        val gripPosA = calculateGripFromAim(ptA, screenH)
+        handleParamsA = createHandleLayoutParams(gripPosA)
+        setupHandleTouchListener(handleViewA!!, handleParamsA, screenH) { aimX, aimY, gripX, gripY ->
+            canvasOverlayView?.setPointA(aimX, aimY, gripX, gripY)
         }
         windowManager.addView(handleViewA, handleParamsA)
+        canvasOverlayView?.setPointA(ptA.x, ptA.y, gripPosA.x, gripPosA.y)
 
-        // 2. Handle B
+        // 2. Handle B (Target Ball)
         handleViewB = HandleView(this, "B")
-        handleParamsB = createHandleLayoutParams(ptB)
-        setupHandleTouchListener(handleViewB!!, handleParamsB) { cx, cy ->
-            canvasOverlayView?.setPointB(cx, cy)
+        val gripPosB = calculateGripFromAim(ptB, screenH)
+        handleParamsB = createHandleLayoutParams(gripPosB)
+        setupHandleTouchListener(handleViewB!!, handleParamsB, screenH) { aimX, aimY, gripX, gripY ->
+            canvasOverlayView?.setPointB(aimX, aimY, gripX, gripY)
         }
         windowManager.addView(handleViewB, handleParamsB)
+        canvasOverlayView?.setPointB(ptB.x, ptB.y, gripPosB.x, gripPosB.y)
 
-        // 3. Handle C (visible only in MANUAL_3_POINT mode)
+        // 3. Handle C
         handleViewC = HandleView(this, "C")
-        handleParamsC = createHandleLayoutParams(ptC)
-        setupHandleTouchListener(handleViewC!!, handleParamsC) { cx, cy ->
-            canvasOverlayView?.setPointC(cx, cy)
+        val gripPosC = calculateGripFromAim(ptC, screenH)
+        handleParamsC = createHandleLayoutParams(gripPosC)
+        setupHandleTouchListener(handleViewC!!, handleParamsC, screenH) { aimX, aimY, gripX, gripY ->
+            canvasOverlayView?.setPointC(aimX, aimY, gripX, gripY)
         }
         windowManager.addView(handleViewC, handleParamsC)
+        canvasOverlayView?.setPointC(ptC.x, ptC.y, gripPosC.x, gripPosC.y)
 
-        // Sync initial visibility of Handle C with active mode
         val activeModeOrdinal = prefsManager.getMode()
         val isManual3Pt = activeModeOrdinal == CanvasOverlayView.RulerMode.MANUAL_3_POINT.ordinal
         handleViewC?.visibility = if (isManual3Pt) View.VISIBLE else View.GONE
     }
 
-    private fun createHandleLayoutParams(initialCenter: PointF): WindowManager.LayoutParams {
+    private fun calculateGripFromAim(aim: PointF, screenH: Float): PointF {
+        val targetGripY = aim.y + handleOffsetY
+        val gripY = if (targetGripY + handleSizePx > screenH - (20f * resources.displayMetrics.density)) {
+            aim.y - handleOffsetY
+        } else {
+            targetGripY
+        }
+        return PointF(aim.x, gripY)
+    }
+
+    private fun createHandleLayoutParams(center: PointF): WindowManager.LayoutParams {
         return WindowManager.LayoutParams(
             handleSizePx,
             handleSizePx,
@@ -316,8 +318,8 @@ class OverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = (initialCenter.x - handleSizePx / 2f).toInt()
-            y = (initialCenter.y - handleSizePx / 2f).toInt()
+            x = (center.x - handleSizePx / 2f).toInt()
+            y = (center.y - handleSizePx / 2f).toInt()
         }
     }
 
@@ -325,7 +327,8 @@ class OverlayService : Service() {
     private fun setupHandleTouchListener(
         view: View,
         params: WindowManager.LayoutParams,
-        onCenterMoved: (Float, Float) -> Unit
+        screenH: Float,
+        onMoved: (aimX: Float, aimY: Float, gripX: Float, gripY: Float) -> Unit
     ) {
         var initialX = 0
         var initialY = 0
@@ -353,9 +356,14 @@ class OverlayService : Service() {
                         e.printStackTrace()
                     }
 
-                    val centerX = params.x + (handleSizePx / 2f)
-                    val centerY = params.y + (handleSizePx / 2f)
-                    onCenterMoved(centerX, centerY)
+                    val gripX = params.x + (handleSizePx / 2f)
+                    val gripY = params.y + (handleSizePx / 2f)
+
+                    // Calculate aim coordinate above the grip pad (anti-finger obstruction)
+                    val aimX = gripX
+                    val aimY = (gripY - handleOffsetY).coerceIn(0f, screenH)
+
+                    onMoved(aimX, aimY, gripX, gripY)
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -368,11 +376,8 @@ class OverlayService : Service() {
     }
 
     private fun persistHandlePositions() {
-        val half = handleSizePx / 2f
-        val ptA = PointF(handleParamsA.x + half, handleParamsA.y + half)
-        val ptB = PointF(handleParamsB.x + half, handleParamsB.y + half)
-        val ptC = PointF(handleParamsC.x + half, handleParamsC.y + half)
-        prefsManager.savePoints(ptA, ptB, ptC)
+        val canvas = canvasOverlayView ?: return
+        prefsManager.savePoints(canvas.pointA, canvas.pointB, canvas.pointC)
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -395,12 +400,17 @@ class OverlayService : Service() {
         }
 
         // References to UI components
+        fullToolbarContainer = controlView.findViewById(R.id.fullToolbarContainer)
+        btnMinimizedBubble = controlView.findViewById(R.id.btnMinimizedBubble)
+
         val btnDrag = controlView.findViewById<TextView>(R.id.btnDragHandle)
         btnGhost = controlView.findViewById(R.id.btnQuickGhost)
         val btnVisibility = controlView.findViewById<TextView>(R.id.btnToggleVisibility)
         val btnMode = controlView.findViewById<TextView>(R.id.btnCycleMode)
         btnCalibrate = controlView.findViewById(R.id.btnToggleCalibrate)
+        btnSixLines = controlView.findViewById(R.id.btnToggleSixLines)
         btnSettings = controlView.findViewById(R.id.btnToggleSettings)
+        val btnMinimize = controlView.findViewById<TextView>(R.id.btnMinimize)
         val btnClose = controlView.findViewById<TextView>(R.id.btnCloseOverlay)
 
         panelSettings = controlView.findViewById(R.id.panelSettings)
@@ -465,19 +475,26 @@ class OverlayService : Service() {
             }
         }
 
-        // 5. Calibration Mode Toggle (Requirement 1)
+        // 5. Calibration Mode Toggle
         btnCalibrate?.setOnClickListener {
             if (isGhostActive) {
                 restoreFromGhost()
             }
             if (isCanvasHidden) {
-                // Ensure canvas is visible if calibrating
                 btnVisibility.performClick()
             }
             setCalibrationMode(!isCalibrationActive)
         }
 
-        // 6. Settings Sub-Panel (Requirement 2: Thickness & Opacity Sliders)
+        // 6. Feature 1: Toggle 6-Pocket Radial Lines on Target Ball
+        updateSixLinesButtonUI()
+        btnSixLines?.setOnClickListener {
+            val canvas = canvasOverlayView ?: return@setOnClickListener
+            canvas.toggleSixPocketLines()
+            updateSixLinesButtonUI()
+        }
+
+        // 7. Settings Sub-Panel (Thickness & Opacity Sliders)
         val initialStroke = prefsManager.getLineStrokeWidth()
         val initialAlpha = prefsManager.getLineAlpha()
 
@@ -536,7 +553,14 @@ class OverlayService : Service() {
             }
         })
 
-        // 7. Close Overlay
+        // 8. Feature 3: Collapsible Floating Control (Minimize Toolbar)
+        btnMinimize.setOnClickListener {
+            minimizeToolbar()
+        }
+
+        setupMinimizedBubble(controlView)
+
+        // 9. Close Overlay
         btnClose.setOnClickListener {
             stopSelf()
         }
@@ -548,6 +572,88 @@ class OverlayService : Service() {
         }
     }
 
+    private fun updateSixLinesButtonUI() {
+        val isActive = canvasOverlayView?.showSixPocketLines ?: true
+        if (isActive) {
+            btnSixLines?.setBackgroundResource(R.drawable.bg_control_btn_active)
+            btnSixLines?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+        } else {
+            btnSixLines?.setBackgroundResource(R.drawable.bg_control_btn)
+            btnSixLines?.setTextColor(Color.WHITE)
+        }
+    }
+
+    /**
+     * Feature 3: Minimize full toolbar into a 36dp x 36dp compact bubble.
+     */
+    private fun minimizeToolbar() {
+        fullToolbarContainer?.visibility = View.GONE
+        btnMinimizedBubble?.visibility = View.VISIBLE
+        floatingControlView?.let {
+            try {
+                windowManager.updateViewLayout(it, controlLayoutParams)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    private fun expandToolbar() {
+        btnMinimizedBubble?.visibility = View.GONE
+        fullToolbarContainer?.visibility = View.VISIBLE
+        floatingControlView?.let {
+            try {
+                windowManager.updateViewLayout(it, controlLayoutParams)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupMinimizedBubble(entireView: View) {
+        val bubble = btnMinimizedBubble ?: return
+        var initialX = 0
+        var initialY = 0
+        var initialTouchX = 0f
+        var initialTouchY = 0f
+        val touchSlop = 10f * resources.displayMetrics.density
+
+        bubble.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialX = controlLayoutParams.x
+                    initialY = controlLayoutParams.y
+                    initialTouchX = event.rawX
+                    initialTouchY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - initialTouchX).toInt()
+                    val dy = (event.rawY - initialTouchY).toInt()
+                    controlLayoutParams.x = initialX + dx
+                    controlLayoutParams.y = initialY + dy
+                    try {
+                        windowManager.updateViewLayout(entireView, controlLayoutParams)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    val deltaX = abs(event.rawX - initialTouchX)
+                    val deltaY = abs(event.rawY - initialTouchY)
+                    if (deltaX < touchSlop && deltaY < touchSlop) {
+                        // Click detected -> Expand toolbar
+                        expandToolbar()
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
     private fun toggleQuickGhost() {
         if (isGhostActive) {
             restoreFromGhost()
@@ -556,17 +662,14 @@ class OverlayService : Service() {
 
         isGhostActive = true
 
-        // Temporarily hide canvas and all 3 handles
         canvasOverlayView?.visibility = View.GONE
         handleViewA?.visibility = View.GONE
         handleViewB?.visibility = View.GONE
         handleViewC?.visibility = View.GONE
 
-        // Update button UI
         btnGhost?.text = getString(R.string.control_ghosting)
         btnGhost?.setBackgroundResource(R.drawable.bg_control_btn_active)
 
-        // Automatically restore after 4000ms
         ghostHandler.postDelayed(ghostRestoreRunnable, 4000)
     }
 
@@ -574,11 +677,9 @@ class OverlayService : Service() {
         isGhostActive = false
         ghostHandler.removeCallbacks(ghostRestoreRunnable)
 
-        // Reset button UI
         btnGhost?.text = getString(R.string.control_ghost)
         btnGhost?.setBackgroundResource(R.drawable.bg_control_btn)
 
-        // Restore views if not manually hidden
         if (!isCanvasHidden) {
             canvasOverlayView?.visibility = View.VISIBLE
             if (!isCalibrationActive) {

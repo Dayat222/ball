@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="background_dark">#FF121212</color>
+    <color name="surface_dark">#FF1E1E1E</color>
+    <color name="surface_card">#FF252525</color>
+    <color name="surface_card_border">#FF383838</color>
+    
+    <!-- Accent Colors -->
+    <color name="cyan_accent">#00E5FF</color>
+    <color name="cyan_accent_dark">#00B0FF</color>
+    <color name="yellow_accent">#FFD600</color>
+    <color name="green_status">#00E676</color>
+    <color name="red_danger">#FF5252</color>
+
+    <!-- Overlay Colors -->
+    <color name="overlay_control_bg">#CC1E1E1E</color>
+    <color name="overlay_control_border">#55FFFFFF</color>
+    <color name="overlay_primary_line">#00E5FF</color>
+    <color name="overlay_reflected_line">#FFD600</color>
+    <color name="overlay_boundary">#80FFFFFF</color>
+    <color name="overlay_handle_touch">#4000E5FF</color>
+    <color name="overlay_handle_center">#FFFFFFFF</color>
+
+    <!-- Text Colors -->
+    <color name="text_primary">#FFFFFFFF</color>
+    <color name="text_secondary">#B0BEC5</color>
+    <color name="text_hint">#78909C</color>
+</resources>

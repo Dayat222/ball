@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/controlBarRoot"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_control_bar"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="8dp"
+    android:paddingTop="4dp"
+    android:paddingEnd="8dp"
+    android:paddingBottom="4dp">
+
+    <!-- Drag Handle Area -->
+    <TextView
+        android:id="@+id/btnDragHandle"
+        android:layout_width="32dp"
+        android:layout_height="36dp"
+        android:gravity="center"
+        android:text="@string/control_drag_handle"
+        android:textColor="@color/cyan_accent"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
+    <!-- Edit / Lock Toggle Button -->
+    <TextView
+        android:id="@+id/btnToggleLock"
+        android:layout_width="wrap_content"
+        android:layout_height="32dp"
+        android:layout_marginStart="4dp"
+        android:background="@drawable/bg_control_btn"
+        android:gravity="center"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:text="@string/control_lock"
+        android:textColor="@color/text_primary"
+        android:textSize="12sp"
+        android:textStyle="bold" />
+
+    <!-- Hide / Show Canvas Toggle Button -->
+    <TextView
+        android:id="@+id/btnToggleVisibility"
+        android:layout_width="wrap_content"
+        android:layout_height="32dp"
+        android:layout_marginStart="4dp"
+        android:background="@drawable/bg_control_btn"
+        android:gravity="center"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:text="@string/control_hide"
+        android:textColor="@color/text_primary"
+        android:textSize="12sp"
+        android:textStyle="bold" />
+
+    <!-- Mode Cycle Button -->
+    <TextView
+        android:id="@+id/btnCycleMode"
+        android:layout_width="wrap_content"
+        android:layout_height="32dp"
+        android:layout_marginStart="4dp"
+        android:background="@drawable/bg_control_btn"
+        android:gravity="center"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:text="@string/control_mode_auto"
+        android:textColor="@color/cyan_accent"
+        android:textSize="12sp"
+        android:textStyle="bold" />
+
+    <!-- Calibration Mode Toggle Button -->
+    <TextView
+        android:id="@+id/btnToggleCalibrate"
+        android:layout_width="wrap_content"
+        android:layout_height="32dp"
+        android:layout_marginStart="4dp"
+        android:background="@drawable/bg_control_btn"
+        android:gravity="center"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:text="@string/control_calibrate"
+        android:textColor="@color/text_primary"
+        android:textSize="12sp"
+        android:textStyle="bold" />
+
+    <!-- Close / Stop Button -->
+    <TextView
+        android:id="@+id/btnCloseOverlay"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:layout_marginStart="6dp"
+        android:background="@drawable/bg_control_btn"
+        android:gravity="center"
+        android:text="@string/control_close"
+        android:textColor="@color/red_danger"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
+</LinearLayout>

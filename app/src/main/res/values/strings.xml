@@ -1,0 +1,40 @@
+<resources>
+    <string name="app_name">Screen Angle Ruler</string>
+    <string name="app_description">Precision geometric screen overlay ruler and vector 2D reflection visualizer.</string>
+
+    <!-- Permissions -->
+    <string name="permission_title">Overlay Permission Required</string>
+    <string name="permission_desc">This app needs permission to display over other apps to render the geometry ruler overlay on screen.</string>
+    <string name="permission_granted">Overlay Permission Active</string>
+    <string name="permission_not_granted">Overlay Permission Not Granted</string>
+    <string name="btn_grant_permission">Grant Permission</string>
+
+    <!-- Actions -->
+    <string name="btn_start_overlay">Start Ruler Overlay</string>
+    <string name="btn_stop_overlay">Stop Overlay</string>
+    <string name="btn_reset_calibration">Reset Calibration</string>
+
+    <!-- Foreground Service -->
+    <string name="notification_channel_name">Screen Protractor Service</string>
+    <string name="notification_channel_desc">Active geometry ruler overlay service notification</string>
+    <string name="notification_title">Screen Angle Ruler Active</string>
+    <string name="notification_text">Floating ruler overlay is running. Tap to open settings.</string>
+    <string name="notification_action_stop">Stop</string>
+
+    <!-- Overlay Controls -->
+    <string name="control_drag_handle">::</string>
+    <string name="control_edit">Edit</string>
+    <string name="control_lock">Lock</string>
+    <string name="control_hide">Hide</string>
+    <string name="control_show">Show</string>
+    <string name="control_calibrate">Calib</string>
+    <string name="control_mode_auto">Auto-Reflect</string>
+    <string name="control_mode_manual">Manual 3-Pt</string>
+    <string name="control_mode_edge">Edge-Marker</string>
+    <string name="control_close">✕</string>
+
+    <!-- Calibration Info -->
+    <string name="calib_instructions">Drag corner handles to align boundary box with target area.</string>
+    <string name="toast_calib_saved">Boundary box calibration saved.</string>
+    <string name="toast_permission_needed">Please grant Overlay Permission to start the ruler.</string>
+</resources>

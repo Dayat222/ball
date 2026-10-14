@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Protractor Arc -->
+    <path
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:pathData="M30,68 A24,24 0 0,1 78,68 L30,68 Z"/>
+    <!-- Angle Ray 1 -->
+    <path
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M54,68 L78,44"/>
+    <!-- Angle Ray 2 (Reflected) -->
+    <path
+        android:strokeColor="#FFD600"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M78,44 L60,26"/>
+    <!-- Center Dot -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,68m-3,0a3,3 0 1,0 6,0a3,3 0 1,0 -6,0"/>
+</vector>

@@ -7,12 +7,13 @@ A precision geometric screen overlay ruler and vector 2D reflection visualizer (
 ## Features
 
 - **Multi-Window Overlay Service:**
-  - **Canvas Overlay (`MATCH_PARENT` x `MATCH_PARENT`):** Full-screen transparent canvas rendering vector lines, angle calculations, and boundary box limits.
-  - **Draggable Floating Control Bar (`WRAP_CONTENT` x `WRAP_CONTENT`):** Compact dark UI (`#CC1E1E1E`, 12dp rounded corners) positioned anywhere on screen.
-- **3 Interaction Modes:**
-  - **Edit Mode:** Touch and drag points A, B, C or calibrate the boundary box.
-  - **Lock Mode (Pass-Through):** Adds `FLAG_NOT_TOUCHABLE` to allow all touch events to pass directly into the underlying apps.
-  - **Hidden Mode:** Quick-hide overlay (`View.GONE`) for unobstructed screen view.
+  - **Always Pass-Through Canvas Overlay (`MATCH_PARENT` x `MATCH_PARENT`):** Full-screen transparent canvas permanently set with `FLAG_NOT_TOUCHABLE` and `FLAG_NOT_FOCUSABLE`. All touches on screen pass directly through to underlying apps.
+  - **Independent Floating Handles (42dp x 42dp):** Precision `HandleView` windows for Point A, Point B, and Point C with real-time vector ray updates as you drag them.
+  - **Draggable Floating Control Bar (`WRAP_CONTENT` x `WRAP_CONTENT`):** Compact dark UI (`#CC1E1E1E`, 12dp rounded corners) with Quick-Ghost, visibility toggles, and mode switches.
+- **Instant Controls & Quick-Ghost:**
+  - **Quick-Ghost (Auto-Hide 4s):** Temporarily hides all overlay graphics and handles for 4 seconds for unobstructed execution, auto-restoring automatically.
+  - **Direct-Touch Interaction:** Move handles A, B, C freely at any time without having to toggle an Edit/Lock mode.
+  - **Hidden Mode:** Toggle overlay visibility on and off instantly.
 - **3 Measurement & Reflection Modes:**
   - **Auto-Reflection ($\theta_i = \theta_r$):** Ray-box intersection from Point A through Point B hitting calibrated boundary walls, reflecting automatically with angle computation.
   - **Manual 3-Point:** Freely reposition Start (A), Pivot (B), and End (C) to measure angles ($\angle ABC$).
@@ -38,10 +39,11 @@ A precision geometric screen overlay ruler and vector 2D reflection visualizer (
 │   └── src/main/
 │       ├── AndroidManifest.xml        # Permissions and service declarations
 │       ├── java/com/utility/screenprotractor/
-│       │   ├── MainActivity.kt        # Entry dashboard & permission manager
-│       │   ├── OverlayService.kt      # Foreground service & floating control bar
-│       │   ├── CanvasOverlayView.kt   # High-performance transparent canvas
+│       │   ├── CanvasOverlayView.kt   # High-performance transparent canvas (pass-through)
 │       │   ├── GeometryUtils.kt       # Ray-box intersection & reflection engine
+│       │   ├── HandleView.kt          # Independent 42dp floating touch handle
+│       │   ├── MainActivity.kt        # Entry dashboard & permission manager
+│       │   ├── OverlayService.kt      # Foreground service & multi-window manager
 │       │   └── PrefsManager.kt        # Calibration & coordinates persistence
 │       └── res/
 │           ├── drawable/              # Vector icons and rounded shapes

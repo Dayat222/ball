@@ -25,6 +25,8 @@
     <string name="control_drag_handle">::</string>
     <string name="control_edit">Edit</string>
     <string name="control_lock">Lock</string>
+    <string name="control_ghost">Ghost 4s</string>
+    <string name="control_ghosting">Ghosting...</string>
     <string name="control_hide">Hide</string>
     <string name="control_show">Show</string>
     <string name="control_calibrate">Calib</string>

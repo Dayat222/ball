@@ -22,9 +22,9 @@
         android:textSize="16sp"
         android:textStyle="bold" />
 
-    <!-- Edit / Lock Toggle Button -->
+    <!-- Quick-Ghost (4s Auto-Hide) Button -->
     <TextView
-        android:id="@+id/btnToggleLock"
+        android:id="@+id/btnQuickGhost"
         android:layout_width="wrap_content"
         android:layout_height="32dp"
         android:layout_marginStart="4dp"
@@ -32,8 +32,8 @@
         android:gravity="center"
         android:paddingStart="10dp"
         android:paddingEnd="10dp"
-        android:text="@string/control_lock"
-        android:textColor="@color/text_primary"
+        android:text="@string/control_ghost"
+        android:textColor="@color/yellow_accent"
         android:textSize="12sp"
         android:textStyle="bold" />
 

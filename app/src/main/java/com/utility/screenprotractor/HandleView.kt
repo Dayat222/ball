@@ -35,15 +35,19 @@ class HandleView(
      * Update crosshair color (e.g. matching primary line color or white)
      */
     fun updateColor(color: Int) {
+        val currentAlpha = plusPaint.alpha
         plusPaint.color = color
+        plusPaint.alpha = currentAlpha
         invalidate()
     }
 
     /**
-     * Synchronize handle alpha with line opacity (25 - 255)
+     * Synchronize handle alpha with line opacity (25 - 255) directly via Paint alpha
+     * without creating expensive GPU offscreen alpha layers for the window.
      */
     fun updateHandleAlpha(alphaInt: Int) {
-        this.alpha = alphaInt.coerceIn(25, 255) / 255f
+        plusPaint.alpha = alphaInt.coerceIn(25, 255)
+        invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {

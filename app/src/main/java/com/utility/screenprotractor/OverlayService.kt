@@ -271,9 +271,9 @@ class OverlayService : Service() {
             updateColor(initialColor)
             updateHandleAlpha(initialAlpha)
         }
-        val gripPosA = calculateGripFromAim(ptA, screenH)
+        val gripPosA = calculateGripFromAim(ptA)
         handleParamsA = createHandleLayoutParams(gripPosA)
-        setupHandleTouchListener(handleViewA!!, handleParamsA, screenH) { aimX, aimY, gripX, gripY ->
+        setupHandleTouchListener(handleViewA!!, handleParamsA) { aimX, aimY, gripX, gripY ->
             canvasOverlayView?.setPointA(aimX, aimY, gripX, gripY)
         }
         windowManager.addView(handleViewA, handleParamsA)
@@ -284,9 +284,9 @@ class OverlayService : Service() {
             updateColor(initialColor)
             updateHandleAlpha(initialAlpha)
         }
-        val gripPosB = calculateGripFromAim(ptB, screenH)
+        val gripPosB = calculateGripFromAim(ptB)
         handleParamsB = createHandleLayoutParams(gripPosB)
-        setupHandleTouchListener(handleViewB!!, handleParamsB, screenH) { aimX, aimY, gripX, gripY ->
+        setupHandleTouchListener(handleViewB!!, handleParamsB) { aimX, aimY, gripX, gripY ->
             canvasOverlayView?.setPointB(aimX, aimY, gripX, gripY)
         }
         windowManager.addView(handleViewB, handleParamsB)
@@ -297,9 +297,9 @@ class OverlayService : Service() {
             updateColor(initialColor)
             updateHandleAlpha(initialAlpha)
         }
-        val gripPosC = calculateGripFromAim(ptC, screenH)
+        val gripPosC = calculateGripFromAim(ptC)
         handleParamsC = createHandleLayoutParams(gripPosC)
-        setupHandleTouchListener(handleViewC!!, handleParamsC, screenH) { aimX, aimY, gripX, gripY ->
+        setupHandleTouchListener(handleViewC!!, handleParamsC) { aimX, aimY, gripX, gripY ->
             canvasOverlayView?.setPointC(aimX, aimY, gripX, gripY)
         }
         windowManager.addView(handleViewC, handleParamsC)
@@ -308,9 +308,11 @@ class OverlayService : Service() {
         syncHandlesVisibility()
     }
 
-    private fun calculateGripFromAim(aim: PointF, screenH: Float): PointF {
+    private fun calculateGripFromAim(aim: PointF): PointF {
+        val currentScreenH = (canvasOverlayView?.height?.takeIf { it > 0 }
+            ?: resources.displayMetrics.heightPixels).toFloat()
         val targetGripY = aim.y + handleOffsetY
-        val gripY = if (targetGripY + handleSizePx > screenH - (20f * resources.displayMetrics.density)) {
+        val gripY = if (targetGripY + handleSizePx > currentScreenH - (20f * resources.displayMetrics.density)) {
             aim.y - handleOffsetY
         } else {
             targetGripY
@@ -337,7 +339,6 @@ class OverlayService : Service() {
     private fun setupHandleTouchListener(
         view: View,
         params: WindowManager.LayoutParams,
-        screenH: Float,
         onMoved: (aimX: Float, aimY: Float, gripX: Float, gripY: Float) -> Unit
     ) {
         var initialX = 0
@@ -366,12 +367,17 @@ class OverlayService : Service() {
                         e.printStackTrace()
                     }
 
+                    val currentScreenW = (canvasOverlayView?.width?.takeIf { it > 0 }
+                        ?: resources.displayMetrics.widthPixels).toFloat()
+                    val currentScreenH = (canvasOverlayView?.height?.takeIf { it > 0 }
+                        ?: resources.displayMetrics.heightPixels).toFloat()
+
                     val gripX = params.x + (handleSizePx / 2f)
                     val gripY = params.y + (handleSizePx / 2f)
 
-                    // Calculate aim coordinate above the grip pad (anti-finger obstruction)
-                    val aimX = gripX
-                    val aimY = (gripY - handleOffsetY).coerceIn(0f, screenH)
+                    // Calculate aim coordinate above the grip pad (anti-finger obstruction) with dynamic screen bounds
+                    val aimX = gripX.coerceIn(0f, currentScreenW)
+                    val aimY = (gripY - handleOffsetY).coerceIn(0f, currentScreenH)
 
                     onMoved(aimX, aimY, gripX, gripY)
                     true
@@ -610,6 +616,13 @@ class OverlayService : Service() {
         }
         seekHue.progressDrawable = rainbowGradient
 
+        val previewDrawable = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(selectedColor)
+            setStroke((2f * density).roundToInt(), Color.WHITE)
+        }
+        viewColorPreview.background = previewDrawable
+
         fun createSwatchDrawable(color: Int, isSelected: Boolean): GradientDrawable {
             return GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
@@ -629,11 +642,7 @@ class OverlayService : Service() {
                 val isSelected = (color == pColor)
                 view.background = createSwatchDrawable(pColor, isSelected)
             }
-            viewColorPreview.background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(color)
-                setStroke((2f * density).roundToInt(), Color.WHITE)
-            }
+            previewDrawable.setColor(color)
 
             if (color == Color.WHITE) {
                 tvHue.text = getString(R.string.label_hue_white)
@@ -665,24 +674,14 @@ class OverlayService : Service() {
                     tvHue.text = getString(R.string.label_hue, progress)
                     canvasOverlayView?.updateLineColor(color)
                     updateAllHandlesColor(color)
-
-                    for ((view, pColor) in presetButtons) {
-                        view.background = createSwatchDrawable(pColor, color == pColor)
-                    }
-                    viewColorPreview.background = GradientDrawable().apply {
-                        shape = GradientDrawable.OVAL
-                        setColor(color)
-                        setStroke((2f * density).roundToInt(), Color.WHITE)
-                    }
+                    previewDrawable.setColor(color)
                 }
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
 
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                val hue = (seekBar?.progress ?: 185).toFloat()
-                val color = Color.HSVToColor(floatArrayOf(hue, 1f, 1f))
-                prefsManager.saveLineColor(color)
+                prefsManager.saveLineColor(selectedColor)
             }
         })
 

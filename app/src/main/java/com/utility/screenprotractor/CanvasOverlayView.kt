@@ -188,7 +188,6 @@ class CanvasOverlayView @JvmOverloads constructor(
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textSize = 13f * density
-        setShadowLayer(4f, 0f, 0f, Color.BLACK)
     }
 
     private val textBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -198,6 +197,7 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     private val linePath = Path()
     private val textBounds = Rect()
+    private val badgeRect = RectF()
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
@@ -476,21 +476,45 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     /**
-     * Requirement: Plain 6 Direct Pocket Lines + 10 Mirror Bank Lines across 4 cushions.
-     * - 1 solid white center dot (radius = 6f) at (bx, by).
-     * - Group A: 6 Direct Pocket Lines (startDist = 14f, endDist = 85f), plain lines without tip dots or text labels.
-     * - Group B: 10 Mirror Bank Lines across all 4 cushions (Top, Bottom, Right, Left) (startDist = 14f, endDist = 64f),
-     *   plain lines without tip dots or text labels.
+     * Zero-allocation helper to draw a radial ray from (bx, by) toward target (tx, ty).
+     */
+    private fun drawRadialRay(
+        canvas: Canvas,
+        bx: Float,
+        by: Float,
+        tx: Float,
+        ty: Float,
+        startDist: Float,
+        endDist: Float,
+        paint: Paint
+    ) {
+        val dx = tx - bx
+        val dy = ty - by
+        val dist = hypot(dx, dy)
+        if (dist > 1f) {
+            val ux = dx / dist
+            val uy = dy / dist
+            val startX = bx + ux * startDist
+            val startY = by + uy * startDist
+            val endX = bx + ux * endDist
+            val endY = by + uy * endDist
+            canvas.drawLine(startX, startY, endX, endY, paint)
+        }
+    }
+
+    /**
+     * Zero-Allocation Target Mode: Plain 6 Direct Rays + 10 Mirror Reflection Rays.
+     * Direct primitive calculations per frame without allocating any Array or PointF objects.
      */
     private fun drawTargetBallAndRadialLines(canvas: Canvas) {
         val bx = pointB.x
         val by = pointB.y
 
-        // 1 distinct solid white dot at center of Point B (radius = 6f)
+        // 1 distinct solid white dot at center of Point B (radius = 6dp)
         val centerDotRadius = 6f * density
         canvas.drawCircle(bx, by, centerDotRadius, aimDotPaint)
 
-        // Draw the 6 direct pocket lines and 10 mirror bank lines if enabled
+        // Draw the 6 direct rays and 10 mirror reflection rays if enabled
         if (showSixPocketLines) {
             val startDist = 14f * density
             val directEndDist = 85f * density
@@ -502,81 +526,44 @@ class CanvasOverlayView @JvmOverloads constructor(
             val b = boundaryBox.bottom
             val cx = boundaryBox.centerX()
 
-            // Group A: 6 Direct Pocket Lines (Warna Utama)
-            val directPockets = arrayOf(
-                PointF(l, t),   // Top-Left
-                PointF(cx, t),  // Top-Center
-                PointF(r, t),   // Top-Right
-                PointF(l, b),   // Bottom-Left
-                PointF(cx, b),  // Bottom-Center
-                PointF(r, b)    // Bottom-Right
-            )
+            // Group A: 6 Direct Vertex Rays (Primary Line Color) - Zero Object Allocation!
+            drawRadialRay(canvas, bx, by, l, t, startDist, directEndDist, sixLinePaint)   // Top-Left
+            drawRadialRay(canvas, bx, by, cx, t, startDist, directEndDist, sixLinePaint)  // Top-Center
+            drawRadialRay(canvas, bx, by, r, t, startDist, directEndDist, sixLinePaint)   // Top-Right
+            drawRadialRay(canvas, bx, by, l, b, startDist, directEndDist, sixLinePaint)   // Bottom-Left
+            drawRadialRay(canvas, bx, by, cx, b, startDist, directEndDist, sixLinePaint)  // Bottom-Center
+            drawRadialRay(canvas, bx, by, r, b, startDist, directEndDist, sixLinePaint)   // Bottom-Right
 
-            for (pocket in directPockets) {
-                val dx = pocket.x - bx
-                val dy = pocket.y - by
-                val dist = hypot(dx, dy)
-                if (dist > 1f) {
-                    val ux = dx / dist
-                    val uy = dy / dist
-
-                    val startX = bx + ux * startDist
-                    val startY = by + uy * startDist
-                    val endX = bx + ux * directEndDist
-                    val endY = by + uy * directEndDist
-
-                    // Plain straight line without tip dots or labels
-                    canvas.drawLine(startX, startY, endX, endY, sixLinePaint)
-                }
-            }
-
-            // Group B: 10 Mirror Bank Lines (Virtual Mirror Pockets for 4 cushions)
+            // Group B: 10 Mirror Reflection Rays (4 Bounds) - Zero Object Allocation!
             val mirrorTopY = 2f * t - b
             val mirrorBottomY = 2f * b - t
             val mirrorRightX = 2f * r - l
             val mirrorLeftX = 2f * l - r
 
-            val mirrorBankPockets = arrayOf(
-                // 1. Via Ban Atas (mirrorTopY = 2f * T - B)
-                PointF(l, mirrorTopY),
-                PointF(cx, mirrorTopY),
-                PointF(r, mirrorTopY),
-                // 2. Via Ban Bawah (mirrorBottomY = 2f * B - T)
-                PointF(l, mirrorBottomY),
-                PointF(cx, mirrorBottomY),
-                PointF(r, mirrorBottomY),
-                // 3. Via Ban Kanan (mirrorRightX = 2f * R - L)
-                PointF(mirrorRightX, t),
-                PointF(mirrorRightX, b),
-                // 4. Via Ban Kiri (mirrorLeftX = 2f * L - R)
-                PointF(mirrorLeftX, t),
-                PointF(mirrorLeftX, b)
-            )
+            // 1. Via Top Bound (3 rays)
+            drawRadialRay(canvas, bx, by, l, mirrorTopY, startDist, bankEndDist, bankLinePaint)
+            drawRadialRay(canvas, bx, by, cx, mirrorTopY, startDist, bankEndDist, bankLinePaint)
+            drawRadialRay(canvas, bx, by, r, mirrorTopY, startDist, bankEndDist, bankLinePaint)
 
-            for (vPocket in mirrorBankPockets) {
-                val dx = vPocket.x - bx
-                val dy = vPocket.y - by
-                val dist = hypot(dx, dy)
-                if (dist > 1f) {
-                    val ux = dx / dist
-                    val uy = dy / dist
+            // 2. Via Bottom Bound (3 rays)
+            drawRadialRay(canvas, bx, by, l, mirrorBottomY, startDist, bankEndDist, bankLinePaint)
+            drawRadialRay(canvas, bx, by, cx, mirrorBottomY, startDist, bankEndDist, bankLinePaint)
+            drawRadialRay(canvas, bx, by, r, mirrorBottomY, startDist, bankEndDist, bankLinePaint)
 
-                    val startX = bx + ux * startDist
-                    val startY = by + uy * startDist
-                    val endX = bx + ux * bankEndDist
-                    val endY = by + uy * bankEndDist
+            // 3. Via Right Bound (2 rays)
+            drawRadialRay(canvas, bx, by, mirrorRightX, t, startDist, bankEndDist, bankLinePaint)
+            drawRadialRay(canvas, bx, by, mirrorRightX, b, startDist, bankEndDist, bankLinePaint)
 
-                    // Plain straight line without tip dots or labels
-                    canvas.drawLine(startX, startY, endX, endY, bankLinePaint)
-                }
-            }
+            // 4. Via Left Bound (2 rays)
+            drawRadialRay(canvas, bx, by, mirrorLeftX, t, startDist, bankEndDist, bankLinePaint)
+            drawRadialRay(canvas, bx, by, mirrorLeftX, b, startDist, bankEndDist, bankLinePaint)
         }
     }
 
     private fun drawBoundaryBox(canvas: Canvas) {
         canvas.drawRect(boundaryBox, boundaryCalibPaint)
 
-        val label = "Calibration Mode: Drag 8 handles to align table border"
+        val label = "Calibration: Drag 8 handles to align target bounds"
         textPaint.getTextBounds(label, 0, label.length, textBounds)
         val textX = boundaryBox.left + 16f * density
         val textY = (boundaryBox.top - 12f * density).coerceAtLeast(36f * density)
@@ -707,7 +694,7 @@ class CanvasOverlayView @JvmOverloads constructor(
     private fun drawTextBadge(canvas: Canvas, text: String, x: Float, y: Float) {
         textPaint.getTextBounds(text, 0, text.length, textBounds)
         val pad = 4f * density
-        val badgeRect = RectF(
+        badgeRect.set(
             x - pad,
             y - textBounds.height() - pad,
             x + textBounds.width() + pad,

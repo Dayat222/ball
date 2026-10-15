@@ -272,6 +272,7 @@ class CanvasOverlayView @JvmOverloads constructor(
     private val linePath = Path()
     private val textBounds = Rect()
     private val badgeRect = RectF()
+    private val cushionBox = RectF()
 
     var onCanvasSizeChanged: ((w: Int, h: Int) -> Unit)? = null
 
@@ -587,7 +588,63 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     /**
-     * Zero-Allocation Target Mode: Plain 6 Direct Rays + 10 Mirror Reflection Rays.
+     * 12-Jaw Gate & Pro-Side Clearance Algorithm:
+     * Calculates the dynamically optimal pocket entry target between jaws J1(j1x, j1y) and J2(j2x, j2y)
+     * so that the aiming line never cuts into the cushion rail when the ball approaches the cushion.
+     * Zero-allocation primitive Float calculations.
+     */
+    private fun drawOptimalPocketRay(
+        canvas: Canvas,
+        bx: Float,
+        by: Float,
+        j1x: Float,
+        j1y: Float,
+        j2x: Float,
+        j2y: Float,
+        inwardNormalX: Float,
+        inwardNormalY: Float,
+        maxNormalInset: Float,
+        startDist: Float,
+        endDist: Float,
+        paint: Paint
+    ) {
+        val midX = (j1x + j2x) * 0.5f
+        val midY = (j1y + j2y) * 0.5f
+
+        val gateLen = hypot(j2x - j1x, j2y - j1y).coerceAtLeast(1f)
+        val d1 = hypot(bx - j1x, by - j1y)
+        val d2 = hypot(bx - j2x, by - j2y)
+
+        val s = ((d1 - d2) / gateLen).coerceIn(-1f, 1f)
+        val absS = abs(s)
+
+        val proSideBias = 0.22f * s
+        val gateShiftX = proSideBias * (j1x - j2x)
+        val gateShiftY = proSideBias * (j1y - j2y)
+
+        val normalShift = (absS * absS) * maxNormalInset
+
+        val targetX = midX + gateShiftX + (inwardNormalX * normalShift)
+        val targetY = midY + gateShiftY + (inwardNormalY * normalShift)
+
+        val dx = targetX - bx
+        val dy = targetY - by
+        val dist = hypot(dx, dy)
+        if (dist > 1f) {
+            val ux = dx / dist
+            val uy = dy / dist
+            canvas.drawLine(
+                bx + ux * startDist,
+                by + uy * startDist,
+                bx + ux * endDist,
+                by + uy * endDist,
+                paint
+            )
+        }
+    }
+
+    /**
+     * Zero-Allocation Target Mode: 6 Direct Rays with 12-Jaw Gate Clearance + 10 Cushion Bank Rays.
      * Direct primitive calculations per frame without allocating any Array or PointF objects.
      */
     private fun drawTargetBallAndRadialLines(canvas: Canvas) {
@@ -614,47 +671,112 @@ class CanvasOverlayView @JvmOverloads constructor(
             val t = boundaryBox.top
             val b = boundaryBox.bottom
             val cx = boundaryBox.centerX()
-            val tableW = (r - l).coerceAtLeast(1f)
 
-            // 1. 4 Corner Pockets - Tembak langsung ke koordinat sudut tanpa offset yang meleset
-            drawRadialRay(canvas, bx, by, l, t, startDist, directEndDist, sixLinePaint) // Top-Left
-            drawRadialRay(canvas, bx, by, r, t, startDist, directEndDist, sixLinePaint) // Top-Right
-            drawRadialRay(canvas, bx, by, l, b, startDist, directEndDist, sixLinePaint) // Bottom-Left
-            drawRadialRay(canvas, bx, by, r, b, startDist, directEndDist, sixLinePaint) // Bottom-Right
+            // 1. 12-Jaw Gate & Pro-Side Clearance Algorithm (6 Direct Pocket Rays)
+            // Ensures guide lines never clip or penetrate the cushion when ball is near rails
+            val cornerJawDist = 14f * density
+            val sideJawDist = 14f * density
+            val maxNormalCorner = 6f * density
+            val maxNormalSide = 9f * density
+            val diagNorm = 0.7071f
 
-            // 2. 2 Side/Center Pockets - Tembak tepat ke titik tengah ring kalibrasi lubang
-            drawRadialRay(canvas, bx, by, cx, t, startDist, directEndDist, sixLinePaint) // Top-Center
-            drawRadialRay(canvas, bx, by, cx, b, startDist, directEndDist, sixLinePaint) // Bottom-Center
+            // Top-Left (Corner)
+            drawOptimalPocketRay(
+                canvas, bx, by,
+                l + cornerJawDist, t,
+                l, t + cornerJawDist,
+                diagNorm, diagNorm, maxNormalCorner,
+                startDist, directEndDist, sixLinePaint
+            )
 
-            // 3. 10 Mirror Bank Rays (Pantulan Dinding Rel)
-            val bounceInset = 5f * density
-            val bounceL = l + bounceInset
-            val bounceR = r - bounceInset
-            val bounceT = t + bounceInset
-            val bounceB = b - bounceInset
+            // Top-Center (Side)
+            drawOptimalPocketRay(
+                canvas, bx, by,
+                cx - sideJawDist, t,
+                cx + sideJawDist, t,
+                0f, 1f, maxNormalSide,
+                startDist, directEndDist, sixLinePaint
+            )
 
-            val mirrorTopY = 2f * bounceT - b
-            val mirrorBottomY = 2f * bounceB - t
+            // Top-Right (Corner)
+            drawOptimalPocketRay(
+                canvas, bx, by,
+                r - cornerJawDist, t,
+                r, t + cornerJawDist,
+                -diagNorm, diagNorm, maxNormalCorner,
+                startDist, directEndDist, sixLinePaint
+            )
+
+            // Bottom-Left (Corner)
+            drawOptimalPocketRay(
+                canvas, bx, by,
+                l + cornerJawDist, b,
+                l, b - cornerJawDist,
+                diagNorm, -diagNorm, maxNormalCorner,
+                startDist, directEndDist, sixLinePaint
+            )
+
+            // Bottom-Center (Side)
+            drawOptimalPocketRay(
+                canvas, bx, by,
+                cx - sideJawDist, b,
+                cx + sideJawDist, b,
+                0f, -1f, maxNormalSide,
+                startDist, directEndDist, sixLinePaint
+            )
+
+            // Bottom-Right (Corner)
+            drawOptimalPocketRay(
+                canvas, bx, by,
+                r - cornerJawDist, b,
+                r, b - cornerJawDist,
+                -diagNorm, -diagNorm, maxNormalCorner,
+                startDist, directEndDist, sixLinePaint
+            )
+
+            // 2. 10 Mirror Bank Rays (Pantulan Dinding Rel)
+            // Collision plane accounts for physical cushion nose + ball radius
+            val cushionBounceInset = (5f * density) + (ballRadius * density)
+            val bounceL = l + cushionBounceInset
+            val bounceR = r - cushionBounceInset
+            val bounceT = t + cushionBounceInset
+            val bounceB = b - cushionBounceInset
+
+            val sideJawInset = 6f * density
+            val mirrorTopCornerY = 2f * bounceT - b
+            val mirrorTopCenterY = 2f * bounceT - (b - sideJawInset)
+            val mirrorBottomCornerY = 2f * bounceB - t
+            val mirrorBottomCenterY = 2f * bounceB - (t + sideJawInset)
             val mirrorRightX = 2f * bounceR - l
             val mirrorLeftX = 2f * bounceL - r
 
-            // Top Bound (3 rays)
-            drawRadialRay(canvas, bx, by, l, mirrorTopY, startDist, bankEndDist, bankLinePaint)
-            drawRadialRay(canvas, bx, by, cx, mirrorTopY, startDist, bankEndDist, bankLinePaint)
-            drawRadialRay(canvas, bx, by, r, mirrorTopY, startDist, bankEndDist, bankLinePaint)
+            val minClearance = 3f * density
 
-            // Bottom Bound (3 rays)
-            drawRadialRay(canvas, bx, by, l, mirrorBottomY, startDist, bankEndDist, bankLinePaint)
-            drawRadialRay(canvas, bx, by, cx, mirrorBottomY, startDist, bankEndDist, bankLinePaint)
-            drawRadialRay(canvas, bx, by, r, mirrorBottomY, startDist, bankEndDist, bankLinePaint)
+            // Top Bound (3 rays: bounce off top rail toward bottom pockets)
+            if (by > bounceT + minClearance) {
+                drawRadialRay(canvas, bx, by, l + cornerJawDist, mirrorTopCornerY, startDist, bankEndDist, bankLinePaint)
+                drawRadialRay(canvas, bx, by, cx, mirrorTopCenterY, startDist, bankEndDist, bankLinePaint)
+                drawRadialRay(canvas, bx, by, r - cornerJawDist, mirrorTopCornerY, startDist, bankEndDist, bankLinePaint)
+            }
 
-            // Right Bound (2 rays)
-            drawRadialRay(canvas, bx, by, mirrorRightX, t, startDist, bankEndDist, bankLinePaint)
-            drawRadialRay(canvas, bx, by, mirrorRightX, b, startDist, bankEndDist, bankLinePaint)
+            // Bottom Bound (3 rays: bounce off bottom rail toward top pockets)
+            if (by < bounceB - minClearance) {
+                drawRadialRay(canvas, bx, by, l + cornerJawDist, mirrorBottomCornerY, startDist, bankEndDist, bankLinePaint)
+                drawRadialRay(canvas, bx, by, cx, mirrorBottomCenterY, startDist, bankEndDist, bankLinePaint)
+                drawRadialRay(canvas, bx, by, r - cornerJawDist, mirrorBottomCornerY, startDist, bankEndDist, bankLinePaint)
+            }
 
-            // Left Bound (2 rays)
-            drawRadialRay(canvas, bx, by, mirrorLeftX, t, startDist, bankEndDist, bankLinePaint)
-            drawRadialRay(canvas, bx, by, mirrorLeftX, b, startDist, bankEndDist, bankLinePaint)
+            // Right Bound (2 rays: bounce off right rail toward left pockets)
+            if (bx < bounceR - minClearance) {
+                drawRadialRay(canvas, bx, by, mirrorRightX, t + cornerJawDist, startDist, bankEndDist, bankLinePaint)
+                drawRadialRay(canvas, bx, by, mirrorRightX, b - cornerJawDist, startDist, bankEndDist, bankLinePaint)
+            }
+
+            // Left Bound (2 rays: bounce off left rail toward right pockets)
+            if (bx > bounceL + minClearance) {
+                drawRadialRay(canvas, bx, by, mirrorLeftX, t + cornerJawDist, startDist, bankEndDist, bankLinePaint)
+                drawRadialRay(canvas, bx, by, mirrorLeftX, b - cornerJawDist, startDist, bankEndDist, bankLinePaint)
+            }
         }
     }
 
@@ -716,8 +838,19 @@ class CanvasOverlayView @JvmOverloads constructor(
         canvas.drawCircle(cx, cy, 4f * density, handleCenterPaint)
     }
 
+    private fun updateCushionBox() {
+        val cushionBounceInset = (5f * density) + (ballRadius * density)
+        cushionBox.set(
+            boundaryBox.left + cushionBounceInset,
+            boundaryBox.top + cushionBounceInset,
+            boundaryBox.right - cushionBounceInset,
+            boundaryBox.bottom - cushionBounceInset
+        )
+    }
+
     private fun drawAutoReflection(canvas: Canvas) {
-        val reflection = GeometryUtils.computeReflection(pointA, pointB, boundaryBox)
+        updateCushionBox()
+        val reflection = GeometryUtils.computeReflection(pointA, pointB, cushionBox)
 
         if (reflection != null) {
             // Primary Line: A -> Hit Point
@@ -778,7 +911,8 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     private fun drawEdgeMarkerOnly(canvas: Canvas) {
-        val reflection = GeometryUtils.computeReflection(pointA, pointB, boundaryBox)
+        updateCushionBox()
+        val reflection = GeometryUtils.computeReflection(pointA, pointB, cushionBox)
 
         if (reflection != null) {
             canvas.drawCircle(

@@ -14,6 +14,7 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import java.util.Locale
+import kotlin.math.hypot
 import kotlin.math.sqrt
 
 /**
@@ -469,9 +470,11 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     /**
-     * Requirement 1: 1-Point 6-Line Direct Rays + 6-Line Mirror Bank Rays on Point B.
-     * Direct Rays: 6 lines pointing towards the 6 table pockets (length 85dp).
-     * Mirror Bank Rays: 6 lines pointing towards the 6 virtual mirror pockets (length 62dp with 3.5dp gold tip dots).
+     * Requirement: Plain 6 Direct Pocket Lines + 10 Mirror Bank Lines across 4 cushions.
+     * - 1 solid white center dot (radius = 6f) at (bx, by).
+     * - Group A: 6 Direct Pocket Lines (startDist = 14f, endDist = 85f), plain lines without tip dots or text labels.
+     * - Group B: 10 Mirror Bank Lines across all 4 cushions (Top, Bottom, Right, Left) (startDist = 14f, endDist = 64f),
+     *   plain lines without tip dots or text labels.
      */
     private fun drawTargetBallAndRadialLines(canvas: Canvas) {
         val bx = pointB.x
@@ -481,27 +484,33 @@ class CanvasOverlayView @JvmOverloads constructor(
         val centerDotRadius = 6f * density
         canvas.drawCircle(bx, by, centerDotRadius, aimDotPaint)
 
-        // Draw the 6 direct pocket lines and 6 mirror bank lines if enabled
+        // Draw the 6 direct pocket lines and 10 mirror bank lines if enabled
         if (showSixPocketLines) {
             val startDist = 14f * density
             val directEndDist = 85f * density
-            val bankEndDist = 62f * density
+            val bankEndDist = 64f * density
 
-            // Group A: 6 Direct Pocket Rays
+            val l = boundaryBox.left
+            val r = boundaryBox.right
+            val t = boundaryBox.top
+            val b = boundaryBox.bottom
+            val cx = boundaryBox.centerX()
+
+            // Group A: 6 Direct Pocket Lines (Warna Utama)
             val directPockets = arrayOf(
-                PointF(boundaryBox.left, boundaryBox.top),                     // Top-Left
-                PointF(boundaryBox.centerX(), boundaryBox.top),                // Top-Center
-                PointF(boundaryBox.right, boundaryBox.top),                    // Top-Right
-                PointF(boundaryBox.left, boundaryBox.bottom),                  // Bottom-Left
-                PointF(boundaryBox.centerX(), boundaryBox.bottom),             // Bottom-Center
-                PointF(boundaryBox.right, boundaryBox.bottom)                  // Bottom-Right
+                PointF(l, t),   // Top-Left
+                PointF(cx, t),  // Top-Center
+                PointF(r, t),   // Top-Right
+                PointF(l, b),   // Bottom-Left
+                PointF(cx, b),  // Bottom-Center
+                PointF(r, b)    // Bottom-Right
             )
 
             for (pocket in directPockets) {
                 val dx = pocket.x - bx
                 val dy = pocket.y - by
-                val dist = sqrt(dx * dx + dy * dy)
-                if (dist > 1e-4f) {
+                val dist = hypot(dx, dy)
+                if (dist > 1f) {
                     val ux = dx / dist
                     val uy = dy / dist
 
@@ -510,33 +519,39 @@ class CanvasOverlayView @JvmOverloads constructor(
                     val endX = bx + ux * directEndDist
                     val endY = by + uy * directEndDist
 
+                    // Plain straight line without tip dots or labels
                     canvas.drawLine(startX, startY, endX, endY, sixLinePaint)
-                    canvas.drawCircle(endX, endY, 2.5f * density, aimDotPaint)
                 }
             }
 
-            // Group B: 6 Mirror Bank Rays (via Top & Bottom cushions)
-            // 1. Top Cushion Bank (aiming for the 3 bottom pockets bouncing off top rail)
-            val mirrorTopY = 2f * boundaryBox.top - boundaryBox.bottom
-            // 2. Bottom Cushion Bank (aiming for the 3 top pockets bouncing off bottom rail)
-            val mirrorBottomY = 2f * boundaryBox.bottom - boundaryBox.top
+            // Group B: 10 Mirror Bank Lines (Virtual Mirror Pockets for 4 cushions)
+            val mirrorTopY = 2f * t - b
+            val mirrorBottomY = 2f * b - t
+            val mirrorRightX = 2f * r - l
+            val mirrorLeftX = 2f * l - r
 
             val mirrorBankPockets = arrayOf(
-                // Via Top Cushion (bottom pockets mirrored across top rail)
-                PointF(boundaryBox.left, mirrorTopY),
-                PointF(boundaryBox.centerX(), mirrorTopY),
-                PointF(boundaryBox.right, mirrorTopY),
-                // Via Bottom Cushion (top pockets mirrored across bottom rail)
-                PointF(boundaryBox.left, mirrorBottomY),
-                PointF(boundaryBox.centerX(), mirrorBottomY),
-                PointF(boundaryBox.right, mirrorBottomY)
+                // 1. Via Ban Atas (mirrorTopY = 2f * T - B)
+                PointF(l, mirrorTopY),
+                PointF(cx, mirrorTopY),
+                PointF(r, mirrorTopY),
+                // 2. Via Ban Bawah (mirrorBottomY = 2f * B - T)
+                PointF(l, mirrorBottomY),
+                PointF(cx, mirrorBottomY),
+                PointF(r, mirrorBottomY),
+                // 3. Via Ban Kanan (mirrorRightX = 2f * R - L)
+                PointF(mirrorRightX, t),
+                PointF(mirrorRightX, b),
+                // 4. Via Ban Kiri (mirrorLeftX = 2f * L - R)
+                PointF(mirrorLeftX, t),
+                PointF(mirrorLeftX, b)
             )
 
             for (vPocket in mirrorBankPockets) {
                 val dx = vPocket.x - bx
                 val dy = vPocket.y - by
-                val dist = sqrt(dx * dx + dy * dy)
-                if (dist > 1e-4f) {
+                val dist = hypot(dx, dy)
+                if (dist > 1f) {
                     val ux = dx / dist
                     val uy = dy / dist
 
@@ -545,9 +560,8 @@ class CanvasOverlayView @JvmOverloads constructor(
                     val endX = bx + ux * bankEndDist
                     val endY = by + uy * bankEndDist
 
+                    // Plain straight line without tip dots or labels
                     canvas.drawLine(startX, startY, endX, endY, bankLinePaint)
-                    // Distinct 3.5dp dot at the tip of each bank shot ray
-                    canvas.drawCircle(endX, endY, 3.5f * density, bankDotPaint)
                 }
             }
         }

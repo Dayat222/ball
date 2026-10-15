@@ -635,17 +635,8 @@ class OverlayService : Service() {
         // 1. Dragging toolbar
         setupDraggableBar(btnDrag, controlView)
 
-        // Mini capsule dragging and controls
-        btnMiniDrag?.let { setupDraggableBar(it, controlView) }
-        btnMiniToggleOnOff?.setOnClickListener {
-            if (isGhostActive) {
-                restoreFromGhost()
-            }
-            toggleCanvasVisibility()
-        }
-        btnMiniExpand?.setOnClickListener {
-            expandToolbar()
-        }
+        // Smart Mini Bubble (Drag to move, Tap to expand, Long-press to toggle ON/OFF)
+        btnMiniExpand?.let { setupSmartMiniBubble(it, controlView) }
 
         // 2. Quick-Ghost (Auto-Hide 4s)
         btnGhost?.setOnClickListener {
@@ -993,9 +984,11 @@ class OverlayService : Service() {
         if (isCanvasHidden) {
             btnMiniToggleOnOff?.text = getString(R.string.control_off)
             btnMiniToggleOnOff?.setBackgroundResource(R.drawable.bg_btn_off)
+            btnMiniExpand?.alpha = 0.35f
         } else {
             btnMiniToggleOnOff?.text = getString(R.string.control_on)
             btnMiniToggleOnOff?.setBackgroundResource(R.drawable.bg_btn_on)
+            btnMiniExpand?.alpha = 0.65f
         }
     }
 
@@ -1131,6 +1124,72 @@ class OverlayService : Service() {
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupSmartMiniBubble(bubbleView: TextView, rootView: View) {
+        var initialX = 0
+        var initialY = 0
+        var downRawX = 0f
+        var downRawY = 0f
+        var isDragging = false
+        var isLongPressTriggered = false
+        val touchSlop = 8f * resources.displayMetrics.density
+
+        val longPressRunnable = Runnable {
+            if (!isDragging) {
+                isLongPressTriggered = true
+                bubbleView.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                if (isGhostActive) {
+                    restoreFromGhost()
+                }
+                toggleCanvasVisibility()
+            }
+        }
+
+        bubbleView.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialX = controlLayoutParams.x
+                    initialY = controlLayoutParams.y
+                    downRawX = event.rawX
+                    downRawY = event.rawY
+                    isDragging = false
+                    isLongPressTriggered = false
+                    ghostHandler.postDelayed(longPressRunnable, 400L)
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - downRawX
+                    val dy = event.rawY - downRawY
+                    if (kotlin.math.hypot(dx, dy) > touchSlop) {
+                        isDragging = true
+                        ghostHandler.removeCallbacks(longPressRunnable)
+                        controlLayoutParams.x = initialX + dx.roundToInt()
+                        controlLayoutParams.y = initialY + dy.roundToInt()
+                        try {
+                            windowManager.updateViewLayout(rootView, controlLayoutParams)
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    ghostHandler.removeCallbacks(longPressRunnable)
+                    if (!isDragging && !isLongPressTriggered) {
+                        // Single Tap: Buka kembali toolbar penuh
+                        expandToolbar()
+                    }
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    ghostHandler.removeCallbacks(longPressRunnable)
                     true
                 }
                 else -> false

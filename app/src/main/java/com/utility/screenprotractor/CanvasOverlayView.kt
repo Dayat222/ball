@@ -311,7 +311,7 @@ class CanvasOverlayView @JvmOverloads constructor(
      */
     fun clampBoundaryBox(w: Float, h: Float) {
         if (w <= 0 || h <= 0) return
-        val minMargin = 30f * density
+        val minMargin = 20f * density
         val minWidth = 80f * density
         val minHeight = 80f * density
 
@@ -338,10 +338,10 @@ class CanvasOverlayView @JvmOverloads constructor(
         val landSize = getLandscapeScreenSize()
         val w = landSize.x.coerceAtLeast(200f)
         val h = landSize.y.coerceAtLeast(200f)
-        val l = w * 0.18f
-        val t = h * 0.18f
-        val r = w * 0.82f
-        val b = h * 0.85f
+        val l = w * 0.191f
+        val t = h * 0.228f
+        val r = w * (1f - 0.191f)
+        val b = h * 0.921f
         boundaryBox.set(l, t, r, b)
         prefsManager.saveBoundaryBox(l, t, r, b)
         invalidate()
@@ -622,11 +622,9 @@ class CanvasOverlayView @JvmOverloads constructor(
             drawRadialRay(canvas, bx, by, l, b, startDist, directEndDist, sixLinePaint) // Bottom-Left
             drawRadialRay(canvas, bx, by, r, b, startDist, directEndDist, sixLinePaint) // Bottom-Right
 
-            // 2. 2 Side/Center Pockets - Kompensasi bukaan mulut lubang tengah
-            val sideAngleFactor = (kotlin.math.abs(bx - cx) / (tableW * 0.5f)).coerceIn(0f, 1f)
-            val sideMouthClearance = (sideAngleFactor * sideAngleFactor) * (4f * density)
-            drawRadialRay(canvas, bx, by, cx, t + sideMouthClearance, startDist, directEndDist, sixLinePaint) // Top-Center
-            drawRadialRay(canvas, bx, by, cx, b - sideMouthClearance, startDist, directEndDist, sixLinePaint) // Bottom-Center
+            // 2. 2 Side/Center Pockets - Tembak tepat ke titik tengah ring kalibrasi lubang
+            drawRadialRay(canvas, bx, by, cx, t, startDist, directEndDist, sixLinePaint) // Top-Center
+            drawRadialRay(canvas, bx, by, cx, b, startDist, directEndDist, sixLinePaint) // Bottom-Center
 
             // 3. 10 Mirror Bank Rays (Pantulan Dinding Rel)
             val bounceInset = 5f * density

@@ -225,7 +225,10 @@ class OverlayService : Service() {
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.START
+            gravity = Gravity.TOP or Gravity.LEFT
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
             alpha = 0.78f
         }
 
@@ -255,9 +258,13 @@ class OverlayService : Service() {
             canvasLayoutParams.x = 0
             canvasLayoutParams.y = 0
             canvasLayoutParams.alpha = 1.0f
+            canvasLayoutParams.gravity = Gravity.TOP or Gravity.LEFT
             canvasLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                canvasLayoutParams.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
             canvas.setWindowOffset(0f, 0f)
         } else {
             // Saat bermain normal, pangkas jendela kanvas HANYA seukuran kotak meja + padding 18dp
@@ -274,10 +281,14 @@ class OverlayService : Service() {
             canvasLayoutParams.x = winX
             canvasLayoutParams.y = winY
             canvasLayoutParams.alpha = 0.78f
+            canvasLayoutParams.gravity = Gravity.TOP or Gravity.LEFT
             canvasLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                canvasLayoutParams.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
 
             canvas.setWindowOffset(winX.toFloat(), winY.toFloat())
         }
@@ -410,10 +421,14 @@ class OverlayService : Service() {
             handleSizePx,
             getOverlayWindowType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.START
+            gravity = Gravity.TOP or Gravity.LEFT
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
             x = (center.x - handleSizePx / 2f).roundToInt()
             y = (center.y - handleSizePx / 2f).roundToInt()
         }
@@ -598,10 +613,14 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.WRAP_CONTENT,
             getOverlayWindowType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.START
+            gravity = Gravity.TOP or Gravity.LEFT
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
             x = 40
             y = 140
         }
@@ -1097,6 +1116,7 @@ class OverlayService : Service() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        applyTableBoundedWindow()
         repositionHandlesToAimPoints()
     }
 

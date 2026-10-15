@@ -26,27 +26,30 @@ class PrefsManager(context: Context) {
             putFloat(KEY_BOUND_RIGHT, right)
             putFloat(KEY_BOUND_BOTTOM, bottom)
             putBoolean(KEY_BOUND_CALIBRATED, true)
+            putInt(KEY_CALIB_VERSION, CURRENT_CALIB_VERSION)
             apply()
         }
     }
 
     /**
-     * Retrieve the calibrated boundary box. If not calibrated yet, computes default
-     * margins based on screen dimensions.
+     * Retrieve the calibrated boundary box. If not calibrated yet or saved by an older
+     * version with cutout skew, computes default margins matching standard 8 Ball Pool table.
      */
     fun getBoundaryBox(screenWidth: Float, screenHeight: Float): RectF {
         val landW = kotlin.math.max(screenWidth, screenHeight)
         val landH = kotlin.math.min(screenWidth, screenHeight)
 
+        val calibVersion = prefs.getInt(KEY_CALIB_VERSION, 0)
         val isCalibrated = prefs.getBoolean(KEY_BOUND_CALIBRATED, false)
-        if (isCalibrated) {
-            val left = prefs.getFloat(KEY_BOUND_LEFT, landW * DEFAULT_MARGIN_RATIO)
-            val top = prefs.getFloat(KEY_BOUND_TOP, landH * DEFAULT_MARGIN_RATIO)
-            val right = prefs.getFloat(KEY_BOUND_RIGHT, landW * (1f - DEFAULT_MARGIN_RATIO))
-            val bottom = prefs.getFloat(KEY_BOUND_BOTTOM, landH * (1f - DEFAULT_MARGIN_RATIO))
+
+        if (isCalibrated && calibVersion >= CURRENT_CALIB_VERSION) {
+            val left = prefs.getFloat(KEY_BOUND_LEFT, landW * 0.191f)
+            val top = prefs.getFloat(KEY_BOUND_TOP, landH * 0.228f)
+            val right = prefs.getFloat(KEY_BOUND_RIGHT, landW * (1f - 0.191f))
+            val bottom = prefs.getFloat(KEY_BOUND_BOTTOM, landH * 0.921f)
 
             // Sanity check to avoid inverted or collapsed rectangles and auto-clamp to screen
-            val minMargin = 30f
+            val minMargin = 20f
             val clampedL = left.coerceIn(minMargin, landW * 0.45f)
             val clampedT = top.coerceIn(minMargin, landH * 0.45f)
             val clampedR = right.coerceIn(landW * 0.55f, landW - minMargin)
@@ -57,10 +60,16 @@ class PrefsManager(context: Context) {
             }
         }
 
-        // Default bounds: proportional center (e.g. 18% insets)
-        val insetX = (landW * 0.18f).coerceAtLeast(40f)
-        val insetY = (landH * 0.18f).coerceAtLeast(40f)
-        return RectF(insetX, insetY, landW - insetX, landH - insetY)
+        // If calibration was from an older version with cutout offset, reset it
+        if (isCalibrated && calibVersion < CURRENT_CALIB_VERSION) {
+            resetBoundaryBox()
+        }
+
+        // Default bounds: 8 Ball Pool table proportions (2:1 playing surface centered horizontally)
+        val insetX = (landW * 0.191f).coerceAtLeast(40f)
+        val topY = (landH * 0.228f).coerceAtLeast(40f)
+        val botY = (landH * 0.921f).coerceAtLeast(topY + 100f)
+        return RectF(insetX, topY, landW - insetX, botY)
     }
 
     /**
@@ -73,6 +82,7 @@ class PrefsManager(context: Context) {
             remove(KEY_BOUND_RIGHT)
             remove(KEY_BOUND_BOTTOM)
             remove(KEY_BOUND_CALIBRATED)
+            remove(KEY_CALIB_VERSION)
             apply()
         }
     }
@@ -203,6 +213,8 @@ class PrefsManager(context: Context) {
         private const val KEY_BOUND_RIGHT = "bound_right"
         private const val KEY_BOUND_BOTTOM = "bound_bottom"
         private const val KEY_BOUND_CALIBRATED = "bound_calibrated"
+        private const val KEY_CALIB_VERSION = "calib_version"
+        private const val CURRENT_CALIB_VERSION = 3
 
         private const val KEY_ACTIVE_MODE = "active_mode"
 

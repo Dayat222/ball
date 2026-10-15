@@ -63,6 +63,39 @@ class CanvasOverlayView @JvmOverloads constructor(
     var ballRadius: Float = 13.5f
         private set
 
+    // Window Offset for Table-Bounded Window Cropping
+    private var windowOffsetX: Float = 0f
+    private var windowOffsetY: Float = 0f
+
+    fun setWindowOffset(offsetX: Float, offsetY: Float) {
+        windowOffsetX = offsetX
+        windowOffsetY = offsetY
+        invalidate()
+    }
+
+    /**
+     * Helper to obtain landscape full-screen dimensions regardless of device/activity orientation.
+     */
+    fun getLandscapeScreenSize(): PointF {
+        val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val rawW: Int
+        val rawH: Int
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = wm.currentWindowMetrics.bounds
+            rawW = bounds.width()
+            rawH = bounds.height()
+        } else {
+            val pt = Point()
+            @Suppress("DEPRECATION")
+            wm.defaultDisplay.getRealSize(pt)
+            rawW = pt.x
+            rawH = pt.y
+        }
+        val landW = kotlin.math.max(rawW, rawH).toFloat()
+        val landH = kotlin.math.min(rawW, rawH).toFloat()
+        return PointF(landW, landH)
+    }
+
     // Actual Aim Coordinates (where rays originate and reflect)
     var pointA = PointF()
         private set
@@ -244,46 +277,23 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        if (w <= 0 || h <= 0) return
+    }
 
-        val screenW = w.toFloat()
-        val screenH = h.toFloat()
+    init {
+        val landSize = getLandscapeScreenSize()
+        boundaryBox = prefsManager.getBoundaryBox(landSize.x, landSize.y)
+        clampBoundaryBox(landSize.x, landSize.y)
 
-        // Load saved boundary box and auto-clamp to active screen size (Landscape/Portrait safe)
-        boundaryBox = prefsManager.getBoundaryBox(screenW, screenH)
-        clampBoundaryBox(screenW, screenH)
+        val (savedA, savedB, savedC) = prefsManager.getPoints(landSize.x, landSize.y)
+        pointA = savedA
+        pointB = savedB
+        pointC = savedC
 
-        // Load saved points only if not initialized yet
-        if (pointB.x == 0f && pointB.y == 0f) {
-            val (savedA, savedB, savedC) = prefsManager.getPoints(screenW, screenH)
-            pointA = savedA
-            pointB = savedB
-            pointC = savedC
-        }
-
-        // Load saved mode
         val savedModeOrdinal = prefsManager.getMode()
         if (savedModeOrdinal in RulerMode.values().indices) {
             currentMode = RulerMode.values()[savedModeOrdinal]
         }
 
-        // Load saved line styling & color
-        val savedStroke = prefsManager.getLineStrokeWidth()
-        val savedAlpha = prefsManager.getLineAlpha()
-        val savedColor = prefsManager.getLineColor()
-        val savedBankColor = prefsManager.getBankLineColor()
-        updateLineColor(savedColor)
-        updateBankLineColor(savedBankColor)
-        updateLineStyle(savedStroke, savedAlpha)
-
-        // Load 6-pocket line preference and ball radius
-        showSixPocketLines = prefsManager.getShowSixLines()
-        ballRadius = prefsManager.getBallRadius()
-
-        onCanvasSizeChanged?.invoke(w, h)
-    }
-
-    init {
         currentLineColor = prefsManager.getLineColor()
         currentBankLineColor = prefsManager.getBankLineColor()
         currentAlpha = prefsManager.getLineAlpha()
@@ -291,6 +301,9 @@ class CanvasOverlayView @JvmOverloads constructor(
         updateLineColor(currentLineColor)
         updateBankLineColor(currentBankLineColor)
         updateLineStyle(currentStrokeWidth, currentAlpha)
+
+        showSixPocketLines = prefsManager.getShowSixLines()
+        ballRadius = prefsManager.getBallRadius()
     }
 
     /**
@@ -322,8 +335,9 @@ class CanvasOverlayView @JvmOverloads constructor(
      * Requirement 2: Reset boundary box to proportional center rectangle.
      */
     fun resetToProportionalCenter() {
-        val w = width.toFloat().coerceAtLeast(200f)
-        val h = height.toFloat().coerceAtLeast(200f)
+        val landSize = getLandscapeScreenSize()
+        val w = landSize.x.coerceAtLeast(200f)
+        val h = landSize.y.coerceAtLeast(200f)
         val l = w * 0.18f
         val t = h * 0.18f
         val r = w * 0.82f
@@ -472,8 +486,9 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     fun resetBoundaryCalibration() {
-        val screenW = width.toFloat().coerceAtLeast(100f)
-        val screenH = height.toFloat().coerceAtLeast(100f)
+        val landSize = getLandscapeScreenSize()
+        val screenW = landSize.x.coerceAtLeast(100f)
+        val screenH = landSize.y.coerceAtLeast(100f)
         prefsManager.resetBoundaryBox()
         boundaryBox = prefsManager.getBoundaryBox(screenW, screenH)
         clampBoundaryBox(screenW, screenH)
@@ -482,8 +497,9 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     override fun onConfigurationChanged(newConfig: Configuration?) {
         super.onConfigurationChanged(newConfig)
-        val screenW = width.toFloat().coerceAtLeast(100f)
-        val screenH = height.toFloat().coerceAtLeast(100f)
+        val landSize = getLandscapeScreenSize()
+        val screenW = landSize.x.coerceAtLeast(100f)
+        val screenH = landSize.y.coerceAtLeast(100f)
         boundaryBox = prefsManager.getBoundaryBox(screenW, screenH)
         clampBoundaryBox(screenW, screenH)
         invalidate()
@@ -491,6 +507,10 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        val saveCount = canvas.save()
+        if (!isCalibrating) {
+            canvas.translate(-windowOffsetX, -windowOffsetY)
+        }
 
         // Requirement 1: Clean View. ONLY draw boundary box and handles when isCalibrating == true
         if (isCalibrating) {
@@ -518,6 +538,8 @@ class CanvasOverlayView @JvmOverloads constructor(
                 }
             }
         }
+
+        canvas.restoreToCount(saveCount)
     }
 
     /**
@@ -822,8 +844,9 @@ class CanvasOverlayView @JvmOverloads constructor(
             MotionEvent.ACTION_MOVE -> {
                 if (activeDragTarget != DragTarget.NONE) {
                     val minSize = 60f * density
-                    val screenW = width.toFloat()
-                    val screenH = height.toFloat()
+                    val landSize = getLandscapeScreenSize()
+                    val screenW = landSize.x
+                    val screenH = landSize.y
 
                     val curX = (touchX - touchOffset.x).coerceIn(0f, screenW)
                     val curY = (touchY - touchOffset.y).coerceIn(0f, screenH)

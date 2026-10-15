@@ -234,26 +234,53 @@ class OverlayService : Service() {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+
+        applyTableBoundedWindow()
     }
 
     /**
-     * Canvas Window Layout Manager:
-     * Fullscreen (MATCH_PARENT) canvas overlay. Touch events are toggled depending on calibration mode.
-     * Alpha is set to 0.78f to satisfy Android 12+ untrusted touch / pass-through thresholds.
+     * Table-Bounded Window Cropping:
+     * Crops CanvasOverlayView window to table bounds (+ 18dp padding) during normal play
+     * to keep Power Bar (left) and UI completely clear of overlay window interception.
+     * Expands to MATCH_PARENT fullscreen when calibration mode is active.
      */
-    private fun updateCanvasWindowBounds() {
+    private fun applyTableBoundedWindow() {
         val canvas = canvasOverlayView ?: return
-        canvasLayoutParams.width = WindowManager.LayoutParams.MATCH_PARENT
-        canvasLayoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
-        canvasLayoutParams.x = 0
-        canvasLayoutParams.y = 0
-        canvasLayoutParams.alpha = 0.78f
+        val density = resources.displayMetrics.density
 
-        val touchFlag = if (isCalibrationActive) 0 else WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        canvasLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                touchFlag or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+        if (isCalibrationActive) {
+            // Saat kalibrasi aktif, gunakan layar penuh agar pengguna bebas menarik 8 titik kalibrasi
+            canvasLayoutParams.width = WindowManager.LayoutParams.MATCH_PARENT
+            canvasLayoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
+            canvasLayoutParams.x = 0
+            canvasLayoutParams.y = 0
+            canvasLayoutParams.alpha = 1.0f
+            canvasLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+            canvas.setWindowOffset(0f, 0f)
+        } else {
+            // Saat bermain normal, pangkas jendela kanvas HANYA seukuran kotak meja + padding 18dp
+            // Area Power Bar di sisi kiri layar (x < winX) 100% bersih tanpa overlay!
+            val pad = 18f * density
+            val box = canvas.boundaryBox
+            val winX = (box.left - pad).roundToInt().coerceAtLeast(0)
+            val winY = (box.top - pad).roundToInt().coerceAtLeast(0)
+            val winW = (box.width() + pad * 2f).roundToInt().coerceAtLeast(100)
+            val winH = (box.height() + pad * 2f).roundToInt().coerceAtLeast(100)
+
+            canvasLayoutParams.width = winW
+            canvasLayoutParams.height = winH
+            canvasLayoutParams.x = winX
+            canvasLayoutParams.y = winY
+            canvasLayoutParams.alpha = 0.78f
+            canvasLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+
+            canvas.setWindowOffset(winX.toFloat(), winY.toFloat())
+        }
 
         try {
             windowManager.updateViewLayout(canvas, canvasLayoutParams)
@@ -289,7 +316,7 @@ class OverlayService : Service() {
             Toast.makeText(this, R.string.toast_calib_saved, Toast.LENGTH_SHORT).show()
         }
 
-        updateCanvasWindowBounds()
+        applyTableBoundedWindow()
     }
 
     /**
@@ -298,8 +325,8 @@ class OverlayService : Service() {
      */
     private fun setupFloatingHandles() {
         val realSize = getRealScreenSize()
-        val screenW = realSize.x.toFloat()
-        val screenH = realSize.y.toFloat()
+        val screenW = kotlin.math.max(realSize.x, realSize.y).toFloat()
+        val screenH = kotlin.math.min(realSize.x, realSize.y).toFloat()
 
         val (ptA, ptB, ptC) = prefsManager.getPoints(screenW, screenH)
         val initialAlpha = prefsManager.getLineAlpha()
@@ -337,7 +364,6 @@ class OverlayService : Service() {
             onInversionChanged = { isOffsetInvertedB = it }
         ) { aimX, aimY, gripX, gripY ->
             canvasOverlayView?.setPointB(aimX, aimY, gripX, gripY)
-            updateCanvasWindowBounds()
         }
         windowManager.addView(handleViewB, handleParamsB)
         canvasOverlayView?.setPointB(ptB.x, ptB.y, gripPosB.x, gripPosB.y)
@@ -361,13 +387,12 @@ class OverlayService : Service() {
         canvasOverlayView?.setPointC(ptC.x, ptC.y, gripPosC.x, gripPosC.y)
 
         syncHandlesVisibility()
-        updateCanvasWindowBounds()
     }
 
     private fun calculateGripFromAim(aim: PointF, isInverted: Boolean = false): PointF {
         val realSize = getRealScreenSize()
-        val currentScreenW = realSize.x.toFloat()
-        val currentScreenH = realSize.y.toFloat()
+        val currentScreenW = kotlin.math.max(realSize.x, realSize.y).toFloat()
+        val currentScreenH = kotlin.math.min(realSize.x, realSize.y).toFloat()
 
         val gripX = (aim.x + handleOffsetX).coerceIn(handleSizePx / 2f, currentScreenW - handleSizePx / 2f)
         val targetGripY = if (isInverted) aim.y - handleOffsetY else aim.y + handleOffsetY
@@ -427,8 +452,8 @@ class OverlayService : Service() {
             onInversionChanged?.invoke(newInverted)
 
             val realSize = getRealScreenSize()
-            val currentScreenW = realSize.x.toFloat()
-            val currentScreenH = realSize.y.toFloat()
+            val currentScreenW = kotlin.math.max(realSize.x, realSize.y).toFloat()
+            val currentScreenH = kotlin.math.min(realSize.x, realSize.y).toFloat()
 
             // Invert grip Y: if newInverted, grip jumps above ball (-2 * handleOffsetY)
             // if !newInverted, grip jumps below ball (+2 * handleOffsetY)
@@ -503,8 +528,8 @@ class OverlayService : Service() {
                     currentGripY += frameDy * sensitivity
 
                     val realSize = getRealScreenSize()
-                    val currentScreenW = realSize.x.toFloat()
-                    val currentScreenH = realSize.y.toFloat()
+                    val currentScreenW = kotlin.math.max(realSize.x, realSize.y).toFloat()
+                    val currentScreenH = kotlin.math.min(realSize.x, realSize.y).toFloat()
 
                     // Auto-Flip when dragged past bottom limit and handle is below ball
                     if (!isOffsetInverted && currentGripY > currentScreenH - (handleSizePx * 0.8f)) {
@@ -658,7 +683,6 @@ class OverlayService : Service() {
             }
 
             syncHandlesVisibility()
-            updateCanvasWindowBounds()
         }
 
         // 5. Calibration Mode Toggle & Boundary Reset
@@ -674,6 +698,7 @@ class OverlayService : Service() {
 
         btnResetBound?.setOnClickListener {
             canvasOverlayView?.resetToProportionalCenter()
+            applyTableBoundedWindow()
             Toast.makeText(this, R.string.toast_calib_reset, Toast.LENGTH_SHORT).show()
         }
 
@@ -684,7 +709,6 @@ class OverlayService : Service() {
             canvas.toggleSixPocketLines()
             updateSixLinesButtonUI()
             syncHandlesVisibility()
-            updateCanvasWindowBounds()
         }
 
         // 7. Settings Sub-Panel (Thickness & Opacity Sliders)
@@ -1074,7 +1098,6 @@ class OverlayService : Service() {
         canvas.setPointA(canvas.pointA.x, canvas.pointA.y, gripPosA.x, gripPosA.y)
         canvas.setPointB(canvas.pointB.x, canvas.pointB.y, gripPosB.x, gripPosB.y)
         canvas.setPointC(canvas.pointC.x, canvas.pointC.y, gripPosC.x, gripPosC.y)
-        updateCanvasWindowBounds()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {

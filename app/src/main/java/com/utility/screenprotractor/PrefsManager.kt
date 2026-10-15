@@ -35,19 +35,22 @@ class PrefsManager(context: Context) {
      * margins based on screen dimensions.
      */
     fun getBoundaryBox(screenWidth: Float, screenHeight: Float): RectF {
+        val landW = kotlin.math.max(screenWidth, screenHeight)
+        val landH = kotlin.math.min(screenWidth, screenHeight)
+
         val isCalibrated = prefs.getBoolean(KEY_BOUND_CALIBRATED, false)
         if (isCalibrated) {
-            val left = prefs.getFloat(KEY_BOUND_LEFT, screenWidth * DEFAULT_MARGIN_RATIO)
-            val top = prefs.getFloat(KEY_BOUND_TOP, screenHeight * DEFAULT_MARGIN_RATIO)
-            val right = prefs.getFloat(KEY_BOUND_RIGHT, screenWidth * (1f - DEFAULT_MARGIN_RATIO))
-            val bottom = prefs.getFloat(KEY_BOUND_BOTTOM, screenHeight * (1f - DEFAULT_MARGIN_RATIO))
+            val left = prefs.getFloat(KEY_BOUND_LEFT, landW * DEFAULT_MARGIN_RATIO)
+            val top = prefs.getFloat(KEY_BOUND_TOP, landH * DEFAULT_MARGIN_RATIO)
+            val right = prefs.getFloat(KEY_BOUND_RIGHT, landW * (1f - DEFAULT_MARGIN_RATIO))
+            val bottom = prefs.getFloat(KEY_BOUND_BOTTOM, landH * (1f - DEFAULT_MARGIN_RATIO))
 
             // Sanity check to avoid inverted or collapsed rectangles and auto-clamp to screen
             val minMargin = 30f
-            val clampedL = left.coerceIn(minMargin, screenWidth * 0.45f)
-            val clampedT = top.coerceIn(minMargin, screenHeight * 0.45f)
-            val clampedR = right.coerceIn(screenWidth * 0.55f, screenWidth - minMargin)
-            val clampedB = bottom.coerceIn(screenHeight * 0.55f, screenHeight - minMargin)
+            val clampedL = left.coerceIn(minMargin, landW * 0.45f)
+            val clampedT = top.coerceIn(minMargin, landH * 0.45f)
+            val clampedR = right.coerceIn(landW * 0.55f, landW - minMargin)
+            val clampedB = bottom.coerceIn(landH * 0.55f, landH - minMargin)
 
             if (clampedR > clampedL + 50f && clampedB > clampedT + 50f) {
                 return RectF(clampedL, clampedT, clampedR, clampedB)
@@ -55,9 +58,9 @@ class PrefsManager(context: Context) {
         }
 
         // Default bounds: proportional center (e.g. 18% insets)
-        val insetX = (screenWidth * 0.18f).coerceAtLeast(40f)
-        val insetY = (screenHeight * 0.18f).coerceAtLeast(40f)
-        return RectF(insetX, insetY, screenWidth - insetX, screenHeight - insetY)
+        val insetX = (landW * 0.18f).coerceAtLeast(40f)
+        val insetY = (landH * 0.18f).coerceAtLeast(40f)
+        return RectF(insetX, insetY, landW - insetX, landH - insetY)
     }
 
     /**

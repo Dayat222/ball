@@ -14,6 +14,7 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -84,7 +85,6 @@ class CanvasOverlayView @JvmOverloads constructor(
     // Density scaled dimensions
     private val density = resources.displayMetrics.density
     private val edgeMarkerRadius = 8f * density
-    private val cornerHandleRadius = 16f * density
     private val edgeHandleRadius = 14f * density
 
     // Paint: Primary Line (Point A -> Point B / Hit Point)
@@ -153,6 +153,20 @@ class CanvasOverlayView @JvmOverloads constructor(
         color = Color.parseColor("#FFE082")
         style = Paint.Style.STROKE
         strokeWidth = 3f * density
+    }
+
+    // Feature 1: 6 Pocket Calibration Rings (Jaw Guides in Calibration Mode)
+    private val pocketJawRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#00E5FF")
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * density
+    }
+
+    private val pocketJawCrossPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#00E5FF")
+        style = Paint.Style.STROKE
+        strokeWidth = 1.5f * density
+        strokeCap = Paint.Cap.ROUND
     }
 
     // Paint: 8 Handles in Calibration Mode
@@ -530,29 +544,68 @@ class CanvasOverlayView @JvmOverloads constructor(
             val b = boundaryBox.bottom
             val cx = boundaryBox.centerX()
 
-            // Group A: 6 Direct Vertex Rays (Primary Line Color) - Zero Object Allocation!
-            drawRadialRay(canvas, bx, by, l, t, startDist, directEndDist, sixLinePaint)   // Top-Left
-            drawRadialRay(canvas, bx, by, cx, t, startDist, directEndDist, sixLinePaint)  // Top-Center
-            drawRadialRay(canvas, bx, by, r, t, startDist, directEndDist, sixLinePaint)   // Top-Right
-            drawRadialRay(canvas, bx, by, l, b, startDist, directEndDist, sixLinePaint)   // Bottom-Left
-            drawRadialRay(canvas, bx, by, cx, b, startDist, directEndDist, sixLinePaint)  // Bottom-Center
-            drawRadialRay(canvas, bx, by, r, b, startDist, directEndDist, sixLinePaint)   // Bottom-Right
+            // Dynamic Pocket Jaw Compensation Constants
+            val sideJawMaxOffset = 9f * density
+            val cornerJawMaxOffset = 5f * density
+            val tableW = (r - l).coerceAtLeast(1f)
+            val tableH = (b - t).coerceAtLeast(1f)
 
-            // Group B: 10 Mirror Reflection Rays (4 Bounds) - Zero Object Allocation!
-            val mirrorTopY = 2f * t - b
-            val mirrorBottomY = 2f * b - t
-            val mirrorRightX = 2f * r - l
-            val mirrorLeftX = 2f * l - r
+            // A. 2 Center Pockets (Top-Center & Bottom-Center)
+            val sideAngleFactor = (abs(bx - cx) / (tableW * 0.5f)).coerceIn(0f, 1f)
+            val topCenterEntryY = t + (sideAngleFactor * sideJawMaxOffset)
+            val bottomCenterEntryY = b - (sideAngleFactor * sideJawMaxOffset)
+
+            // B. 4 Corner Pockets (Top-Left, Top-Right, Bottom-Left, Bottom-Right)
+            val normXLeft = ((bx - l) / tableW).coerceIn(0f, 1f)
+            val normXRight = ((r - bx) / tableW).coerceIn(0f, 1f)
+            val normYTop = ((by - t) / tableH).coerceIn(0f, 1f)
+            val normYBottom = ((b - by) / tableH).coerceIn(0f, 1f)
+
+            val tlX = l + (1f - normYTop) * cornerJawMaxOffset
+            val tlY = t + (1f - normXLeft) * cornerJawMaxOffset
+
+            val trX = r - (1f - normYTop) * cornerJawMaxOffset
+            val trY = t + (1f - normXRight) * cornerJawMaxOffset
+
+            val blX = l + (1f - normYBottom) * cornerJawMaxOffset
+            val blY = b - (1f - normXLeft) * cornerJawMaxOffset
+
+            val brX = r - (1f - normYBottom) * cornerJawMaxOffset
+            val brY = b - (1f - normXRight) * cornerJawMaxOffset
+
+            // Group A: 6 Direct Vertex Rays with Dynamic Jaw Compensation - Zero Object Allocation!
+            drawRadialRay(canvas, bx, by, tlX, tlY, startDist, directEndDist, sixLinePaint)              // Top-Left
+            drawRadialRay(canvas, bx, by, cx, topCenterEntryY, startDist, directEndDist, sixLinePaint)  // Top-Center
+            drawRadialRay(canvas, bx, by, trX, trY, startDist, directEndDist, sixLinePaint)              // Top-Right
+            drawRadialRay(canvas, bx, by, blX, blY, startDist, directEndDist, sixLinePaint)              // Bottom-Left
+            drawRadialRay(canvas, bx, by, cx, bottomCenterEntryY, startDist, directEndDist, sixLinePaint) // Bottom-Center
+            drawRadialRay(canvas, bx, by, brX, brY, startDist, directEndDist, sixLinePaint)              // Bottom-Right
+
+            // Group B: 10 Mirror Reflection Rays (4 Bounds with Effective Cushion Bounce) - Zero Object Allocation!
+            val cushionInset = 6f * density
+            val bounceL = l + cushionInset
+            val bounceR = r - cushionInset
+            val bounceT = t + cushionInset
+            val bounceB = b - cushionInset
+
+            val mirrorTopCornerY = 2f * bounceT - b
+            val mirrorTopCenterY = 2f * bounceT - bottomCenterEntryY
+
+            val mirrorBottomCornerY = 2f * bounceB - t
+            val mirrorBottomCenterY = 2f * bounceB - topCenterEntryY
+
+            val mirrorRightX = 2f * bounceR - l
+            val mirrorLeftX = 2f * bounceL - r
 
             // 1. Via Top Bound (3 rays)
-            drawRadialRay(canvas, bx, by, l, mirrorTopY, startDist, bankEndDist, bankLinePaint)
-            drawRadialRay(canvas, bx, by, cx, mirrorTopY, startDist, bankEndDist, bankLinePaint)
-            drawRadialRay(canvas, bx, by, r, mirrorTopY, startDist, bankEndDist, bankLinePaint)
+            drawRadialRay(canvas, bx, by, l, mirrorTopCornerY, startDist, bankEndDist, bankLinePaint)
+            drawRadialRay(canvas, bx, by, cx, mirrorTopCenterY, startDist, bankEndDist, bankLinePaint)
+            drawRadialRay(canvas, bx, by, r, mirrorTopCornerY, startDist, bankEndDist, bankLinePaint)
 
             // 2. Via Bottom Bound (3 rays)
-            drawRadialRay(canvas, bx, by, l, mirrorBottomY, startDist, bankEndDist, bankLinePaint)
-            drawRadialRay(canvas, bx, by, cx, mirrorBottomY, startDist, bankEndDist, bankLinePaint)
-            drawRadialRay(canvas, bx, by, r, mirrorBottomY, startDist, bankEndDist, bankLinePaint)
+            drawRadialRay(canvas, bx, by, l, mirrorBottomCornerY, startDist, bankEndDist, bankLinePaint)
+            drawRadialRay(canvas, bx, by, cx, mirrorBottomCenterY, startDist, bankEndDist, bankLinePaint)
+            drawRadialRay(canvas, bx, by, r, mirrorBottomCornerY, startDist, bankEndDist, bankLinePaint)
 
             // 3. Via Right Bound (2 rays)
             drawRadialRay(canvas, bx, by, mirrorRightX, t, startDist, bankEndDist, bankLinePaint)
@@ -566,6 +619,20 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     private fun drawBoundaryBox(canvas: Canvas) {
         canvas.drawRect(boundaryBox, boundaryCalibPaint)
+
+        // Feature 1: 6 Pocket Mouth Target Rings (Jaw Guides in Calibration Mode)
+        val l = boundaryBox.left
+        val r = boundaryBox.right
+        val t = boundaryBox.top
+        val b = boundaryBox.bottom
+        val cx = boundaryBox.centerX()
+
+        drawPocketJawRing(canvas, l, t)   // Top-Left
+        drawPocketJawRing(canvas, cx, t)  // Top-Center
+        drawPocketJawRing(canvas, r, t)   // Top-Right
+        drawPocketJawRing(canvas, l, b)   // Bottom-Left
+        drawPocketJawRing(canvas, cx, b)  // Bottom-Center
+        drawPocketJawRing(canvas, r, b)   // Bottom-Right
 
         val label = "Calibration: Drag 8 handles to align target bounds"
         textPaint.getTextBounds(label, 0, label.length, textBounds)
@@ -582,22 +649,22 @@ class CanvasOverlayView @JvmOverloads constructor(
         canvas.drawText(label, textX, textY, textPaint)
     }
 
+    private fun drawPocketJawRing(canvas: Canvas, px: Float, py: Float) {
+        val ringRadius = 14f * density
+        canvas.drawCircle(px, py, ringRadius, pocketJawRingPaint)
+        val crossArm = 5f * density
+        canvas.drawLine(px - crossArm, py, px + crossArm, py, pocketJawCrossPaint)
+        canvas.drawLine(px, py - crossArm, px, py + crossArm, pocketJawCrossPaint)
+    }
+
     /**
-     * Requirement 2: Render 8 draggable calibration handles (4 corners + 4 edge centers).
+     * Requirement 2: Render side-rail calibration handles (left and right edges).
+     * The 6 pocket positions are clearly indicated by the 6 cyan jaw target rings.
      */
     private fun drawEightCalibrationHandles(canvas: Canvas) {
-        val cx = boundaryBox.centerX()
         val cy = boundaryBox.centerY()
 
-        // 4 Corners
-        drawHandlePin(canvas, boundaryBox.left, boundaryBox.top, cornerHandleRadius)
-        drawHandlePin(canvas, boundaryBox.right, boundaryBox.top, cornerHandleRadius)
-        drawHandlePin(canvas, boundaryBox.left, boundaryBox.bottom, cornerHandleRadius)
-        drawHandlePin(canvas, boundaryBox.right, boundaryBox.bottom, cornerHandleRadius)
-
-        // 4 Edge Centers
-        drawHandlePin(canvas, cx, boundaryBox.top, edgeHandleRadius)
-        drawHandlePin(canvas, cx, boundaryBox.bottom, edgeHandleRadius)
+        // 2 Side Edge Centers (Left & Right rail resize handles)
         drawHandlePin(canvas, boundaryBox.left, cy, edgeHandleRadius)
         drawHandlePin(canvas, boundaryBox.right, cy, edgeHandleRadius)
     }

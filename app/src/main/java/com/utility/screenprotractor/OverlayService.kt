@@ -55,7 +55,8 @@ class OverlayService : Service() {
     private lateinit var handleParamsB: WindowManager.LayoutParams
     private lateinit var handleParamsC: WindowManager.LayoutParams
     private var handleSizePx = 0
-    private var handleOffsetY = 140f
+    private var handleOffsetX = 45f
+    private var handleOffsetY = 50f
 
     // Floating Control Bar
     private var floatingControlView: View? = null
@@ -92,7 +93,8 @@ class OverlayService : Service() {
 
         val density = resources.displayMetrics.density
         handleSizePx = (42f * density).roundToInt()
-        handleOffsetY = 50f * density // ~140px on xxxhdpi / xxhdpi
+        handleOffsetX = 45f * density
+        handleOffsetY = 50f * density
 
         // 1. Promote to Foreground Service
         startForegroundServiceWithNotification()
@@ -309,15 +311,25 @@ class OverlayService : Service() {
     }
 
     private fun calculateGripFromAim(aim: PointF): PointF {
+        val currentScreenW = (canvasOverlayView?.width?.takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels).toFloat()
         val currentScreenH = (canvasOverlayView?.height?.takeIf { it > 0 }
             ?: resources.displayMetrics.heightPixels).toFloat()
+
+        val targetGripX = aim.x + handleOffsetX
+        val gripX = if (targetGripX + handleSizePx > currentScreenW - (10f * resources.displayMetrics.density)) {
+            aim.x - handleOffsetX
+        } else {
+            targetGripX
+        }
+
         val targetGripY = aim.y + handleOffsetY
-        val gripY = if (targetGripY + handleSizePx > currentScreenH - (20f * resources.displayMetrics.density)) {
+        val gripY = if (targetGripY + handleSizePx > currentScreenH - (10f * resources.displayMetrics.density)) {
             aim.y - handleOffsetY
         } else {
             targetGripY
         }
-        return PointF(aim.x, gripY)
+        return PointF(gripX, gripY)
     }
 
     private fun createHandleLayoutParams(center: PointF): WindowManager.LayoutParams {
@@ -375,8 +387,8 @@ class OverlayService : Service() {
                     val gripX = params.x + (handleSizePx / 2f)
                     val gripY = params.y + (handleSizePx / 2f)
 
-                    // Calculate aim coordinate above the grip pad (anti-finger obstruction) with dynamic screen bounds
-                    val aimX = gripX.coerceIn(0f, currentScreenW)
+                    // Calculate aim coordinate to the top-left of the grip pad (anti-finger obstruction: grip is at bottom-right)
+                    val aimX = (gripX - handleOffsetX).coerceIn(0f, currentScreenW)
                     val aimY = (gripY - handleOffsetY).coerceIn(0f, currentScreenH)
 
                     onMoved(aimX, aimY, gripX, gripY)

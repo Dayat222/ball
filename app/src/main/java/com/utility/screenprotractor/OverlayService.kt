@@ -223,6 +223,65 @@ class OverlayService : Service() {
     }
 
     /**
+     * Localized Micro-Canvas Window Manager:
+     * When 6-Pocket Radial mode is active and not calibrating, shrinks the canvas overlay window
+     * to a 180dp x 180dp box centered at Point B to prevent screen touch obstruction.
+     * Expands to fullscreen (MATCH_PARENT) when calibrating or in normal 3-point/auto-reflect modes.
+     */
+    private fun updateCanvasWindowBounds() {
+        val canvas = canvasOverlayView ?: return
+        val dm = resources.displayMetrics
+        val screenW = dm.widthPixels.toFloat()
+        val screenH = dm.heightPixels.toFloat()
+
+        val useMicroWindow = canvas.showSixPocketLines && !isCalibrationActive
+
+        if (useMicroWindow) {
+            // Ukuran kotak lokal 180dp x 180dp berpusat di koordinat Point B
+            val microSizePx = (180f * dm.density).roundToInt()
+            val bx = canvas.pointB.x
+            val by = canvas.pointB.y
+
+            val maxWinX = (screenW - microSizePx).roundToInt().coerceAtLeast(0)
+            val maxWinY = (screenH - microSizePx).roundToInt().coerceAtLeast(0)
+
+            val winX = (bx - microSizePx / 2f).roundToInt().coerceIn(0, maxWinX)
+            val winY = (by - microSizePx / 2f).roundToInt().coerceIn(0, maxWinY)
+
+            canvasLayoutParams.width = microSizePx
+            canvasLayoutParams.height = microSizePx
+            canvasLayoutParams.x = winX
+            canvasLayoutParams.y = winY
+            canvasLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+
+            canvas.setMicroWindowOffset(true, winX.toFloat(), winY.toFloat())
+        } else {
+            // Mode Layar Penuh untuk Kalibrasi atau Mode Auto-Reflect / Manual 3-Point
+            canvasLayoutParams.width = WindowManager.LayoutParams.MATCH_PARENT
+            canvasLayoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
+            canvasLayoutParams.x = 0
+            canvasLayoutParams.y = 0
+
+            val touchFlag = if (isCalibrationActive) 0 else WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            canvasLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    touchFlag or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+
+            canvas.setMicroWindowOffset(false, 0f, 0f)
+        }
+
+        try {
+            windowManager.updateViewLayout(canvas, canvasLayoutParams)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /**
      * Calibration Mode: Enable touch on canvas and hide handles.
      */
     private fun setCalibrationMode(enabled: Boolean) {
@@ -230,13 +289,6 @@ class OverlayService : Service() {
         isCalibrationActive = enabled
 
         if (enabled) {
-            canvasLayoutParams.flags = canvasLayoutParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-            try {
-                windowManager.updateViewLayout(canvas, canvasLayoutParams)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-
             canvas.setCalibrating(true)
             syncHandlesVisibility()
 
@@ -246,14 +298,6 @@ class OverlayService : Service() {
             btnResetBound?.visibility = View.VISIBLE
         } else {
             canvas.setCalibrating(false)
-
-            canvasLayoutParams.flags = canvasLayoutParams.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-            try {
-                windowManager.updateViewLayout(canvas, canvasLayoutParams)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-
             syncHandlesVisibility()
 
             btnCalibrate?.text = getString(R.string.control_calibrate)
@@ -263,6 +307,8 @@ class OverlayService : Service() {
 
             Toast.makeText(this, R.string.toast_calib_saved, Toast.LENGTH_SHORT).show()
         }
+
+        updateCanvasWindowBounds()
     }
 
     /**
@@ -310,6 +356,7 @@ class OverlayService : Service() {
             onInversionChanged = { isOffsetInvertedB = it }
         ) { aimX, aimY, gripX, gripY ->
             canvasOverlayView?.setPointB(aimX, aimY, gripX, gripY)
+            updateCanvasWindowBounds()
         }
         windowManager.addView(handleViewB, handleParamsB)
         canvasOverlayView?.setPointB(ptB.x, ptB.y, gripPosB.x, gripPosB.y)
@@ -333,13 +380,13 @@ class OverlayService : Service() {
         canvasOverlayView?.setPointC(ptC.x, ptC.y, gripPosC.x, gripPosC.y)
 
         syncHandlesVisibility()
+        updateCanvasWindowBounds()
     }
 
     private fun calculateGripFromAim(aim: PointF, isInverted: Boolean = false): PointF {
-        val currentScreenW = (canvasOverlayView?.width?.takeIf { it > 0 }
-            ?: resources.displayMetrics.widthPixels).toFloat()
-        val currentScreenH = (canvasOverlayView?.height?.takeIf { it > 0 }
-            ?: resources.displayMetrics.heightPixels).toFloat()
+        val dm = resources.displayMetrics
+        val currentScreenW = dm.widthPixels.toFloat()
+        val currentScreenH = dm.heightPixels.toFloat()
 
         val targetGripX = aim.x + handleOffsetX
         val gripX = if (targetGripX + handleSizePx > currentScreenW - (10f * resources.displayMetrics.density)) {
@@ -400,10 +447,9 @@ class OverlayService : Service() {
             isOffsetInverted = newInverted
             onInversionChanged?.invoke(newInverted)
 
-            val currentScreenH = (canvasOverlayView?.height?.takeIf { it > 0 }
-                ?: resources.displayMetrics.heightPixels).toFloat()
-            val currentScreenW = (canvasOverlayView?.width?.takeIf { it > 0 }
-                ?: resources.displayMetrics.widthPixels).toFloat()
+            val dm = resources.displayMetrics
+            val currentScreenH = dm.heightPixels.toFloat()
+            val currentScreenW = dm.widthPixels.toFloat()
 
             // Invert grip Y: if newInverted, grip jumps above ball (-2 * handleOffsetY)
             // if !newInverted, grip jumps below ball (+2 * handleOffsetY)
@@ -634,6 +680,7 @@ class OverlayService : Service() {
             }
 
             syncHandlesVisibility()
+            updateCanvasWindowBounds()
         }
 
         // 5. Calibration Mode Toggle & Boundary Reset
@@ -659,6 +706,7 @@ class OverlayService : Service() {
             canvas.toggleSixPocketLines()
             updateSixLinesButtonUI()
             syncHandlesVisibility()
+            updateCanvasWindowBounds()
         }
 
         // 7. Settings Sub-Panel (Thickness & Opacity Sliders)
@@ -1048,6 +1096,7 @@ class OverlayService : Service() {
         canvas.setPointA(canvas.pointA.x, canvas.pointA.y, gripPosA.x, gripPosA.y)
         canvas.setPointB(canvas.pointB.x, canvas.pointB.y, gripPosB.x, gripPosB.y)
         canvas.setPointC(canvas.pointC.x, canvas.pointC.y, gripPosC.x, gripPosC.y)
+        updateCanvasWindowBounds()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {

@@ -59,6 +59,19 @@ class CanvasOverlayView @JvmOverloads constructor(
     var ballRadius: Float = 13.5f
         private set
 
+    // Localized Micro-Canvas Window state
+    private var windowOffsetX: Float = 0f
+    private var windowOffsetY: Float = 0f
+    var isMicroWindowMode: Boolean = false
+        private set
+
+    fun setMicroWindowOffset(enabled: Boolean, offsetX: Float, offsetY: Float) {
+        isMicroWindowMode = enabled
+        windowOffsetX = offsetX
+        windowOffsetY = offsetY
+        invalidate()
+    }
+
     // Actual Aim Coordinates (where rays originate and reflect)
     var pointA = PointF()
         private set
@@ -240,10 +253,11 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
+        if (isMicroWindowMode) return
         if (w <= 0 || h <= 0) return
 
-        val screenW = w.toFloat()
-        val screenH = h.toFloat()
+        val screenW = resources.displayMetrics.widthPixels.toFloat()
+        val screenH = resources.displayMetrics.heightPixels.toFloat()
 
         // Load saved boundary box and auto-clamp to active screen size (Landscape/Portrait safe)
         boundaryBox = prefsManager.getBoundaryBox(screenW, screenH)
@@ -316,8 +330,9 @@ class CanvasOverlayView @JvmOverloads constructor(
      * Requirement 2: Reset boundary box to proportional center rectangle.
      */
     fun resetToProportionalCenter() {
-        val w = width.toFloat().coerceAtLeast(200f)
-        val h = height.toFloat().coerceAtLeast(200f)
+        val dm = resources.displayMetrics
+        val w = dm.widthPixels.toFloat().coerceAtLeast(200f)
+        val h = dm.heightPixels.toFloat().coerceAtLeast(200f)
         val l = w * 0.18f
         val t = h * 0.18f
         val r = w * 0.82f
@@ -466,8 +481,9 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     fun resetBoundaryCalibration() {
-        val screenW = width.toFloat().coerceAtLeast(100f)
-        val screenH = height.toFloat().coerceAtLeast(100f)
+        val dm = resources.displayMetrics
+        val screenW = dm.widthPixels.toFloat().coerceAtLeast(100f)
+        val screenH = dm.heightPixels.toFloat().coerceAtLeast(100f)
         prefsManager.resetBoundaryBox()
         boundaryBox = prefsManager.getBoundaryBox(screenW, screenH)
         clampBoundaryBox(screenW, screenH)
@@ -476,6 +492,10 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        val saveCount = canvas.save()
+        if (isMicroWindowMode && !isCalibrating) {
+            canvas.translate(-windowOffsetX, -windowOffsetY)
+        }
 
         // Requirement 1: Clean View. ONLY draw boundary box and handles when isCalibrating == true
         if (isCalibrating) {
@@ -487,8 +507,8 @@ class CanvasOverlayView @JvmOverloads constructor(
             if (showSixPocketLines) {
                 // Requirement 2: Mode 1-Titik Fokus (Single-Point Target Mode)
                 // Hide connecting line A-B and reflection rays.
-                // Only render Point B's stem tether (from grip pad to Point B)
-                if (hasGripB) {
+                // Only render Point B's stem tether (from grip pad to Point B) if not in micro window mode
+                if (hasGripB && !isMicroWindowMode) {
                     canvas.drawLine(gripB.x, gripB.y, pointB.x, pointB.y, stemLinePaint)
                 }
                 // Render Point B's white center dot + 6 Direct rays + 6 Mirror Bank rays
@@ -503,6 +523,8 @@ class CanvasOverlayView @JvmOverloads constructor(
                 }
             }
         }
+
+        canvas.restoreToCount(saveCount)
     }
 
     /**

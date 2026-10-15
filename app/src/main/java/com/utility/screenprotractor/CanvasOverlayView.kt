@@ -550,6 +550,72 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     /**
+     * 12-Jaw Gate & Pro-Side Clearance Algorithm:
+     * Calculates the optimal pocket entry sweet spot between two jaws J1(j1x, j1y) and J2(j2x, j2y)
+     * from ball position (bx, by) with pro-side bias and inward mouth clearance.
+     * Zero-allocation in onDraw (pure primitive Float calculations).
+     */
+    private fun drawOptimalPocketRay(
+        canvas: Canvas,
+        bx: Float,
+        by: Float,
+        j1x: Float,
+        j1y: Float,
+        j2x: Float,
+        j2y: Float,
+        inwardNormalX: Float,
+        inwardNormalY: Float,
+        maxNormalInset: Float,
+        startDist: Float,
+        endDist: Float,
+        paint: Paint
+    ) {
+        // 1. Titik tengah gerbang mulut lekukan (Mouth Gate Midpoint)
+        val midX = (j1x + j2x) * 0.5f
+        val midY = (j1y + j2y) * 0.5f
+
+        // 2. Panjang bukaan mulut lekukan dan jarak bola ke masing-masing sudut lekukan (Jaw 1 & Jaw 2)
+        val gateLen = kotlin.math.hypot(j2x - j1x, j2y - j1y).coerceAtLeast(1f)
+        val d1 = kotlin.math.hypot(bx - j1x, by - j1y)
+        val d2 = kotlin.math.hypot(bx - j2x, by - j2y)
+
+        // 3. Rasio kemiringan sudut datang bola terhadap bukaan mulut lubang (-1.0 s/d +1.0)
+        // Jika s < 0 berarti Jaw 1 lebih dekat (Near Jaw) dan Jaw 2 lebih jauh (Far Jaw).
+        // Jika s > 0 berarti Jaw 2 lebih dekat (Near Jaw) dan Jaw 1 lebih jauh (Far Jaw).
+        val s = ((d1 - d2) / gateLen).coerceIn(-1f, 1f)
+        val absS = kotlin.math.abs(s)
+
+        // 4. Pro-Side Jaw Bias: Geser titik bidik menjauhi Near Jaw (yang memantulkan bola keluar)
+        // menuju sisi dalam Far Jaw (yang dinding miringnya menangkap bola masuk ke lubang)
+        val proSideBias = 0.22f * s
+        val gateShiftX = proSideBias * (j1x - j2x)
+        val gateShiftY = proSideBias * (j1y - j2y)
+
+        // 5. Inward Mouth Clearance: Saat sudut sangat miring (absS mendekati 1),
+        // majukan sedikit titik masuk ke arah dalam meja agar bola tidak menyerempet tanduk Near Jaw
+        val normalShift = (absS * absS) * maxNormalInset
+
+        val targetX = midX + gateShiftX + (inwardNormalX * normalShift)
+        val targetY = midY + gateShiftY + (inwardNormalY * normalShift)
+
+        // 6. Gambar garis pandu dari luar cincin bola menuju titik optimal
+        val dx = targetX - bx
+        val dy = targetY - by
+        val dist = kotlin.math.hypot(dx, dy)
+        if (dist > 1f) {
+            val ux = dx / dist
+            val uy = dy / dist
+            canvas.drawLine(
+                bx + ux * startDist,
+                by + uy * startDist,
+                bx + ux * endDist,
+                by + uy * endDist,
+                paint
+            )
+        }
+    }
+
+    /**
      * Zero-Allocation Target Mode: Plain 6 Direct Rays + 10 Mirror Reflection Rays.
      * Direct primitive calculations per frame without allocating any Array or PointF objects.
      */
@@ -578,42 +644,62 @@ class CanvasOverlayView @JvmOverloads constructor(
             val b = boundaryBox.bottom
             val cx = boundaryBox.centerX()
 
-            // Dynamic Pocket Jaw Compensation Constants
-            val sideJawMaxOffset = 9f * density
-            val cornerJawMaxOffset = 5f * density
-            val tableW = (r - l).coerceAtLeast(1f)
-            val tableH = (b - t).coerceAtLeast(1f)
+            // 12-Jaw Gate Geometry Constants
+            val cornerJawDist = 14f * density
+            val sideJawDist = 14f * density
+            val maxNormalCorner = 6f * density
+            val maxNormalSide = 9f * density
+            val diagNorm = 0.7071f
 
-            // A. 2 Center Pockets (Top-Center & Bottom-Center)
-            val sideAngleFactor = (abs(bx - cx) / (tableW * 0.5f)).coerceIn(0f, 1f)
-            val topCenterEntryY = t + (sideAngleFactor * sideJawMaxOffset)
-            val bottomCenterEntryY = b - (sideAngleFactor * sideJawMaxOffset)
-
-            // B. 4 Corner Pockets (Top-Left, Top-Right, Bottom-Left, Bottom-Right)
-            val normXLeft = ((bx - l) / tableW).coerceIn(0f, 1f)
-            val normXRight = ((r - bx) / tableW).coerceIn(0f, 1f)
-            val normYTop = ((by - t) / tableH).coerceIn(0f, 1f)
-            val normYBottom = ((b - by) / tableH).coerceIn(0f, 1f)
-
-            val tlX = l + (1f - normYTop) * cornerJawMaxOffset
-            val tlY = t + (1f - normXLeft) * cornerJawMaxOffset
-
-            val trX = r - (1f - normYTop) * cornerJawMaxOffset
-            val trY = t + (1f - normXRight) * cornerJawMaxOffset
-
-            val blX = l + (1f - normYBottom) * cornerJawMaxOffset
-            val blY = b - (1f - normXLeft) * cornerJawMaxOffset
-
-            val brX = r - (1f - normYBottom) * cornerJawMaxOffset
-            val brY = b - (1f - normXRight) * cornerJawMaxOffset
-
-            // Group A: 6 Direct Vertex Rays with Dynamic Jaw Compensation - Zero Object Allocation!
-            drawRadialRay(canvas, bx, by, tlX, tlY, startDist, directEndDist, sixLinePaint)              // Top-Left
-            drawRadialRay(canvas, bx, by, cx, topCenterEntryY, startDist, directEndDist, sixLinePaint)  // Top-Center
-            drawRadialRay(canvas, bx, by, trX, trY, startDist, directEndDist, sixLinePaint)              // Top-Right
-            drawRadialRay(canvas, bx, by, blX, blY, startDist, directEndDist, sixLinePaint)              // Bottom-Left
-            drawRadialRay(canvas, bx, by, cx, bottomCenterEntryY, startDist, directEndDist, sixLinePaint) // Bottom-Center
-            drawRadialRay(canvas, bx, by, brX, brY, startDist, directEndDist, sixLinePaint)              // Bottom-Right
+            // Group A: 6 Direct Vertex Rays via 12-Jaw Gate & Pro-Side Clearance - Zero Object Allocation!
+            // 1. Top-Left Corner Pocket
+            drawOptimalPocketRay(
+                canvas, bx, by,
+                l + cornerJawDist, t,
+                l, t + cornerJawDist,
+                diagNorm, diagNorm, maxNormalCorner,
+                startDist, directEndDist, sixLinePaint
+            )
+            // 2. Top-Center Side Pocket
+            drawOptimalPocketRay(
+                canvas, bx, by,
+                cx - sideJawDist, t,
+                cx + sideJawDist, t,
+                0f, 1f, maxNormalSide,
+                startDist, directEndDist, sixLinePaint
+            )
+            // 3. Top-Right Corner Pocket
+            drawOptimalPocketRay(
+                canvas, bx, by,
+                r - cornerJawDist, t,
+                r, t + cornerJawDist,
+                -diagNorm, diagNorm, maxNormalCorner,
+                startDist, directEndDist, sixLinePaint
+            )
+            // 4. Bottom-Left Corner Pocket
+            drawOptimalPocketRay(
+                canvas, bx, by,
+                l + cornerJawDist, b,
+                l, b - cornerJawDist,
+                diagNorm, -diagNorm, maxNormalCorner,
+                startDist, directEndDist, sixLinePaint
+            )
+            // 5. Bottom-Center Side Pocket
+            drawOptimalPocketRay(
+                canvas, bx, by,
+                cx - sideJawDist, b,
+                cx + sideJawDist, b,
+                0f, -1f, maxNormalSide,
+                startDist, directEndDist, sixLinePaint
+            )
+            // 6. Bottom-Right Corner Pocket
+            drawOptimalPocketRay(
+                canvas, bx, by,
+                r - cornerJawDist, b,
+                r, b - cornerJawDist,
+                -diagNorm, -diagNorm, maxNormalCorner,
+                startDist, directEndDist, sixLinePaint
+            )
 
             // Group B: 10 Mirror Reflection Rays (4 Bounds with Effective Cushion Bounce) - Zero Object Allocation!
             val cushionInset = 6f * density
@@ -623,10 +709,10 @@ class CanvasOverlayView @JvmOverloads constructor(
             val bounceB = b - cushionInset
 
             val mirrorTopCornerY = 2f * bounceT - b
-            val mirrorTopCenterY = 2f * bounceT - bottomCenterEntryY
+            val mirrorTopCenterY = 2f * bounceT - (b - 6f * density)
 
             val mirrorBottomCornerY = 2f * bounceB - t
-            val mirrorBottomCenterY = 2f * bounceB - topCenterEntryY
+            val mirrorBottomCenterY = 2f * bounceB - (t + 6f * density)
 
             val mirrorRightX = 2f * bounceR - l
             val mirrorLeftX = 2f * bounceL - r

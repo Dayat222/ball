@@ -1,0 +1,4054 @@
+==> app/build.gradle.kts <==
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+android {
+    namespace = "com.utility.screenprotractor"
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = "com.utility.screenprotractor"
+        minSdk = 26
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+        debug {
+            isMinifyEnabled = false
+            applicationIdSuffix = ""
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    buildFeatures {
+        viewBinding = true
+    }
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation("com.google.android.material:material:1.11.0")
+    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+}
+
+==> app/src/main/AndroidManifest.xml <==
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Strict permission policy: Only overlay and foreground service -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.ScreenAngleRuler">
+
+        <!-- Entry Activity -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.ScreenAngleRuler">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Foreground Overlay Service with Android 14 specialUse type -->
+        <service
+            android:name=".OverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Screen overlay geometry ruler for visual assistance" />
+        </service>
+
+    </application>
+
+</manifest>
+
+==> app/src/main/java/com/utility/screenprotractor/CanvasOverlayView.kt <==
+package com.utility.screenprotractor
+
+import android.annotation.SuppressLint
+import android.content.Context
+import android.content.res.Configuration
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.DashPathEffect
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.Point
+import android.graphics.PointF
+import android.graphics.Rect
+import android.graphics.RectF
+import android.os.Build
+import android.util.AttributeSet
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.hypot
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
+
+/**
+ * High-performance full-screen transparent canvas rendering:
+ * 1. Primary & Reflected geometry lines.
+ * 2. 6-Pocket Radial Short Lines from target ball (Point B).
+ * 3. Connecting stem/tether lines from offset finger grips to actual aim coordinates.
+ * 4. Interactive 8-handle boundary box calibration (auto-clamped for Landscape & Portrait,
+ *    and completely hidden when not calibrating for clean view).
+ */
+class CanvasOverlayView @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+    defStyleAttr: Int = 0
+) : View(context, attrs, defStyleAttr) {
+
+    enum class RulerMode {
+        AUTO_REFLECT,
+        MANUAL_3_POINT,
+        EDGE_MARKER_ONLY
+    }
+
+    private enum class DragTarget {
+        NONE,
+        CORNER_TOP_LEFT, CORNER_TOP_RIGHT, CORNER_BOTTOM_LEFT, CORNER_BOTTOM_RIGHT,
+        HANDLE_TOP_CENTER, HANDLE_BOTTOM_CENTER, HANDLE_LEFT_CENTER, HANDLE_RIGHT_CENTER
+    }
+
+    private val prefsManager = PrefsManager(context)
+
+    // Current Mode & Calibration
+    var currentMode: RulerMode = RulerMode.AUTO_REFLECT
+        private set
+    var isCalibrating: Boolean = false
+        private set
+
+    // Feature 1: Radial Lines & Target Ring Radius
+    var showRadialGuides: Boolean = true
+        private set
+
+    var ringRadiusDp: Float = 13.5f
+        private set
+
+    // Window Offset for Table-Bounded Window Cropping
+    private var windowOffsetX: Float = 0f
+    private var windowOffsetY: Float = 0f
+
+    fun setWindowOffset(offsetX: Float, offsetY: Float) {
+        windowOffsetX = offsetX
+        windowOffsetY = offsetY
+        invalidate()
+    }
+
+    /**
+     * Helper to obtain landscape full-screen dimensions regardless of device/activity orientation.
+     */
+    fun getLandscapeScreenSize(): PointF {
+        val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val rawW: Int
+        val rawH: Int
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = wm.currentWindowMetrics.bounds
+            rawW = bounds.width()
+            rawH = bounds.height()
+        } else {
+            val pt = Point()
+            @Suppress("DEPRECATION")
+            wm.defaultDisplay.getRealSize(pt)
+            rawW = pt.x
+            rawH = pt.y
+        }
+        val landW = kotlin.math.max(rawW, rawH).toFloat()
+        val landH = kotlin.math.min(rawW, rawH).toFloat()
+        return PointF(landW, landH)
+    }
+
+    // Actual Aim Coordinates (where rays originate and reflect)
+    var pointA = PointF()
+        private set
+    var pointB = PointF()
+        private set
+    var pointC = PointF()
+        private set
+
+    // Finger Grip Coordinates (HandleView touch pad positions)
+    private var gripA = PointF()
+    private var gripB = PointF()
+    private var gripC = PointF()
+    private var hasGripA = false
+    private var hasGripB = false
+    private var hasGripC = false
+
+    var boundaryBox = RectF()
+        private set
+
+    // Touch Dragging State for Calibration
+    private var activeDragTarget = DragTarget.NONE
+    private var touchOffset = PointF(0f, 0f)
+
+    // Density scaled dimensions
+    private val density = resources.displayMetrics.density
+    private val edgeMarkerRadius = 8f * density
+    private val edgeHandleRadius = 14f * density
+
+    // Paint: Primary Line (Point A -> Point B / Hit Point)
+    private val primaryLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#00E5FF")
+        style = Paint.Style.STROKE
+        strokeWidth = 3.5f * density
+        pathEffect = DashPathEffect(floatArrayOf(15f * density, 10f * density), 0f)
+    }
+
+    // Paint: Reflected Line (Hit Point -> Reflected End / Point B -> C)
+    private val reflectedLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#00E5FF")
+        style = Paint.Style.STROKE
+        strokeWidth = 3.5f * density
+        pathEffect = DashPathEffect(floatArrayOf(15f * density, 10f * density), 0f)
+    }
+
+    // Paint: 6-Pocket Radial Short Lines from Target Ball (sixLinePaint)
+    private val sixLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#00E5FF")
+        style = Paint.Style.STROKE
+        strokeWidth = 3.5f * density
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val pocketLinePaint get() = sixLinePaint
+
+    // Paint: 6 Mirror Bank Rays from Target Ball (bankLinePaint)
+    private val bankLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FFAB00")
+        style = Paint.Style.STROKE
+        strokeWidth = 3.5f * density
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private val bankDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FFAB00")
+        style = Paint.Style.FILL
+    }
+
+    // Active line styling state
+    var currentLineColor: Int = PrefsManager.DEFAULT_LINE_COLOR
+        private set
+    var currentBankLineColor: Int = PrefsManager.DEFAULT_BANK_LINE_COLOR
+        private set
+    var currentAlpha: Int = 220
+        private set
+    var currentStrokeWidth: Float = 3.5f
+        private set
+
+    // Paint: Connecting Stem/Tether Line between Grip Pad and Aim Point
+    private val stemLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#99FFFFFF")
+        style = Paint.Style.STROKE
+        strokeWidth = 1.5f * density
+        pathEffect = DashPathEffect(floatArrayOf(6f * density, 6f * density), 0f)
+    }
+
+    private val aimDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.FILL
+    }
+
+    // Paints: High-Contrast Hollow Bullseye & Ball-Fit Ring for Point B
+    private val aimShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.argb((220 * 0.85f).roundToInt(), 0, 0, 0)
+        strokeWidth = 2.8f * density
+    }
+
+    private val aimRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.argb(220, 255, 255, 255)
+        strokeWidth = 1.4f * density
+    }
+
+    private val aimCenterShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.argb((220 * 0.85f).roundToInt(), 0, 0, 0)
+    }
+
+    private val aimCenterDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.argb(220, 255, 255, 255)
+    }
+
+    // Paint: Boundary Box Active Calibration Highlight
+    private val boundaryCalibPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FFE082")
+        style = Paint.Style.STROKE
+        strokeWidth = 3f * density
+    }
+
+    // Feature 1: 6 Vertex Calibration Rings (Vertex Guides in Calibration Mode)
+    private val vertexRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#00E5FF")
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * density
+    }
+
+    private val vertexCrossPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#00E5FF")
+        style = Paint.Style.STROKE
+        strokeWidth = 1.5f * density
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    // Paint: 8 Handles in Calibration Mode
+    private val handleOuterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#E6FFE082")
+        style = Paint.Style.FILL
+    }
+
+    private val handleStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FFB300")
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * density
+    }
+
+    private val handleCenterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.FILL
+    }
+
+    // Paint: Edge-Marker Dot (Mode 3)
+    private val edgeMarkerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FFD600")
+        style = Paint.Style.FILL
+    }
+
+    private val edgeMarkerStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * density
+    }
+
+    // Paint: Text Badges (Labels & Angle Info)
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = 13f * density
+    }
+
+    private val textBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#B3000000")
+        style = Paint.Style.FILL
+    }
+
+    private val linePath = Path()
+    private val textBounds = Rect()
+    private val badgeRect = RectF()
+    private val innerInsetBox = RectF()
+
+    var onCanvasSizeChanged: ((w: Int, h: Int) -> Unit)? = null
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+    }
+
+    init {
+        val landSize = getLandscapeScreenSize()
+        boundaryBox = prefsManager.getBoundaryBox(landSize.x, landSize.y)
+        clampBoundaryBox(landSize.x, landSize.y)
+
+        val (savedA, savedB, savedC) = prefsManager.getPoints(landSize.x, landSize.y)
+        pointA = savedA
+        pointB = savedB
+        pointC = savedC
+
+        val savedModeOrdinal = prefsManager.getMode()
+        if (savedModeOrdinal in RulerMode.values().indices) {
+            currentMode = RulerMode.values()[savedModeOrdinal]
+        }
+
+        currentLineColor = prefsManager.getLineColor()
+        currentBankLineColor = prefsManager.getBankLineColor()
+        currentAlpha = prefsManager.getLineAlpha()
+        currentStrokeWidth = prefsManager.getLineStrokeWidth()
+        updateLineColor(currentLineColor)
+        updateBankLineColor(currentBankLineColor)
+        updateLineStyle(currentStrokeWidth, currentAlpha)
+
+        showRadialGuides = prefsManager.getShowRadialGuides()
+        ringRadiusDp = prefsManager.getRingRadius()
+    }
+
+    /**
+     * Requirement 2: Auto-clamp boundaryBox to prevent overflowing screen edges in Landscape mode.
+     */
+    fun clampBoundaryBox(w: Float, h: Float) {
+        if (w <= 0 || h <= 0) return
+        val minMargin = 20f * density
+        val minWidth = 80f * density
+        val minHeight = 80f * density
+
+        var l = boundaryBox.left.coerceIn(minMargin, (w * 0.45f).coerceAtLeast(minMargin))
+        var t = boundaryBox.top.coerceIn(minMargin, (h * 0.45f).coerceAtLeast(minMargin))
+        var r = boundaryBox.right.coerceIn((w * 0.55f).coerceAtMost(w - minMargin), w - minMargin)
+        var b = boundaryBox.bottom.coerceIn((h * 0.55f).coerceAtMost(h - minMargin), h - minMargin)
+
+        if (r <= l + minWidth) {
+            l = minMargin
+            r = w - minMargin
+        }
+        if (b <= t + minHeight) {
+            t = minMargin
+            b = h - minMargin
+        }
+        boundaryBox.set(l, t, r, b)
+    }
+
+    /**
+     * Requirement 2: Reset boundary box to proportional center rectangle.
+     */
+    fun resetToProportionalCenter() {
+        val landSize = getLandscapeScreenSize()
+        val w = landSize.x.coerceAtLeast(200f)
+        val h = landSize.y.coerceAtLeast(200f)
+        val l = w * 0.191f
+        val t = h * 0.228f
+        val r = w * (1f - 0.191f)
+        val b = h * 0.921f
+        boundaryBox.set(l, t, r, b)
+        prefsManager.saveBoundaryBox(l, t, r, b)
+        invalidate()
+    }
+
+    /**
+     * Requirement 2: Dynamically adjust line color across primary, reflected, and 6-pocket lines,
+     * preserving currently active opacity alpha.
+     */
+    fun updateLineColor(color: Int) {
+        currentLineColor = color
+        val r = Color.red(color)
+        val g = Color.green(color)
+        val b = Color.blue(color)
+        val argb = Color.argb(currentAlpha, r, g, b)
+
+        primaryLinePaint.color = argb
+        reflectedLinePaint.color = argb
+        sixLinePaint.color = argb
+
+        invalidate()
+    }
+
+    /**
+     * Adjust contrasting color for 6 Mirror Bank rays, preserving currently active alpha.
+     */
+    fun updateBankLineColor(color: Int) {
+        currentBankLineColor = color
+        val br = Color.red(color)
+        val bg = Color.green(color)
+        val bb = Color.blue(color)
+        val bankArgb = Color.argb(currentAlpha, br, bg, bb)
+
+        bankLinePaint.color = bankArgb
+        bankDotPaint.color = bankArgb
+
+        invalidate()
+    }
+
+    /**
+     * Dynamically adjust line thickness and opacity.
+     */
+    fun updateLineStyle(strokeWidth: Float, alpha: Int) {
+        currentAlpha = alpha.coerceIn(25, 255)
+        currentStrokeWidth = strokeWidth
+        val strokePx = strokeWidth * density
+
+        primaryLinePaint.strokeWidth = strokePx
+        reflectedLinePaint.strokeWidth = strokePx
+        sixLinePaint.strokeWidth = strokePx
+        bankLinePaint.strokeWidth = strokePx
+
+        val r = Color.red(currentLineColor)
+        val g = Color.green(currentLineColor)
+        val b = Color.blue(currentLineColor)
+        val argb = Color.argb(currentAlpha, r, g, b)
+
+        primaryLinePaint.color = argb
+        reflectedLinePaint.color = argb
+        sixLinePaint.color = argb
+
+        val br = Color.red(currentBankLineColor)
+        val bg = Color.green(currentBankLineColor)
+        val bb = Color.blue(currentBankLineColor)
+        val bankArgb = Color.argb(currentAlpha, br, bg, bb)
+
+        bankLinePaint.color = bankArgb
+        bankDotPaint.color = bankArgb
+
+        // Synchronize stem/tether line and center aim dot alpha
+        val stemAlpha = (currentAlpha * 0.7f).roundToInt().coerceIn(20, 255)
+        stemLinePaint.color = Color.argb(stemAlpha, 255, 255, 255)
+        aimDotPaint.color = Color.argb(currentAlpha, 255, 255, 255)
+
+        val shadowAlpha = (currentAlpha * 0.85f).roundToInt().coerceIn(20, 255)
+        aimShadowPaint.color = Color.argb(shadowAlpha, 0, 0, 0)
+        aimCenterShadowPaint.color = Color.argb(shadowAlpha, 0, 0, 0)
+        aimRingPaint.color = Color.argb(currentAlpha, 255, 255, 255)
+        aimCenterDotPaint.color = Color.argb(currentAlpha, 255, 255, 255)
+
+        invalidate()
+    }
+
+    fun setShowRadialGuides(show: Boolean) {
+        showRadialGuides = show
+        prefsManager.saveShowRadialGuides(show)
+        invalidate()
+    }
+
+    fun toggleRadialGuides(): Boolean {
+        setShowRadialGuides(!showRadialGuides)
+        return showRadialGuides
+    }
+
+    fun setRingRadius(radius: Float) {
+        ringRadiusDp = radius
+        prefsManager.saveRingRadius(radius)
+        invalidate()
+    }
+
+    fun setPointA(aimX: Float, aimY: Float, gripX: Float = aimX, gripY: Float = aimY) {
+        pointA.set(aimX, aimY)
+        gripA.set(gripX, gripY)
+        hasGripA = (GeometryUtils.distance(aimX, aimY, gripX, gripY) > 5f)
+        invalidate()
+    }
+
+    fun setPointB(aimX: Float, aimY: Float, gripX: Float = aimX, gripY: Float = aimY) {
+        pointB.set(aimX, aimY)
+        gripB.set(gripX, gripY)
+        hasGripB = (GeometryUtils.distance(aimX, aimY, gripX, gripY) > 5f)
+        invalidate()
+    }
+
+    fun setPointC(aimX: Float, aimY: Float, gripX: Float = aimX, gripY: Float = aimY) {
+        pointC.set(aimX, aimY)
+        gripC.set(gripX, gripY)
+        hasGripC = (GeometryUtils.distance(aimX, aimY, gripX, gripY) > 5f)
+        invalidate()
+    }
+
+    fun setRulerMode(mode: RulerMode) {
+        currentMode = mode
+        prefsManager.saveMode(mode.ordinal)
+        invalidate()
+    }
+
+    fun cycleRulerMode(): RulerMode {
+        val nextOrdinal = (currentMode.ordinal + 1) % RulerMode.values().size
+        val nextMode = RulerMode.values()[nextOrdinal]
+        setRulerMode(nextMode)
+        return nextMode
+    }
+
+    fun setCalibrating(calibrating: Boolean) {
+        isCalibrating = calibrating
+        if (!calibrating) {
+            prefsManager.saveBoundaryBox(boundaryBox.left, boundaryBox.top, boundaryBox.right, boundaryBox.bottom)
+            activeDragTarget = DragTarget.NONE
+        }
+        invalidate()
+    }
+
+    fun resetBoundaryCalibration() {
+        val landSize = getLandscapeScreenSize()
+        val screenW = landSize.x.coerceAtLeast(100f)
+        val screenH = landSize.y.coerceAtLeast(100f)
+        prefsManager.resetBoundaryBox()
+        boundaryBox = prefsManager.getBoundaryBox(screenW, screenH)
+        clampBoundaryBox(screenW, screenH)
+        invalidate()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration?) {
+        super.onConfigurationChanged(newConfig)
+        val landSize = getLandscapeScreenSize()
+        val screenW = landSize.x.coerceAtLeast(100f)
+        val screenH = landSize.y.coerceAtLeast(100f)
+        boundaryBox = prefsManager.getBoundaryBox(screenW, screenH)
+        clampBoundaryBox(screenW, screenH)
+        invalidate()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val saveCount = canvas.save()
+        if (!isCalibrating) {
+            canvas.translate(-windowOffsetX, -windowOffsetY)
+        }
+
+        // Requirement 1: Clean View. ONLY draw boundary box and handles when isCalibrating == true
+        if (isCalibrating) {
+            drawBoundaryBox(canvas)
+            drawEightCalibrationHandles(canvas)
+        }
+
+        if (!isCalibrating) {
+            if (showRadialGuides) {
+                // Requirement 2: Mode 1-Titik Fokus (Single-Point Target Mode)
+                // Hide connecting line A-B and reflection rays.
+                // Only render Point B's stem tether (from grip pad to Point B)
+                if (hasGripB) {
+                    canvas.drawLine(gripB.x, gripB.y, pointB.x, pointB.y, stemLinePaint)
+                }
+                // Render Point B's white center dot + 6 Direct rays + 6 Mirror Bank rays
+                drawTargetAndRadialGuides(canvas)
+            } else {
+                // Normal modes (Auto-Reflect, Manual 3-Pt, Edge-Marker)
+                drawStemTethers(canvas)
+                when (currentMode) {
+                    RulerMode.AUTO_REFLECT -> drawAutoReflection(canvas)
+                    RulerMode.MANUAL_3_POINT -> drawManualThreePoint(canvas)
+                    RulerMode.EDGE_MARKER_ONLY -> drawEdgeMarkerOnly(canvas)
+                }
+            }
+        }
+
+        canvas.restoreToCount(saveCount)
+    }
+
+    /**
+     * Visual connection between finger Grip Pad and the actual Aim Point.
+     */
+    private fun drawStemTethers(canvas: Canvas) {
+        if (hasGripA) {
+            canvas.drawLine(gripA.x, gripA.y, pointA.x, pointA.y, stemLinePaint)
+            canvas.drawCircle(pointA.x, pointA.y, 4f * density, aimDotPaint)
+        }
+        if (hasGripB) {
+            canvas.drawLine(gripB.x, gripB.y, pointB.x, pointB.y, stemLinePaint)
+        }
+        if (hasGripC && currentMode == RulerMode.MANUAL_3_POINT) {
+            canvas.drawLine(gripC.x, gripC.y, pointC.x, pointC.y, stemLinePaint)
+            canvas.drawCircle(pointC.x, pointC.y, 4f * density, aimDotPaint)
+        }
+    }
+
+    /**
+     * Zero-allocation helper to draw a radial ray from (bx, by) toward target (tx, ty).
+     */
+    private fun drawRadialRay(
+        canvas: Canvas,
+        bx: Float,
+        by: Float,
+        tx: Float,
+        ty: Float,
+        startDist: Float,
+        endDist: Float,
+        paint: Paint
+    ) {
+        val dx = tx - bx
+        val dy = ty - by
+        val dist = hypot(dx, dy)
+        if (dist > 1f) {
+            val ux = dx / dist
+            val uy = dy / dist
+            val startX = bx + ux * startDist
+            val startY = by + uy * startDist
+            val endX = bx + ux * endDist
+            val endY = by + uy * endDist
+            canvas.drawLine(startX, startY, endX, endY, paint)
+        }
+    }
+
+    /**
+     * 12-Jaw Gate & Pro-Side Clearance Algorithm:
+     * Calculates the dynamically optimal pocket entry target between jaws J1(j1x, j1y) and J2(j2x, j2y)
+     * so that the aiming line never cuts into the cushion rail when the ball approaches the cushion.
+     * Zero-allocation primitive Float calculations.
+     */
+    /**
+     * 12-Jaw Gate & Pro-Side Clearance Algorithm:
+     * Calculates the dynamically optimal pocket entry target between jaws J1(j1x, j1y) and J2(j2x, j2y)
+     * so that the aiming line never cuts into the cushion rail when the ball approaches the cushion.
+     * Zero-allocation primitive Float calculations.
+     */
+    private fun drawOptimalVertexRay(
+        canvas: Canvas,
+        bx: Float,
+        by: Float,
+        j1x: Float,
+        j1y: Float,
+        j2x: Float,
+        j2y: Float,
+        inwardNormalX: Float,
+        inwardNormalY: Float,
+        maxNormalInset: Float,
+        startDist: Float,
+        endDist: Float,
+        paint: Paint
+    ) {
+        val midX = (j1x + j2x) * 0.5f
+        val midY = (j1y + j2y) * 0.5f
+
+        val gateLen = hypot(j2x - j1x, j2y - j1y).coerceAtLeast(1f)
+        val d1 = hypot(bx - j1x, by - j1y)
+        val d2 = hypot(bx - j2x, by - j2y)
+
+        val s = ((d1 - d2) / gateLen).coerceIn(-1f, 1f)
+        val absS = abs(s)
+
+        val proSideBias = 0.22f * s
+        val gateShiftX = proSideBias * (j1x - j2x)
+        val gateShiftY = proSideBias * (j1y - j2y)
+
+        val normalShift = (absS * absS) * maxNormalInset
+
+        val targetX = midX + gateShiftX + (inwardNormalX * normalShift)
+        val targetY = midY + gateShiftY + (inwardNormalY * normalShift)
+
+        val dx = targetX - bx
+        val dy = targetY - by
+        val dist = hypot(dx, dy)
+        if (dist > 1f) {
+            val ux = dx / dist
+            val uy = dy / dist
+            canvas.drawLine(
+                bx + ux * startDist,
+                by + uy * startDist,
+                bx + ux * endDist,
+                by + uy * endDist,
+                paint
+            )
+        }
+    }
+
+    /**
+     * Zero-Allocation Target Mode: 6 Direct Rays with 12-Jaw Gate Clearance + 10 Cushion Bank Rays.
+     * Direct primitive calculations per frame without allocating any Array or PointF objects.
+     */
+    private fun drawTargetAndRadialGuides(canvas: Canvas) {
+        val bx = pointB.x
+        val by = pointB.y
+
+        // 1. Ball-Fit Ring: High-Contrast Hollow Reticle matching ball size
+        val ringRadius = ringRadiusDp * density
+        canvas.drawCircle(bx, by, ringRadius, aimShadowPaint)
+        canvas.drawCircle(bx, by, ringRadius, aimRingPaint)
+
+        // 2. Micro Center Pinpoint: Double contrast micro center dot
+        canvas.drawCircle(bx, by, 2.5f * density, aimCenterShadowPaint)
+        canvas.drawCircle(bx, by, 1.5f * density, aimCenterDotPaint)
+
+        // Draw the 6 direct rays and 10 mirror reflection rays if enabled
+        if (showRadialGuides) {
+            val startDist = ringRadius + (3f * density)
+            val directEndDist = 85f * density
+            val bankEndDist = 64f * density
+
+            val l = boundaryBox.left
+            val r = boundaryBox.right
+            val t = boundaryBox.top
+            val b = boundaryBox.bottom
+            val cx = boundaryBox.centerX()
+
+            // 1. 12-Jaw Gate & Pro-Side Clearance Algorithm (6 Direct Pocket Rays)
+            // Ensures guide lines never clip or penetrate the cushion when ball is near rails
+            val cornerJawDist = 14f * density
+            val sideJawDist = 14f * density
+            val maxNormalCorner = 6f * density
+            val maxNormalSide = 9f * density
+            val diagNorm = 0.7071f
+
+            // Top-Left (Corner)
+            drawOptimalVertexRay(
+                canvas, bx, by,
+                l + cornerJawDist, t,
+                l, t + cornerJawDist,
+                diagNorm, diagNorm, maxNormalCorner,
+                startDist, directEndDist, sixLinePaint
+            )
+
+            // Top-Center (Side)
+            drawOptimalVertexRay(
+                canvas, bx, by,
+                cx - sideJawDist, t,
+                cx + sideJawDist, t,
+                0f, 1f, maxNormalSide,
+                startDist, directEndDist, sixLinePaint
+            )
+
+            // Top-Right (Corner)
+            drawOptimalVertexRay(
+                canvas, bx, by,
+                r - cornerJawDist, t,
+                r, t + cornerJawDist,
+                -diagNorm, diagNorm, maxNormalCorner,
+                startDist, directEndDist, sixLinePaint
+            )
+
+            // Bottom-Left (Corner)
+            drawOptimalVertexRay(
+                canvas, bx, by,
+                l + cornerJawDist, b,
+                l, b - cornerJawDist,
+                diagNorm, -diagNorm, maxNormalCorner,
+                startDist, directEndDist, sixLinePaint
+            )
+
+            // Bottom-Center (Side)
+            drawOptimalVertexRay(
+                canvas, bx, by,
+                cx - sideJawDist, b,
+                cx + sideJawDist, b,
+                0f, -1f, maxNormalSide,
+                startDist, directEndDist, sixLinePaint
+            )
+
+            // Bottom-Right (Corner)
+            drawOptimalVertexRay(
+                canvas, bx, by,
+                r - cornerJawDist, b,
+                r, b - cornerJawDist,
+                -diagNorm, -diagNorm, maxNormalCorner,
+                startDist, directEndDist, sixLinePaint
+            )
+
+            // 2. 10 Mirror Bank Rays (Pantulan Dinding Rel)
+            // Collision plane accounts for physical cushion nose + ball radius
+            val cushionBounceInset = (5f * density) + (ringRadiusDp * density)
+            val bounceL = l + cushionBounceInset
+            val bounceR = r - cushionBounceInset
+            val bounceT = t + cushionBounceInset
+            val bounceB = b - cushionBounceInset
+
+            val sideJawInset = 6f * density
+            val mirrorTopCornerY = 2f * bounceT - b
+            val mirrorTopCenterY = 2f * bounceT - (b - sideJawInset)
+            val mirrorBottomCornerY = 2f * bounceB - t
+            val mirrorBottomCenterY = 2f * bounceB - (t + sideJawInset)
+            val mirrorRightX = 2f * bounceR - l
+            val mirrorLeftX = 2f * bounceL - r
+
+            val minClearance = 3f * density
+
+            // Top Bound (3 rays: bounce off top rail toward bottom pockets)
+            if (by > bounceT + minClearance) {
+                drawRadialRay(canvas, bx, by, l + cornerJawDist, mirrorTopCornerY, startDist, bankEndDist, bankLinePaint)
+                drawRadialRay(canvas, bx, by, cx, mirrorTopCenterY, startDist, bankEndDist, bankLinePaint)
+                drawRadialRay(canvas, bx, by, r - cornerJawDist, mirrorTopCornerY, startDist, bankEndDist, bankLinePaint)
+            }
+
+            // Bottom Bound (3 rays: bounce off bottom rail toward top pockets)
+            if (by < bounceB - minClearance) {
+                drawRadialRay(canvas, bx, by, l + cornerJawDist, mirrorBottomCornerY, startDist, bankEndDist, bankLinePaint)
+                drawRadialRay(canvas, bx, by, cx, mirrorBottomCenterY, startDist, bankEndDist, bankLinePaint)
+                drawRadialRay(canvas, bx, by, r - cornerJawDist, mirrorBottomCornerY, startDist, bankEndDist, bankLinePaint)
+            }
+
+            // Right Bound (2 rays: bounce off right rail toward left pockets)
+            if (bx < bounceR - minClearance) {
+                drawRadialRay(canvas, bx, by, mirrorRightX, t + cornerJawDist, startDist, bankEndDist, bankLinePaint)
+                drawRadialRay(canvas, bx, by, mirrorRightX, b - cornerJawDist, startDist, bankEndDist, bankLinePaint)
+            }
+
+            // Left Bound (2 rays: bounce off left rail toward right pockets)
+            if (bx > bounceL + minClearance) {
+                drawRadialRay(canvas, bx, by, mirrorLeftX, t + cornerJawDist, startDist, bankEndDist, bankLinePaint)
+                drawRadialRay(canvas, bx, by, mirrorLeftX, b - cornerJawDist, startDist, bankEndDist, bankLinePaint)
+            }
+        }
+    }
+
+    private fun drawBoundaryBox(canvas: Canvas) {
+        canvas.drawRect(boundaryBox, boundaryCalibPaint)
+
+        // Feature 1: 6 Pocket Mouth Target Rings (Jaw Guides in Calibration Mode)
+        val l = boundaryBox.left
+        val r = boundaryBox.right
+        val t = boundaryBox.top
+        val b = boundaryBox.bottom
+        val cx = boundaryBox.centerX()
+
+        drawVertexGuideRing(canvas, l, t)   // Top-Left
+        drawVertexGuideRing(canvas, cx, t)  // Top-Center
+        drawVertexGuideRing(canvas, r, t)   // Top-Right
+        drawVertexGuideRing(canvas, l, b)   // Bottom-Left
+        drawVertexGuideRing(canvas, cx, b)  // Bottom-Center
+        drawVertexGuideRing(canvas, r, b)   // Bottom-Right
+
+        val label = "Calibration: Drag 8 handles to align target bounds"
+        textPaint.getTextBounds(label, 0, label.length, textBounds)
+        val textX = boundaryBox.left + 16f * density
+        val textY = (boundaryBox.top - 12f * density).coerceAtLeast(36f * density)
+        val padding = 6f * density
+        canvas.drawRect(
+            textX - padding,
+            textY - textBounds.height() - padding,
+            textX + textBounds.width() + padding,
+            textY + padding,
+            textBgPaint
+        )
+        canvas.drawText(label, textX, textY, textPaint)
+    }
+
+    private fun drawVertexGuideRing(canvas: Canvas, px: Float, py: Float) {
+        val ringRadius = 12f * density
+        canvas.drawCircle(px, py, ringRadius, vertexRingPaint)
+        val crossArm = 4f * density
+        canvas.drawLine(px - crossArm, py, px + crossArm, py, vertexCrossPaint)
+        canvas.drawLine(px, py - crossArm, px, py + crossArm, vertexCrossPaint)
+    }
+
+    /**
+     * Requirement 2: Render side-rail calibration handles (left and right edges)
+     * and top/bottom center indicators.
+     * The 6 pocket positions are clearly indicated by the 6 cyan jaw target rings.
+     */
+    private fun drawEightCalibrationHandles(canvas: Canvas) {
+        val cx = boundaryBox.centerX()
+        val cy = boundaryBox.centerY()
+        val sideRadius = edgeHandleRadius * 0.75f
+
+        // 2 Side Edge Centers (Left & Right rail resize handles)
+        drawHandlePin(canvas, boundaryBox.left, cy, edgeHandleRadius)
+        drawHandlePin(canvas, boundaryBox.right, cy, edgeHandleRadius)
+
+        // Top & Bottom Edge Centers (Resize indicators)
+        drawHandlePin(canvas, cx, boundaryBox.top, sideRadius)
+        drawHandlePin(canvas, cx, boundaryBox.bottom, sideRadius)
+    }
+
+    private fun drawHandlePin(canvas: Canvas, cx: Float, cy: Float, radius: Float) {
+        canvas.drawCircle(cx, cy, radius, handleOuterPaint)
+        canvas.drawCircle(cx, cy, radius, handleStrokePaint)
+        canvas.drawCircle(cx, cy, 4f * density, handleCenterPaint)
+    }
+
+    private fun updateInnerInsetBox() {
+        val cushionBounceInset = (5f * density) + (ringRadiusDp * density)
+        innerInsetBox.set(
+            boundaryBox.left + cushionBounceInset,
+            boundaryBox.top + cushionBounceInset,
+            boundaryBox.right - cushionBounceInset,
+            boundaryBox.bottom - cushionBounceInset
+        )
+    }
+
+    private fun drawAutoReflection(canvas: Canvas) {
+        updateInnerInsetBox()
+        val reflection = GeometryUtils.computeReflection(pointA, pointB, innerInsetBox)
+
+        if (reflection != null) {
+            // Primary Line: A -> Hit Point
+            linePath.reset()
+            linePath.moveTo(pointA.x, pointA.y)
+            linePath.lineTo(reflection.hitPoint.x, reflection.hitPoint.y)
+            canvas.drawPath(linePath, primaryLinePaint)
+
+            // Reflected Line: Hit Point -> Reflected End Point
+            linePath.reset()
+            linePath.moveTo(reflection.hitPoint.x, reflection.hitPoint.y)
+            linePath.lineTo(reflection.reflectedPoint.x, reflection.reflectedPoint.y)
+            canvas.drawPath(linePath, reflectedLinePaint)
+
+            // Collision ring at boundary hit point
+            canvas.drawCircle(
+                reflection.hitPoint.x,
+                reflection.hitPoint.y,
+                6f * density,
+                edgeMarkerPaint
+            )
+            canvas.drawCircle(
+                reflection.hitPoint.x,
+                reflection.hitPoint.y,
+                6f * density,
+                edgeMarkerStrokePaint
+            )
+
+            // Angle text badge near reflection point
+            val angleText = String.format(Locale.US, "θ = %.1f°", reflection.angleOfIncidenceDeg)
+            drawTextBadge(canvas, angleText, reflection.hitPoint.x + 12f * density, reflection.hitPoint.y - 12f * density)
+        } else {
+            // Fallback straight ray through B if no boundary hit
+            linePath.reset()
+            linePath.moveTo(pointA.x, pointA.y)
+            linePath.lineTo(pointB.x, pointB.y)
+            canvas.drawPath(linePath, primaryLinePaint)
+        }
+    }
+
+    private fun drawManualThreePoint(canvas: Canvas) {
+        // Line 1: A -> B
+        linePath.reset()
+        linePath.moveTo(pointA.x, pointA.y)
+        linePath.lineTo(pointB.x, pointB.y)
+        canvas.drawPath(linePath, primaryLinePaint)
+
+        // Line 2: B -> C
+        linePath.reset()
+        linePath.moveTo(pointB.x, pointB.y)
+        linePath.lineTo(pointC.x, pointC.y)
+        canvas.drawPath(linePath, reflectedLinePaint)
+
+        // Draw Angle at pivot Point B
+        val angle = GeometryUtils.computeAngleBetweenLines(pointA, pointB, pointC)
+        val angleText = String.format(Locale.US, "∠ = %.1f°", angle)
+        drawTextBadge(canvas, angleText, pointB.x + 14f * density, pointB.y - 14f * density)
+    }
+
+    private fun drawEdgeMarkerOnly(canvas: Canvas) {
+        updateInnerInsetBox()
+        val reflection = GeometryUtils.computeReflection(pointA, pointB, innerInsetBox)
+
+        if (reflection != null) {
+            canvas.drawCircle(
+                reflection.hitPoint.x,
+                reflection.hitPoint.y,
+                edgeMarkerRadius,
+                edgeMarkerPaint
+            )
+            canvas.drawCircle(
+                reflection.hitPoint.x,
+                reflection.hitPoint.y,
+                edgeMarkerRadius,
+                edgeMarkerStrokePaint
+            )
+
+            canvas.drawCircle(
+                reflection.reflectedPoint.x,
+                reflection.reflectedPoint.y,
+                edgeMarkerRadius * 0.75f,
+                edgeMarkerPaint
+            )
+        }
+    }
+
+    private fun drawTextBadge(canvas: Canvas, text: String, x: Float, y: Float) {
+        textPaint.getTextBounds(text, 0, text.length, textBounds)
+        val pad = 4f * density
+        badgeRect.set(
+            x - pad,
+            y - textBounds.height() - pad,
+            x + textBounds.width() + pad,
+            y + pad
+        )
+        canvas.drawRoundRect(badgeRect, 4f * density, 4f * density, textBgPaint)
+        canvas.drawText(text, x, y, textPaint)
+    }
+
+    /**
+     * Requirement 2: 8-Handle touch dragging in calibration mode.
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (!isCalibrating) {
+            return false
+        }
+
+        val touchX = event.x
+        val touchY = event.y
+
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                activeDragTarget = findTouchedCalibrationTarget(touchX, touchY)
+                if (activeDragTarget != DragTarget.NONE) {
+                    val targetPos = getTargetPos(activeDragTarget)
+                    touchOffset.set(touchX - targetPos.x, touchY - targetPos.y)
+                    return true
+                }
+                return false
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                if (activeDragTarget != DragTarget.NONE) {
+                    val minSize = 60f * density
+                    val landSize = getLandscapeScreenSize()
+                    val screenW = landSize.x
+                    val screenH = landSize.y
+
+                    val curX = (touchX - touchOffset.x).coerceIn(0f, screenW)
+                    val curY = (touchY - touchOffset.y).coerceIn(0f, screenH)
+
+                    when (activeDragTarget) {
+                        DragTarget.CORNER_TOP_LEFT -> {
+                            boundaryBox.left = curX.coerceAtMost(boundaryBox.right - minSize)
+                            boundaryBox.top = curY.coerceAtMost(boundaryBox.bottom - minSize)
+                        }
+                        DragTarget.CORNER_TOP_RIGHT -> {
+                            boundaryBox.right = curX.coerceAtLeast(boundaryBox.left + minSize)
+                            boundaryBox.top = curY.coerceAtMost(boundaryBox.bottom - minSize)
+                        }
+                        DragTarget.CORNER_BOTTOM_LEFT -> {
+                            boundaryBox.left = curX.coerceAtMost(boundaryBox.right - minSize)
+                            boundaryBox.bottom = curY.coerceAtLeast(boundaryBox.top + minSize)
+                        }
+                        DragTarget.CORNER_BOTTOM_RIGHT -> {
+                            boundaryBox.right = curX.coerceAtLeast(boundaryBox.left + minSize)
+                            boundaryBox.bottom = curY.coerceAtLeast(boundaryBox.top + minSize)
+                        }
+                        DragTarget.HANDLE_TOP_CENTER -> {
+                            boundaryBox.top = curY.coerceAtMost(boundaryBox.bottom - minSize)
+                        }
+                        DragTarget.HANDLE_BOTTOM_CENTER -> {
+                            boundaryBox.bottom = curY.coerceAtLeast(boundaryBox.top + minSize)
+                        }
+                        DragTarget.HANDLE_LEFT_CENTER -> {
+                            boundaryBox.left = curX.coerceAtMost(boundaryBox.right - minSize)
+                        }
+                        DragTarget.HANDLE_RIGHT_CENTER -> {
+                            boundaryBox.right = curX.coerceAtLeast(boundaryBox.left + minSize)
+                        }
+                        DragTarget.NONE -> Unit
+                    }
+                    invalidate()
+                    return true
+                }
+            }
+
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (activeDragTarget != DragTarget.NONE) {
+                    activeDragTarget = DragTarget.NONE
+                    prefsManager.saveBoundaryBox(boundaryBox.left, boundaryBox.top, boundaryBox.right, boundaryBox.bottom)
+                    invalidate()
+                    return true
+                }
+            }
+        }
+
+        return super.onTouchEvent(event)
+    }
+
+    private fun findTouchedCalibrationTarget(x: Float, y: Float): DragTarget {
+        val cornerThreshold = 40f * density
+        val edgeThreshold = 36f * density
+
+        val cx = boundaryBox.centerX()
+        val cy = boundaryBox.centerY()
+
+        // 1. Check 4 Corners
+        if (GeometryUtils.distance(x, y, boundaryBox.left, boundaryBox.top) <= cornerThreshold) {
+            return DragTarget.CORNER_TOP_LEFT
+        }
+        if (GeometryUtils.distance(x, y, boundaryBox.right, boundaryBox.top) <= cornerThreshold) {
+            return DragTarget.CORNER_TOP_RIGHT
+        }
+        if (GeometryUtils.distance(x, y, boundaryBox.left, boundaryBox.bottom) <= cornerThreshold) {
+            return DragTarget.CORNER_BOTTOM_LEFT
+        }
+        if (GeometryUtils.distance(x, y, boundaryBox.right, boundaryBox.bottom) <= cornerThreshold) {
+            return DragTarget.CORNER_BOTTOM_RIGHT
+        }
+
+        // 2. Check 4 Edge Centers
+        if (GeometryUtils.distance(x, y, cx, boundaryBox.top) <= edgeThreshold) {
+            return DragTarget.HANDLE_TOP_CENTER
+        }
+        if (GeometryUtils.distance(x, y, cx, boundaryBox.bottom) <= edgeThreshold) {
+            return DragTarget.HANDLE_BOTTOM_CENTER
+        }
+        if (GeometryUtils.distance(x, y, boundaryBox.left, cy) <= edgeThreshold) {
+            return DragTarget.HANDLE_LEFT_CENTER
+        }
+        if (GeometryUtils.distance(x, y, boundaryBox.right, cy) <= edgeThreshold) {
+            return DragTarget.HANDLE_RIGHT_CENTER
+        }
+
+        return DragTarget.NONE
+    }
+
+    private fun getTargetPos(target: DragTarget): PointF {
+        val cx = boundaryBox.centerX()
+        val cy = boundaryBox.centerY()
+        return when (target) {
+            DragTarget.CORNER_TOP_LEFT -> PointF(boundaryBox.left, boundaryBox.top)
+            DragTarget.CORNER_TOP_RIGHT -> PointF(boundaryBox.right, boundaryBox.top)
+            DragTarget.CORNER_BOTTOM_LEFT -> PointF(boundaryBox.left, boundaryBox.bottom)
+            DragTarget.CORNER_BOTTOM_RIGHT -> PointF(boundaryBox.right, boundaryBox.bottom)
+            DragTarget.HANDLE_TOP_CENTER -> PointF(cx, boundaryBox.top)
+            DragTarget.HANDLE_BOTTOM_CENTER -> PointF(cx, boundaryBox.bottom)
+            DragTarget.HANDLE_LEFT_CENTER -> PointF(boundaryBox.left, cy)
+            DragTarget.HANDLE_RIGHT_CENTER -> PointF(boundaryBox.right, cy)
+            DragTarget.NONE -> PointF(0f, 0f)
+        }
+    }
+}
+
+==> app/src/main/java/com/utility/screenprotractor/GeometryUtils.kt <==
+package com.utility.screenprotractor
+
+import android.graphics.PointF
+import android.graphics.RectF
+import kotlin.math.acos
+import kotlin.math.atan2
+import kotlin.math.sqrt
+
+/**
+ * Geometric calculation engine for ray-box intersections, vector reflections,
+ * and 2D angular projections.
+ */
+object GeometryUtils {
+
+    enum class BoundarySide {
+        NONE, TOP, BOTTOM, LEFT, RIGHT
+    }
+
+    data class Intersection(
+        val point: PointF,
+        val side: BoundarySide,
+        val distance: Float
+    )
+
+    data class ReflectionPath(
+        val startPoint: PointF,
+        val hitPoint: PointF,
+        val hitSide: BoundarySide,
+        val reflectedPoint: PointF,
+        val angleOfIncidenceDeg: Float
+    )
+
+    /**
+     * Compute Euclidean distance between two points.
+     */
+    fun distance(x1: Float, y1: Float, x2: Float, y2: Float): Float {
+        val dx = x2 - x1
+        val dy = y2 - y1
+        return sqrt(dx * dx + dy * dy)
+    }
+
+    fun distance(p1: PointF, p2: PointF): Float {
+        return distance(p1.x, p1.y, p2.x, p2.y)
+    }
+
+    /**
+     * Calculate ray-box intersection from [origin] in direction of [directionPoint]
+     * hitting the 4 edges of [box].
+     *
+     * @param origin Starting point of ray (Point A)
+     * @param directionPoint Aiming point (Point B)
+     * @param box Boundary rectangle
+     * @param minDistance Minimum forward distance to avoid immediate self-collision
+     * @return Intersection result with hit point, hit side, and distance, or null if no hit
+     */
+    fun computeRayBoxIntersection(
+        origin: PointF,
+        directionPoint: PointF,
+        box: RectF,
+        minDistance: Float = 0.5f
+    ): Intersection? {
+        val rawDx = directionPoint.x - origin.x
+        val rawDy = directionPoint.y - origin.y
+        val len = sqrt(rawDx * rawDx + rawDy * rawDy)
+
+        if (len < 1e-5f) {
+            return null
+        }
+
+        // Unit vector
+        val ux = rawDx / len
+        val uy = rawDy / len
+
+        var closestT = Float.MAX_VALUE
+        var hitSide = BoundarySide.NONE
+        var hitX = 0f
+        var hitY = 0f
+
+        // 1. Check Horizontal Top Edge: y = box.top
+        if (uy < -1e-5f) { // Moving upwards
+            val t = (box.top - origin.y) / uy
+            if (t > minDistance && t < closestT) {
+                val x = origin.x + t * ux
+                if (x in (box.left - 1f)..(box.right + 1f)) {
+                    closestT = t
+                    hitSide = BoundarySide.TOP
+                    hitX = x.coerceIn(box.left, box.right)
+                    hitY = box.top
+                }
+            }
+        }
+
+        // 2. Check Horizontal Bottom Edge: y = box.bottom
+        if (uy > 1e-5f) { // Moving downwards
+            val t = (box.bottom - origin.y) / uy
+            if (t > minDistance && t < closestT) {
+                val x = origin.x + t * ux
+                if (x in (box.left - 1f)..(box.right + 1f)) {
+                    closestT = t
+                    hitSide = BoundarySide.BOTTOM
+                    hitX = x.coerceIn(box.left, box.right)
+                    hitY = box.bottom
+                }
+            }
+        }
+
+        // 3. Check Vertical Left Edge: x = box.left
+        if (ux < -1e-5f) { // Moving leftwards
+            val t = (box.left - origin.x) / ux
+            if (t > minDistance && t < closestT) {
+                val y = origin.y + t * uy
+                if (y in (box.top - 1f)..(box.bottom + 1f)) {
+                    closestT = t
+                    hitSide = BoundarySide.LEFT
+                    hitX = box.left
+                    hitY = y.coerceIn(box.top, box.bottom)
+                }
+            }
+        }
+
+        // 4. Check Vertical Right Edge: x = box.right
+        if (ux > 1e-5f) { // Moving rightwards
+            val t = (box.right - origin.x) / ux
+            if (t > minDistance && t < closestT) {
+                val y = origin.y + t * uy
+                if (y in (box.top - 1f)..(box.bottom + 1f)) {
+                    closestT = t
+                    hitSide = BoundarySide.RIGHT
+                    hitX = box.right
+                    hitY = y.coerceIn(box.top, box.bottom)
+                }
+            }
+        }
+
+        return if (hitSide != BoundarySide.NONE && closestT < Float.MAX_VALUE) {
+            Intersection(PointF(hitX, hitY), hitSide, closestT)
+        } else {
+            null
+        }
+    }
+
+    /**
+     * Compute full reflection path:
+     * 1. Primary ray from [pointA] towards [pointB] hitting [box] at [hitPoint].
+     * 2. Reflected vector based on hit edge:
+     *    - Horizontal (Top/Bottom): (dx', dy') = (dx, -dy)
+     *    - Vertical (Left/Right): (dx', dy') = (-dx, dy)
+     * 3. Reflected ray continues to the next boundary wall.
+     */
+    fun computeReflection(
+        pointA: PointF,
+        pointB: PointF,
+        box: RectF
+    ): ReflectionPath? {
+        val firstHit = computeRayBoxIntersection(pointA, pointB, box) ?: return null
+
+        val rawDx = pointB.x - pointA.x
+        val rawDy = pointB.y - pointA.y
+        val len = sqrt(rawDx * rawDx + rawDy * rawDy)
+        if (len < 1e-5f) return null
+
+        val ux = rawDx / len
+        val uy = rawDy / len
+
+        // Invert vector according to reflection surface normal
+        val (refUx, refUy) = when (firstHit.side) {
+            BoundarySide.TOP, BoundarySide.BOTTOM -> Pair(ux, -uy)
+            BoundarySide.LEFT, BoundarySide.RIGHT -> Pair(-ux, uy)
+            BoundarySide.NONE -> Pair(ux, uy)
+        }
+
+        // Calculate angle of incidence (with surface normal, between 0° and 90°)
+        val normalX: Float
+        val normalY: Float
+        when (firstHit.side) {
+            BoundarySide.TOP -> { normalX = 0f; normalY = 1f }
+            BoundarySide.BOTTOM -> { normalX = 0f; normalY = -1f }
+            BoundarySide.LEFT -> { normalX = 1f; normalY = 0f }
+            BoundarySide.RIGHT -> { normalX = -1f; normalY = 0f }
+            BoundarySide.NONE -> { normalX = 0f; normalY = 0f }
+        }
+
+        // Vector from hit point back towards incoming ray
+        val incomingRevX = -ux
+        val incomingRevY = -uy
+        val dot = (incomingRevX * normalX + incomingRevY * normalY).coerceIn(-1f, 1f)
+        val angleDeg = Math.toDegrees(acos(dot).toDouble()).toFloat()
+
+        // Calculate bounce end point by intersecting reflected ray with next boundary wall
+        val reflectedAimPoint = PointF(
+            firstHit.point.x + refUx * 100f,
+            firstHit.point.y + refUy * 100f
+        )
+
+        val secondHit = computeRayBoxIntersection(
+            firstHit.point,
+            reflectedAimPoint,
+            box,
+            minDistance = 2.0f
+        )
+
+        val bounceEnd = secondHit?.point ?: PointF(
+            firstHit.point.x + refUx * 300f,
+            firstHit.point.y + refUy * 300f
+        )
+
+        return ReflectionPath(
+            startPoint = pointA,
+            hitPoint = firstHit.point,
+            hitSide = firstHit.side,
+            reflectedPoint = bounceEnd,
+            angleOfIncidenceDeg = angleDeg
+        )
+    }
+
+    /**
+     * Compute angle between two lines: (A -> B) and (B -> C) in degrees.
+     */
+    fun computeAngleBetweenLines(a: PointF, b: PointF, c: PointF): Float {
+        val angle1 = atan2(a.y - b.y, a.x - b.x)
+        val angle2 = atan2(c.y - b.y, c.x - b.x)
+        var diff = Math.toDegrees((angle2 - angle1).toDouble()).toFloat()
+        if (diff < 0) diff += 360f
+        return diff
+    }
+}
+
+==> app/src/main/java/com/utility/screenprotractor/HandleView.kt <==
+package com.utility.screenprotractor
+
+import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.view.View
+
+/**
+ * Minimalist independent floating handle view (42dp x 42dp touch target).
+ * Features a clean crosshair plus (+) sign in the center without circles or labels,
+ * with full alpha transparency synchronization.
+ */
+class HandleView(
+    context: Context,
+    val label: String = ""
+) : View(context) {
+
+    private val density = resources.displayMetrics.density
+
+    // Paint: Center Plus (+) Crosshair
+    private val plusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.STROKE
+        strokeWidth = 3f * density
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val size = (42f * density).toInt()
+        setMeasuredDimension(size, size)
+    }
+
+    /**
+     * Update crosshair color (e.g. matching primary line color or white)
+     */
+    fun updateColor(color: Int) {
+        val currentAlpha = plusPaint.alpha
+        plusPaint.color = color
+        plusPaint.alpha = currentAlpha
+        invalidate()
+    }
+
+    /**
+     * Synchronize handle alpha with line opacity (25 - 255) directly via Paint alpha
+     * without creating expensive GPU offscreen alpha layers for the window.
+     */
+    fun updateHandleAlpha(alphaInt: Int) {
+        plusPaint.alpha = alphaInt.coerceIn(25, 255)
+        invalidate()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+
+        val cx = width / 2f
+        val cy = height / 2f
+
+        // Two intersecting lines forming a clean '+' crosshair (total length 20dp)
+        val armLength = 10f * density
+        canvas.drawLine(cx - armLength, cy, cx + armLength, cy, plusPaint)
+        canvas.drawLine(cx, cy - armLength, cx, cy + armLength, plusPaint)
+    }
+}
+
+==> app/src/main/java/com/utility/screenprotractor/MainActivity.kt <==
+package com.utility.screenprotractor
+
+import android.content.Intent
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.view.View
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import com.utility.screenprotractor.databinding.ActivityMainBinding
+
+/**
+ * Entry dashboard activity providing permission checks, overlay start/stop controls,
+ * and calibration management.
+ */
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var binding: ActivityMainBinding
+    private lateinit var prefsManager: PrefsManager
+
+    // Permission launcher to handle returning from system overlay settings
+    private val overlayPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        updateUIState()
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        prefsManager = PrefsManager(this)
+
+        setupClickListeners()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateUIState()
+    }
+
+    private fun setupClickListeners() {
+        // Grant permission button
+        binding.btnGrantPermission.setOnClickListener {
+            requestOverlayPermission()
+        }
+
+        // Start Overlay Button
+        binding.btnStartOverlay.setOnClickListener {
+            if (hasOverlayPermission()) {
+                startOverlayService()
+                // Finish activity to keep screen clear as per PRD spec
+                finish()
+            } else {
+                Toast.makeText(
+                    this,
+                    R.string.toast_permission_needed,
+                    Toast.LENGTH_SHORT
+                ).show()
+                requestOverlayPermission()
+            }
+        }
+
+        // Stop Overlay Button
+        binding.btnStopOverlay.setOnClickListener {
+            if (OverlayService.isServiceRunning) {
+                val stopIntent = Intent(this, OverlayService::class.java).apply {
+                    action = OverlayService.ACTION_STOP_SERVICE
+                }
+                startService(stopIntent)
+                Toast.makeText(this, "Overlay service stopped", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "Overlay is not running", Toast.LENGTH_SHORT).show()
+            }
+            updateUIState()
+        }
+
+        // Reset Calibration Button
+        binding.btnResetCalibration.setOnClickListener {
+            prefsManager.resetBoundaryBox()
+            Toast.makeText(
+                this,
+                "Boundary box calibration reset to default",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    private fun hasOverlayPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Settings.canDrawOverlays(this)
+        } else {
+            true
+        }
+    }
+
+    private fun requestOverlayPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+            overlayPermissionLauncher.launch(intent)
+        }
+    }
+
+    private fun startOverlayService() {
+        val serviceIntent = Intent(this, OverlayService::class.java)
+        ContextCompat.startForegroundService(this, serviceIntent)
+    }
+
+    private fun updateUIState() {
+        val hasPermission = hasOverlayPermission()
+        val isRunning = OverlayService.isServiceRunning
+
+        // Update status dot and text
+        val dot = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(
+                if (hasPermission)
+                    ContextCompat.getColor(this@MainActivity, R.color.green_status)
+                else
+                    ContextCompat.getColor(this@MainActivity, R.color.red_danger)
+            )
+        }
+        binding.indicatorStatus.background = dot
+
+        if (hasPermission) {
+            binding.tvPermissionStatus.text = getString(R.string.permission_granted)
+            binding.tvPermissionStatus.setTextColor(
+                ContextCompat.getColor(this, R.color.green_status)
+            )
+            binding.btnGrantPermission.visibility = View.GONE
+            binding.btnStartOverlay.isEnabled = true
+            binding.btnStartOverlay.alpha = 1.0f
+        } else {
+            binding.tvPermissionStatus.text = getString(R.string.permission_not_granted)
+            binding.tvPermissionStatus.setTextColor(
+                ContextCompat.getColor(this, R.color.red_danger)
+            )
+            binding.btnGrantPermission.visibility = View.VISIBLE
+            binding.btnStartOverlay.isEnabled = true
+            binding.btnStartOverlay.alpha = 0.85f
+        }
+
+        // Update stop button visibility / state
+        if (isRunning) {
+            binding.btnStopOverlay.visibility = View.VISIBLE
+            binding.btnStartOverlay.text = "Ruler Running (Restart)"
+        } else {
+            binding.btnStopOverlay.visibility = View.GONE
+            binding.btnStartOverlay.text = getString(R.string.btn_start_overlay)
+        }
+    }
+}
+
+==> app/src/main/java/com/utility/screenprotractor/OverlayService.kt <==
+package com.utility.screenprotractor
+
+import android.annotation.SuppressLint
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.content.res.Configuration
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.Point
+import android.graphics.PointF
+import android.graphics.drawable.GradientDrawable
+import android.os.Build
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.view.Gravity
+import android.view.HapticFeedbackConstants
+import android.view.LayoutInflater
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
+import android.widget.SeekBar
+import android.widget.TextView
+import android.widget.Toast
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import kotlin.math.abs
+import kotlin.math.hypot
+import kotlin.math.roundToInt
+
+/**
+ * Multi-window foreground service managing:
+ * 1. Pass-through canvas overlay with 6-pocket radial lines and offset tethers.
+ * 2. Independent floating handle windows with vertical offset to prevent finger obstruction.
+ * 3. Draggable compact floating control bar with collapsible minimize bubble,
+ *    Quick-Ghost 4s, calibration toggle, 6-line toggle, and line sliders.
+ */
+class OverlayService : Service() {
+
+    private lateinit var windowManager: WindowManager
+    private lateinit var prefsManager: PrefsManager
+
+    // Canvas Overlay View
+    private var canvasOverlayView: CanvasOverlayView? = null
+    private lateinit var canvasLayoutParams: WindowManager.LayoutParams
+
+    // Independent Floating Handles (Grip Pads)
+    private var handleViewA: HandleView? = null
+    private var handleViewB: HandleView? = null
+    private var handleViewC: HandleView? = null
+
+    private lateinit var handleParamsA: WindowManager.LayoutParams
+    private lateinit var handleParamsB: WindowManager.LayoutParams
+    private lateinit var handleParamsC: WindowManager.LayoutParams
+    private var handleSizePx = 0
+    private var handleOffsetX = 48f
+    private var handleOffsetY = 36f
+    private var isOffsetInvertedA = false
+    private var isOffsetInvertedB = false
+    private var isOffsetInvertedC = false
+
+    // Floating Control Bar
+    private var floatingControlView: View? = null
+    private lateinit var controlLayoutParams: WindowManager.LayoutParams
+
+    private var fullToolbarContainer: View? = null
+    private var minimizedCapsule: View? = null
+    private var btnMiniDrag: TextView? = null
+    private var btnMiniToggleOnOff: TextView? = null
+    private var btnMiniExpand: TextView? = null
+    private var btnGhost: TextView? = null
+    private var btnVisibility: TextView? = null
+    private var btnCalibrate: TextView? = null
+    private var btnResetBound: TextView? = null
+    private var btnSixLines: TextView? = null
+    private var btnSettings: TextView? = null
+    private var panelSettings: View? = null
+
+    // State Tracking
+    private var isCanvasHidden = false
+    private var isCalibrationActive = false
+    private var isGhostActive = false
+    private val ghostHandler = Handler(Looper.getMainLooper())
+    private val ghostRestoreRunnable = Runnable { restoreFromGhost() }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        isServiceRunning = true
+
+        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        prefsManager = PrefsManager(this)
+
+        val density = resources.displayMetrics.density
+        handleSizePx = (42f * density).roundToInt()
+        handleOffsetX = 48f * density
+        handleOffsetY = 36f * density
+
+        // 1. Promote to Foreground Service
+        startForegroundServiceWithNotification()
+
+        // 2. Initialize and attach Canvas Overlay View
+        setupCanvasOverlay()
+
+        // 3. Initialize and attach 3 Independent Floating Handles with Anti-Finger Offset
+        setupFloatingHandles()
+
+        // 4. Initialize and attach Floating Control View (with Collapsible Minimize)
+        setupFloatingControl()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP_SERVICE) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        return START_STICKY
+    }
+
+    private fun startForegroundServiceWithNotification() {
+        createNotificationChannel()
+
+        val openAppIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val openAppPendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            openAppIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val stopIntent = Intent(this, OverlayService::class.java).apply {
+            action = ACTION_STOP_SERVICE
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this,
+            1,
+            stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(getString(R.string.notification_title))
+            .setContentText(getString(R.string.notification_text))
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentIntent(openAppPendingIntent)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .addAction(
+                R.drawable.ic_notification,
+                getString(R.string.notification_action_stop),
+                stopPendingIntent
+            )
+            .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                getString(R.string.notification_channel_name),
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = getString(R.string.notification_channel_desc)
+                setShowBadge(false)
+            }
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.createNotificationChannel(channel)
+        }
+    }
+
+    private fun getOverlayWindowType(): Int {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+    }
+
+    private fun getRealScreenSize(): Point {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = windowManager.currentWindowMetrics.bounds
+            Point(bounds.width(), bounds.height())
+        } else {
+            val point = Point()
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.getRealSize(point)
+            point
+        }
+    }
+
+    private fun setupCanvasOverlay() {
+        canvasOverlayView = CanvasOverlayView(this).apply {
+            onCanvasSizeChanged = { _, _ ->
+                repositionHandlesToAimPoints()
+            }
+        }
+
+        canvasLayoutParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            getOverlayWindowType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.LEFT
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+            alpha = 0.78f
+        }
+
+        try {
+            windowManager.addView(canvasOverlayView, canvasLayoutParams)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        applyTableBoundedWindow()
+    }
+
+    /**
+     * Table-Bounded Window Cropping:
+     * Crops CanvasOverlayView window to table bounds (+ 18dp padding) during normal play
+     * to keep Power Bar (left) and UI completely clear of overlay window interception.
+     * Expands to MATCH_PARENT fullscreen when calibration mode is active.
+     */
+    private fun applyTableBoundedWindow() {
+        val canvas = canvasOverlayView ?: return
+        val density = resources.displayMetrics.density
+
+        if (isCalibrationActive) {
+            // Saat kalibrasi aktif, gunakan layar penuh agar pengguna bebas menarik 8 titik kalibrasi
+            canvasLayoutParams.width = WindowManager.LayoutParams.MATCH_PARENT
+            canvasLayoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
+            canvasLayoutParams.x = 0
+            canvasLayoutParams.y = 0
+            canvasLayoutParams.alpha = 1.0f
+            canvasLayoutParams.gravity = Gravity.TOP or Gravity.LEFT
+            canvasLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                canvasLayoutParams.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+            canvas.setWindowOffset(0f, 0f)
+        } else {
+            // Saat bermain normal, pangkas jendela kanvas HANYA seukuran kotak meja + padding 18dp
+            // Area Power Bar di sisi kiri layar (x < winX) 100% bersih tanpa overlay!
+            val pad = 18f * density
+            val box = canvas.boundaryBox
+            val winX = (box.left - pad).roundToInt().coerceAtLeast(0)
+            val winY = (box.top - pad).roundToInt().coerceAtLeast(0)
+            val winW = (box.width() + pad * 2f).roundToInt().coerceAtLeast(100)
+            val winH = (box.height() + pad * 2f).roundToInt().coerceAtLeast(100)
+
+            canvasLayoutParams.width = winW
+            canvasLayoutParams.height = winH
+            canvasLayoutParams.x = winX
+            canvasLayoutParams.y = winY
+            canvasLayoutParams.alpha = 0.78f
+            canvasLayoutParams.gravity = Gravity.TOP or Gravity.LEFT
+            canvasLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                canvasLayoutParams.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+
+            canvas.setWindowOffset(winX.toFloat(), winY.toFloat())
+        }
+
+        try {
+            windowManager.updateViewLayout(canvas, canvasLayoutParams)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /**
+     * Calibration Mode: Enable touch on canvas and hide handles.
+     */
+    private fun setCalibrationMode(enabled: Boolean) {
+        val canvas = canvasOverlayView ?: return
+        isCalibrationActive = enabled
+
+        if (enabled) {
+            canvas.setCalibrating(true)
+            syncHandlesVisibility()
+
+            btnCalibrate?.text = getString(R.string.control_save_bound)
+            btnCalibrate?.setBackgroundResource(R.drawable.bg_control_btn_active)
+            btnCalibrate?.setTextColor(ContextCompat.getColor(this, R.color.green_status))
+            btnResetBound?.visibility = View.VISIBLE
+        } else {
+            canvas.setCalibrating(false)
+            syncHandlesVisibility()
+
+            btnCalibrate?.text = getString(R.string.control_calibrate)
+            btnCalibrate?.setBackgroundResource(R.drawable.bg_control_btn)
+            btnCalibrate?.setTextColor(Color.WHITE)
+            btnResetBound?.visibility = View.GONE
+
+            Toast.makeText(this, R.string.toast_calib_saved, Toast.LENGTH_SHORT).show()
+        }
+
+        applyTableBoundedWindow()
+    }
+
+    /**
+     * Feature 2: Anti-Finger Obstruction (Offset Touch Handles).
+     * The grip pad is positioned below the actual target ball to keep the ball visible.
+     */
+    private fun setupFloatingHandles() {
+        val realSize = getRealScreenSize()
+        val screenW = kotlin.math.max(realSize.x, realSize.y).toFloat()
+        val screenH = kotlin.math.min(realSize.x, realSize.y).toFloat()
+
+        val (ptA, ptB, ptC) = prefsManager.getPoints(screenW, screenH)
+        val initialAlpha = prefsManager.getLineAlpha()
+        val initialColor = prefsManager.getLineColor()
+
+        // 1. Handle A
+        handleViewA = HandleView(this, "A").apply {
+            updateColor(initialColor)
+            updateHandleAlpha(initialAlpha)
+        }
+        val gripPosA = calculateGripFromAim(ptA, isOffsetInvertedA)
+        handleParamsA = createHandleLayoutParams(gripPosA)
+        setupHandleTouchListener(
+            handleViewA!!,
+            handleParamsA,
+            initialInverted = isOffsetInvertedA,
+            onInversionChanged = { isOffsetInvertedA = it }
+        ) { aimX, aimY, gripX, gripY ->
+            canvasOverlayView?.setPointA(aimX, aimY, gripX, gripY)
+        }
+        windowManager.addView(handleViewA, handleParamsA)
+        canvasOverlayView?.setPointA(ptA.x, ptA.y, gripPosA.x, gripPosA.y)
+
+        // 2. Handle B (Target Ball)
+        handleViewB = HandleView(this, "B").apply {
+            updateColor(initialColor)
+            updateHandleAlpha(initialAlpha)
+        }
+        val gripPosB = calculateGripFromAim(ptB, isOffsetInvertedB)
+        handleParamsB = createHandleLayoutParams(gripPosB)
+        setupHandleTouchListener(
+            handleViewB!!,
+            handleParamsB,
+            initialInverted = isOffsetInvertedB,
+            onInversionChanged = { isOffsetInvertedB = it }
+        ) { aimX, aimY, gripX, gripY ->
+            canvasOverlayView?.setPointB(aimX, aimY, gripX, gripY)
+        }
+        windowManager.addView(handleViewB, handleParamsB)
+        canvasOverlayView?.setPointB(ptB.x, ptB.y, gripPosB.x, gripPosB.y)
+
+        // 3. Handle C
+        handleViewC = HandleView(this, "C").apply {
+            updateColor(initialColor)
+            updateHandleAlpha(initialAlpha)
+        }
+        val gripPosC = calculateGripFromAim(ptC, isOffsetInvertedC)
+        handleParamsC = createHandleLayoutParams(gripPosC)
+        setupHandleTouchListener(
+            handleViewC!!,
+            handleParamsC,
+            initialInverted = isOffsetInvertedC,
+            onInversionChanged = { isOffsetInvertedC = it }
+        ) { aimX, aimY, gripX, gripY ->
+            canvasOverlayView?.setPointC(aimX, aimY, gripX, gripY)
+        }
+        windowManager.addView(handleViewC, handleParamsC)
+        canvasOverlayView?.setPointC(ptC.x, ptC.y, gripPosC.x, gripPosC.y)
+
+        syncHandlesVisibility()
+    }
+
+    private fun calculateGripFromAim(aim: PointF, isInverted: Boolean = false): PointF {
+        val realSize = getRealScreenSize()
+        val currentScreenW = kotlin.math.max(realSize.x, realSize.y).toFloat()
+        val currentScreenH = kotlin.math.min(realSize.x, realSize.y).toFloat()
+
+        val gripX = (aim.x + handleOffsetX).coerceIn(handleSizePx / 2f, currentScreenW - handleSizePx / 2f)
+        val targetGripY = if (isInverted) aim.y - handleOffsetY else aim.y + handleOffsetY
+        val gripY = if (targetGripY + handleSizePx > currentScreenH - (20f * resources.displayMetrics.density)) {
+            aim.y - handleOffsetY
+        } else {
+            targetGripY
+        }.coerceIn(0f, currentScreenH)
+        return PointF(gripX, gripY)
+    }
+
+    private fun createHandleLayoutParams(center: PointF): WindowManager.LayoutParams {
+        return WindowManager.LayoutParams(
+            handleSizePx,
+            handleSizePx,
+            getOverlayWindowType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.LEFT
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+            x = (center.x - handleSizePx / 2f).roundToInt()
+            y = (center.y - handleSizePx / 2f).roundToInt()
+        }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupHandleTouchListener(
+        view: View,
+        params: WindowManager.LayoutParams,
+        initialInverted: Boolean = false,
+        onInversionChanged: ((Boolean) -> Unit)? = null,
+        onMoved: (aimX: Float, aimY: Float, gripX: Float, gripY: Float) -> Unit
+    ) {
+        var isOffsetInverted = initialInverted
+
+        // Touch Tracking & Velocity Sensitivity
+        var lastRawX = 0f
+        var lastRawY = 0f
+        var currentGripX = 0f
+        var currentGripY = 0f
+
+        // Double-Tap Tracking (Quick Ghost 4s)
+        var lastTapTime = 0L
+        var downTime = 0L
+        var downRawX = 0f
+        var downRawY = 0f
+
+        // Long-Press Tracking (Smart Offset Flip)
+        var isLongPressed = false
+        var hasMovedSignificantly = false
+
+        fun flipOffset() {
+            val newInverted = !isOffsetInverted
+            isOffsetInverted = newInverted
+            onInversionChanged?.invoke(newInverted)
+
+            val realSize = getRealScreenSize()
+            val currentScreenW = kotlin.math.max(realSize.x, realSize.y).toFloat()
+            val currentScreenH = kotlin.math.min(realSize.x, realSize.y).toFloat()
+
+            // Invert grip Y: if newInverted, grip jumps above ball (-2 * handleOffsetY)
+            // if !newInverted, grip jumps below ball (+2 * handleOffsetY)
+            val deltaY = if (newInverted) -2f * handleOffsetY else 2f * handleOffsetY
+            currentGripY = (currentGripY + deltaY).coerceIn(0f, currentScreenH)
+
+            params.y = (currentGripY - handleSizePx / 2f).roundToInt()
+            try {
+                windowManager.updateViewLayout(view, params)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+
+            val aimX = (currentGripX - handleOffsetX).coerceIn(0f, currentScreenW)
+            val offsetDir = if (isOffsetInverted) handleOffsetY else -handleOffsetY
+            val aimY = (currentGripY + offsetDir).coerceIn(0f, currentScreenH)
+            onMoved(aimX, aimY, currentGripX, currentGripY)
+        }
+
+        val longPressRunnable = Runnable {
+            if (!hasMovedSignificantly) {
+                isLongPressed = true
+                flipOffset()
+            }
+        }
+
+        view.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    lastRawX = event.rawX
+                    lastRawY = event.rawY
+                    downRawX = event.rawX
+                    downRawY = event.rawY
+                    downTime = System.currentTimeMillis()
+
+                    currentGripX = params.x + (handleSizePx / 2f)
+                    currentGripY = params.y + (handleSizePx / 2f)
+
+                    hasMovedSignificantly = false
+                    isLongPressed = false
+                    ghostHandler.postDelayed(longPressRunnable, 450L)
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val frameDx = event.rawX - lastRawX
+                    val frameDy = event.rawY - lastRawY
+                    lastRawX = event.rawX
+                    lastRawY = event.rawY
+
+                    val totalMoveFromDown = hypot(event.rawX - downRawX, event.rawY - downRawY)
+                    if (totalMoveFromDown > 8f * resources.displayMetrics.density) {
+                        hasMovedSignificantly = true
+                        ghostHandler.removeCallbacks(longPressRunnable)
+                    }
+
+                    val speed = hypot(frameDx, frameDy)
+                    // Deadzone Anti-Jitter: ignore micro movements during rest or lift-off
+                    if (speed < 0.4f) {
+                        return@setOnTouchListener true
+                    }
+
+                    // Dynamic Sensitivity Multiplier (Sniper Fine-Tuning Mode)
+                    val sensitivity = when {
+                        speed < 3.5f -> 0.28f  // Sniper Mode: ultra-fine alignment
+                        speed < 10f -> 0.65f   // Medium adjustments
+                        else -> 1.0f           // Fast panning
+                    }
+
+                    currentGripX += frameDx * sensitivity
+                    currentGripY += frameDy * sensitivity
+
+                    val realSize = getRealScreenSize()
+                    val currentScreenW = kotlin.math.max(realSize.x, realSize.y).toFloat()
+                    val currentScreenH = kotlin.math.min(realSize.x, realSize.y).toFloat()
+
+                    // Auto-Flip when dragged past bottom limit and handle is below ball
+                    if (!isOffsetInverted && currentGripY > currentScreenH - (handleSizePx * 0.8f)) {
+                        flipOffset()
+                    }
+
+                    currentGripX = currentGripX.coerceIn(0f, currentScreenW)
+                    currentGripY = currentGripY.coerceIn(0f, currentScreenH)
+
+                    params.x = (currentGripX - handleSizePx / 2f).roundToInt()
+                    params.y = (currentGripY - handleSizePx / 2f).roundToInt()
+
+                    try {
+                        windowManager.updateViewLayout(view, params)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+
+                    val aimX = (currentGripX - handleOffsetX).coerceIn(0f, currentScreenW)
+                    val offsetDir = if (isOffsetInverted) handleOffsetY else -handleOffsetY
+                    val aimY = (currentGripY + offsetDir).coerceIn(0f, currentScreenH)
+
+                    onMoved(aimX, aimY, currentGripX, currentGripY)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    ghostHandler.removeCallbacks(longPressRunnable)
+
+                    if (event.actionMasked == MotionEvent.ACTION_UP && !isLongPressed) {
+                        val tapDuration = System.currentTimeMillis() - downTime
+                        val totalMove = hypot(event.rawX - downRawX, event.rawY - downRawY)
+
+                        if (tapDuration < 220L && totalMove < (10f * resources.displayMetrics.density)) {
+                            val now = System.currentTimeMillis()
+                            if (now - lastTapTime < 320L) {
+                                toggleQuickGhost()
+                                lastTapTime = 0L
+                            } else {
+                                lastTapTime = now
+                            }
+                        }
+                    }
+
+                    isLongPressed = false
+                    persistHandlePositions()
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun persistHandlePositions() {
+        val canvas = canvasOverlayView ?: return
+        prefsManager.savePoints(canvas.pointA, canvas.pointB, canvas.pointC)
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupFloatingControl() {
+        val inflater = LayoutInflater.from(this)
+        val controlView = inflater.inflate(R.layout.layout_floating_control, null)
+        floatingControlView = controlView
+
+        controlLayoutParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            getOverlayWindowType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.LEFT
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+            x = 40
+            y = 140
+        }
+
+        // References to UI components
+        fullToolbarContainer = controlView.findViewById(R.id.fullToolbarContainer)
+        minimizedCapsule = controlView.findViewById(R.id.minimizedCapsule)
+        btnMiniDrag = controlView.findViewById(R.id.btnMiniDrag)
+        btnMiniToggleOnOff = controlView.findViewById(R.id.btnMiniToggleOnOff)
+        btnMiniExpand = controlView.findViewById(R.id.btnMiniExpand)
+
+        val btnDrag = controlView.findViewById<TextView>(R.id.btnDragHandle)
+        btnGhost = controlView.findViewById(R.id.btnQuickGhost)
+        btnVisibility = controlView.findViewById(R.id.btnToggleVisibility)
+        val btnMode = controlView.findViewById<TextView>(R.id.btnCycleMode)
+        btnCalibrate = controlView.findViewById(R.id.btnToggleCalibrate)
+        btnResetBound = controlView.findViewById(R.id.btnResetBound)
+        btnSixLines = controlView.findViewById(R.id.btnToggleSixLines)
+        btnSettings = controlView.findViewById(R.id.btnToggleSettings)
+        val btnMinimize = controlView.findViewById<TextView>(R.id.btnMinimize)
+        val btnClose = controlView.findViewById<TextView>(R.id.btnCloseOverlay)
+
+        panelSettings = controlView.findViewById(R.id.panelSettings)
+        val tvThickness = controlView.findViewById<TextView>(R.id.tvThicknessValue)
+        val seekThickness = controlView.findViewById<SeekBar>(R.id.seekThickness)
+        val tvOpacity = controlView.findViewById<TextView>(R.id.tvOpacityValue)
+        val seekOpacity = controlView.findViewById<SeekBar>(R.id.seekOpacity)
+        val tvBallSize = controlView.findViewById<TextView>(R.id.tvBallSizeValue)
+        val seekBallSize = controlView.findViewById<SeekBar>(R.id.seekBallSize)
+
+        // 1. Dragging toolbar
+        setupDraggableBar(btnDrag, controlView)
+
+        // Smart Mini Bubble (Drag to move, Tap to expand, Long-press to toggle ON/OFF)
+        btnMiniExpand?.let { setupSmartMiniBubble(it, controlView) }
+
+        // 2. Quick-Ghost (Auto-Hide 4s)
+        btnGhost?.setOnClickListener {
+            if (isCalibrationActive) {
+                setCalibrationMode(false)
+            }
+            toggleQuickGhost()
+        }
+
+        // 3. Hide / Show canvas overlay and handles manually
+        btnVisibility?.setOnClickListener {
+            if (isCalibrationActive) {
+                setCalibrationMode(false)
+            }
+            if (isGhostActive) {
+                restoreFromGhost()
+            }
+            toggleCanvasVisibility()
+        }
+
+        // 4. Cycle Mode
+        btnMode.setOnClickListener {
+            val canvas = canvasOverlayView ?: return@setOnClickListener
+            // Switching mode turns off 6-Line single-point target mode
+            if (canvas.showRadialGuides) {
+                canvas.setShowRadialGuides(false)
+                updateSixLinesButtonUI()
+            }
+            val nextMode = canvas.cycleRulerMode()
+
+            btnMode.text = when (nextMode) {
+                CanvasOverlayView.RulerMode.AUTO_REFLECT -> getString(R.string.control_mode_auto)
+                CanvasOverlayView.RulerMode.MANUAL_3_POINT -> getString(R.string.control_mode_manual)
+                CanvasOverlayView.RulerMode.EDGE_MARKER_ONLY -> getString(R.string.control_mode_edge)
+            }
+
+            syncHandlesVisibility()
+        }
+
+        // 5. Calibration Mode Toggle & Boundary Reset
+        btnCalibrate?.setOnClickListener {
+            if (isGhostActive) {
+                restoreFromGhost()
+            }
+            if (isCanvasHidden) {
+                toggleCanvasVisibility()
+            }
+            setCalibrationMode(!isCalibrationActive)
+        }
+
+        btnResetBound?.setOnClickListener {
+            canvasOverlayView?.resetToProportionalCenter()
+            applyTableBoundedWindow()
+            Toast.makeText(this, R.string.toast_calib_reset, Toast.LENGTH_SHORT).show()
+        }
+
+        // 6. Feature 1: Toggle 6-Pocket Radial Lines & Mirror Bank on Target Ball
+        updateSixLinesButtonUI()
+        btnSixLines?.setOnClickListener {
+            val canvas = canvasOverlayView ?: return@setOnClickListener
+            canvas.toggleRadialGuides()
+            updateSixLinesButtonUI()
+            syncHandlesVisibility()
+        }
+
+        // 7. Settings Sub-Panel (Thickness & Opacity Sliders)
+        val initialStroke = prefsManager.getLineStrokeWidth()
+        val initialAlpha = prefsManager.getLineAlpha()
+
+        seekThickness.progress = (initialStroke / 0.5f).roundToInt().coerceIn(1, 30)
+        seekOpacity.progress = initialAlpha.coerceIn(25, 255)
+
+        tvThickness.text = getString(R.string.label_thickness, initialStroke)
+        val initialPct = (initialAlpha * 100 / 255)
+        tvOpacity.text = getString(R.string.label_opacity, initialPct)
+
+        btnSettings?.setOnClickListener {
+            val panel = panelSettings ?: return@setOnClickListener
+            val isPanelOpen = panel.visibility == View.VISIBLE
+            if (isPanelOpen) {
+                panel.visibility = View.GONE
+                btnSettings?.setBackgroundResource(R.drawable.bg_control_btn)
+            } else {
+                panel.visibility = View.VISIBLE
+                btnSettings?.setBackgroundResource(R.drawable.bg_control_btn_active)
+            }
+        }
+
+        seekThickness.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val strokeWidth = (progress.coerceAtLeast(1) * 0.5f)
+                tvThickness.text = getString(R.string.label_thickness, strokeWidth)
+                val alpha = seekOpacity.progress
+                canvasOverlayView?.updateLineStyle(strokeWidth, alpha)
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val progress = seekBar?.progress ?: 7
+                val strokeWidth = (progress.coerceAtLeast(1) * 0.5f)
+                val alpha = seekOpacity.progress
+                prefsManager.saveLineStyle(strokeWidth, alpha)
+            }
+        })
+
+        seekOpacity.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val alpha = progress.coerceIn(25, 255)
+                val pct = (alpha * 100 / 255)
+                tvOpacity.text = getString(R.string.label_opacity, pct)
+                val strokeWidth = (seekThickness.progress.coerceAtLeast(1) * 0.5f)
+                canvasOverlayView?.updateLineStyle(strokeWidth, alpha)
+                updateAllHandlesAlpha(alpha)
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val alpha = (seekBar?.progress ?: 220).coerceIn(25, 255)
+                val strokeWidth = (seekThickness.progress.coerceAtLeast(1) * 0.5f)
+                prefsManager.saveLineStyle(strokeWidth, alpha)
+                updateAllHandlesAlpha(alpha)
+            }
+        })
+
+        // Ball Ring Size Slider Setup
+        val initialBallRadius = prefsManager.getRingRadius()
+        seekBallSize.progress = initialBallRadius.roundToInt().coerceIn(8, 30)
+        tvBallSize.text = getString(R.string.label_ball_size, initialBallRadius)
+
+        seekBallSize.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val radiusDp = progress.coerceIn(8, 30) * 1.0f
+                tvBallSize.text = getString(R.string.label_ball_size, radiusDp)
+                if (fromUser) {
+                    canvasOverlayView?.setRingRadius(radiusDp)
+                }
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val progress = seekBar?.progress ?: 14
+                val radiusDp = progress.coerceIn(8, 30) * 1.0f
+                prefsManager.saveRingRadius(radiusDp)
+                canvasOverlayView?.setRingRadius(radiusDp)
+            }
+        })
+
+        // 8. Feature 2: Line Color Picker (Preset Swatches & Hue Spectrum Slider)
+        val density = resources.displayMetrics.density
+        val btnColorWhite = controlView.findViewById<View>(R.id.btnColorWhite)
+        val btnColorCyan = controlView.findViewById<View>(R.id.btnColorCyan)
+        val btnColorYellow = controlView.findViewById<View>(R.id.btnColorYellow)
+        val btnColorGreen = controlView.findViewById<View>(R.id.btnColorGreen)
+        val btnColorRed = controlView.findViewById<View>(R.id.btnColorRed)
+        val btnColorMagenta = controlView.findViewById<View>(R.id.btnColorMagenta)
+        val viewColorPreview = controlView.findViewById<View>(R.id.viewColorPreview)
+        val tvHue = controlView.findViewById<TextView>(R.id.tvHueValue)
+        val seekHue = controlView.findViewById<SeekBar>(R.id.seekHue)
+
+        val presetButtons = listOf(
+            btnColorWhite to Color.WHITE,
+            btnColorCyan to Color.parseColor("#00E5FF"),
+            btnColorYellow to Color.parseColor("#FFD600"),
+            btnColorGreen to Color.parseColor("#00E676"),
+            btnColorRed to Color.parseColor("#FF1744"),
+            btnColorMagenta to Color.parseColor("#D500F9")
+        )
+
+        var selectedColor = prefsManager.getLineColor()
+
+        // Rainbow gradient for seekHue track
+        val rainbowColors = intArrayOf(
+            Color.RED,
+            Color.YELLOW,
+            Color.GREEN,
+            Color.CYAN,
+            Color.BLUE,
+            Color.MAGENTA,
+            Color.RED
+        )
+        val rainbowGradient = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, rainbowColors).apply {
+            cornerRadius = 4f * density
+        }
+        seekHue.progressDrawable = rainbowGradient
+
+        val previewDrawable = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(selectedColor)
+            setStroke((2f * density).roundToInt(), Color.WHITE)
+        }
+        viewColorPreview.background = previewDrawable
+
+        fun createSwatchDrawable(color: Int, isSelected: Boolean): GradientDrawable {
+            return GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(color)
+                if (isSelected) {
+                    setStroke((3f * density).roundToInt(), Color.WHITE)
+                } else {
+                    setStroke((1f * density).roundToInt(), Color.parseColor("#66FFFFFF"))
+                }
+            }
+        }
+
+        fun updateColorUI(color: Int) {
+            selectedColor = color
+            updateAllHandlesColor(color)
+            for ((view, pColor) in presetButtons) {
+                val isSelected = (color == pColor)
+                view.background = createSwatchDrawable(pColor, isSelected)
+            }
+            previewDrawable.setColor(color)
+
+            if (color == Color.WHITE) {
+                tvHue.text = getString(R.string.label_hue_white)
+            } else {
+                val hsv = FloatArray(3)
+                Color.colorToHSV(color, hsv)
+                val hue = hsv[0].roundToInt().coerceIn(0, 360)
+                tvHue.text = getString(R.string.label_hue, hue)
+                seekHue.progress = hue
+            }
+        }
+
+        updateColorUI(selectedColor)
+
+        for ((view, color) in presetButtons) {
+            view.setOnClickListener {
+                updateColorUI(color)
+                canvasOverlayView?.updateLineColor(color)
+                prefsManager.saveLineColor(color)
+            }
+        }
+
+        seekHue.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    val hue = progress.toFloat()
+                    val color = Color.HSVToColor(floatArrayOf(hue, 1f, 1f))
+                    selectedColor = color
+                    tvHue.text = getString(R.string.label_hue, progress)
+                    canvasOverlayView?.updateLineColor(color)
+                    updateAllHandlesColor(color)
+                    previewDrawable.setColor(color)
+                }
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                prefsManager.saveLineColor(selectedColor)
+            }
+        })
+
+        // 9. Collapsible Floating Control (Minimize Toolbar)
+        btnMinimize.setOnClickListener {
+            minimizeToolbar()
+        }
+
+        // 10. Close Overlay
+        btnClose.setOnClickListener {
+            stopSelf()
+        }
+
+        try {
+            windowManager.addView(controlView, controlLayoutParams)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun updateSixLinesButtonUI() {
+        val isActive = canvasOverlayView?.showRadialGuides ?: true
+        if (isActive) {
+            btnSixLines?.setBackgroundResource(R.drawable.bg_control_btn_active)
+            btnSixLines?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+        } else {
+            btnSixLines?.setBackgroundResource(R.drawable.bg_control_btn)
+            btnSixLines?.setTextColor(Color.WHITE)
+        }
+    }
+
+    /**
+     * Requirement 3: Minimize full toolbar into a draggable mini capsule with ON/OFF switch.
+     */
+    private fun minimizeToolbar() {
+        if (isCalibrationActive) {
+            setCalibrationMode(false)
+        }
+        fullToolbarContainer?.visibility = View.GONE
+        minimizedCapsule?.visibility = View.VISIBLE
+        updateMiniOnOffButtonUI()
+        floatingControlView?.let {
+            try {
+                windowManager.updateViewLayout(it, controlLayoutParams)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    private fun expandToolbar() {
+        minimizedCapsule?.visibility = View.GONE
+        fullToolbarContainer?.visibility = View.VISIBLE
+        updateVisibilityButtonUI()
+        floatingControlView?.let {
+            try {
+                windowManager.updateViewLayout(it, controlLayoutParams)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    /**
+     * Toggles overlay canvas and handles visibility.
+     * Synchronizes state between full toolbar and mini capsule.
+     */
+    private fun toggleCanvasVisibility() {
+        isCanvasHidden = !isCanvasHidden
+        if (isCanvasHidden) {
+            canvasOverlayView?.visibility = View.GONE
+        } else {
+            canvasOverlayView?.visibility = View.VISIBLE
+        }
+        syncHandlesVisibility()
+        updateVisibilityButtonUI()
+        updateMiniOnOffButtonUI()
+    }
+
+    private fun updateVisibilityButtonUI() {
+        if (isCanvasHidden) {
+            btnVisibility?.text = getString(R.string.control_show)
+            btnVisibility?.setBackgroundResource(R.drawable.bg_control_btn_active)
+        } else {
+            btnVisibility?.text = getString(R.string.control_hide)
+            btnVisibility?.setBackgroundResource(R.drawable.bg_control_btn)
+        }
+    }
+
+    private fun updateMiniOnOffButtonUI() {
+        if (isCanvasHidden) {
+            btnMiniToggleOnOff?.text = getString(R.string.control_off)
+            btnMiniToggleOnOff?.setBackgroundResource(R.drawable.bg_btn_off)
+            btnMiniExpand?.setTextColor(ContextCompat.getColor(this, R.color.red_danger))
+            btnMiniExpand?.alpha = 0.5f
+        } else {
+            btnMiniToggleOnOff?.text = getString(R.string.control_on)
+            btnMiniToggleOnOff?.setBackgroundResource(R.drawable.bg_btn_on)
+            btnMiniExpand?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+            btnMiniExpand?.alpha = 0.65f
+        }
+    }
+
+    private fun toggleQuickGhost() {
+        if (isGhostActive) {
+            restoreFromGhost()
+            return
+        }
+
+        isGhostActive = true
+
+        canvasOverlayView?.visibility = View.GONE
+        syncHandlesVisibility()
+
+        btnGhost?.text = getString(R.string.control_ghosting)
+        btnGhost?.setBackgroundResource(R.drawable.bg_control_btn_active)
+
+        ghostHandler.postDelayed(ghostRestoreRunnable, 4000)
+    }
+
+    private fun restoreFromGhost() {
+        isGhostActive = false
+        ghostHandler.removeCallbacks(ghostRestoreRunnable)
+
+        btnGhost?.text = getString(R.string.control_ghost)
+        btnGhost?.setBackgroundResource(R.drawable.bg_control_btn)
+
+        if (!isCanvasHidden) {
+            canvasOverlayView?.visibility = View.VISIBLE
+        }
+        syncHandlesVisibility()
+        updateVisibilityButtonUI()
+        updateMiniOnOffButtonUI()
+    }
+
+    private fun syncHandlesVisibility() {
+        if (isCanvasHidden || isGhostActive || isCalibrationActive) {
+            handleViewA?.visibility = View.GONE
+            handleViewB?.visibility = View.GONE
+            handleViewC?.visibility = View.GONE
+            return
+        }
+
+        val isSixLinesActive = canvasOverlayView?.showRadialGuides ?: false
+        if (isSixLinesActive) {
+            handleViewA?.visibility = View.GONE
+            handleViewB?.visibility = View.VISIBLE
+            handleViewC?.visibility = View.GONE
+        } else {
+            handleViewA?.visibility = View.VISIBLE
+            handleViewB?.visibility = View.VISIBLE
+            val currentMode = canvasOverlayView?.currentMode ?: CanvasOverlayView.RulerMode.AUTO_REFLECT
+            handleViewC?.visibility = if (currentMode == CanvasOverlayView.RulerMode.MANUAL_3_POINT) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
+        }
+    }
+
+    private fun syncHandleCVisibility() = syncHandlesVisibility()
+
+    private fun updateAllHandlesAlpha(alpha: Int) {
+        handleViewA?.updateHandleAlpha(alpha)
+        handleViewB?.updateHandleAlpha(alpha)
+        handleViewC?.updateHandleAlpha(alpha)
+    }
+
+    private fun updateAllHandlesColor(color: Int) {
+        handleViewA?.updateColor(color)
+        handleViewB?.updateColor(color)
+        handleViewC?.updateColor(color)
+    }
+
+    private fun repositionHandlesToAimPoints() {
+        val canvas = canvasOverlayView ?: return
+        val hA = handleViewA ?: return
+        val hB = handleViewB ?: return
+        val hC = handleViewC ?: return
+
+        val gripPosA = calculateGripFromAim(canvas.pointA, isOffsetInvertedA)
+        val gripPosB = calculateGripFromAim(canvas.pointB, isOffsetInvertedB)
+        val gripPosC = calculateGripFromAim(canvas.pointC, isOffsetInvertedC)
+
+        handleParamsA.x = (gripPosA.x - handleSizePx / 2f).roundToInt()
+        handleParamsA.y = (gripPosA.y - handleSizePx / 2f).roundToInt()
+        handleParamsB.x = (gripPosB.x - handleSizePx / 2f).roundToInt()
+        handleParamsB.y = (gripPosB.y - handleSizePx / 2f).roundToInt()
+        handleParamsC.x = (gripPosC.x - handleSizePx / 2f).roundToInt()
+        handleParamsC.y = (gripPosC.y - handleSizePx / 2f).roundToInt()
+
+        try {
+            windowManager.updateViewLayout(hA, handleParamsA)
+            windowManager.updateViewLayout(hB, handleParamsB)
+            windowManager.updateViewLayout(hC, handleParamsC)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        canvas.setPointA(canvas.pointA.x, canvas.pointA.y, gripPosA.x, gripPosA.y)
+        canvas.setPointB(canvas.pointB.x, canvas.pointB.y, gripPosB.x, gripPosB.y)
+        canvas.setPointC(canvas.pointC.x, canvas.pointC.y, gripPosC.x, gripPosC.y)
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applyTableBoundedWindow()
+        repositionHandlesToAimPoints()
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupDraggableBar(dragHandle: View, entireView: View) {
+        var initialX = 0
+        var initialY = 0
+        var initialTouchX = 0f
+        var initialTouchY = 0f
+
+        dragHandle.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialX = controlLayoutParams.x
+                    initialY = controlLayoutParams.y
+                    initialTouchX = event.rawX
+                    initialTouchY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - initialTouchX).toInt()
+                    val dy = (event.rawY - initialTouchY).toInt()
+                    controlLayoutParams.x = initialX + dx
+                    controlLayoutParams.y = initialY + dy
+                    try {
+                        windowManager.updateViewLayout(entireView, controlLayoutParams)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupSmartMiniBubble(bubbleView: TextView, rootView: View) {
+        var initialX = 0
+        var initialY = 0
+        var downRawX = 0f
+        var downRawY = 0f
+        var isDragging = false
+        var isLongPressTriggered = false
+        val touchSlop = 8f * resources.displayMetrics.density
+
+        val longPressRunnable = Runnable {
+            if (!isDragging) {
+                isLongPressTriggered = true
+                bubbleView.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                if (isGhostActive) {
+                    restoreFromGhost()
+                }
+                toggleCanvasVisibility()
+            }
+        }
+
+        bubbleView.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialX = controlLayoutParams.x
+                    initialY = controlLayoutParams.y
+                    downRawX = event.rawX
+                    downRawY = event.rawY
+                    isDragging = false
+                    isLongPressTriggered = false
+                    ghostHandler.postDelayed(longPressRunnable, 400L)
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - downRawX
+                    val dy = event.rawY - downRawY
+                    if (kotlin.math.hypot(dx, dy) > touchSlop) {
+                        isDragging = true
+                        ghostHandler.removeCallbacks(longPressRunnable)
+                        controlLayoutParams.x = initialX + dx.roundToInt()
+                        controlLayoutParams.y = initialY + dy.roundToInt()
+                        try {
+                            windowManager.updateViewLayout(rootView, controlLayoutParams)
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    ghostHandler.removeCallbacks(longPressRunnable)
+                    if (!isDragging && !isLongPressTriggered) {
+                        // Single Tap: Buka kembali toolbar penuh
+                        expandToolbar()
+                    }
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    ghostHandler.removeCallbacks(longPressRunnable)
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        isServiceRunning = false
+
+        ghostHandler.removeCallbacksAndMessages(null)
+
+        if (isCalibrationActive) {
+            isCalibrationActive = false
+            canvasOverlayView?.setCalibrating(false)
+        }
+
+        // Remove canvas view
+        canvasOverlayView?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            canvasOverlayView = null
+        }
+
+        // Remove floating handles
+        handleViewA?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            handleViewA = null
+        }
+
+        handleViewB?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            handleViewB = null
+        }
+
+        handleViewC?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            handleViewC = null
+        }
+
+        // Remove control bar
+        floatingControlView?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            floatingControlView = null
+        }
+    }
+
+    companion object {
+        const val CHANNEL_ID = "screen_angle_ruler_channel"
+        const val NOTIFICATION_ID = 1001
+        const val ACTION_STOP_SERVICE = "com.utility.screenprotractor.ACTION_STOP"
+
+        @Volatile
+        var isServiceRunning = false
+            private set
+    }
+}
+
+==> app/src/main/java/com/utility/screenprotractor/PrefsManager.kt <==
+package com.utility.screenprotractor
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.graphics.PointF
+import android.graphics.RectF
+
+/**
+ * Storage manager for persisting ruler calibration coordinates, point positions,
+ * and user preferences using Android SharedPreferences.
+ */
+class PrefsManager(context: Context) {
+
+    private val prefs: SharedPreferences = context.getSharedPreferences(
+        PREFS_NAME,
+        Context.MODE_PRIVATE
+    )
+
+    /**
+     * Save the 4 calibrated boundary edges.
+     */
+    fun saveBoundaryBox(left: Float, top: Float, right: Float, bottom: Float) {
+        prefs.edit().apply {
+            putFloat(KEY_BOUND_LEFT, left)
+            putFloat(KEY_BOUND_TOP, top)
+            putFloat(KEY_BOUND_RIGHT, right)
+            putFloat(KEY_BOUND_BOTTOM, bottom)
+            putBoolean(KEY_BOUND_CALIBRATED, true)
+            putInt(KEY_CALIB_VERSION, CURRENT_CALIB_VERSION)
+            apply()
+        }
+    }
+
+    /**
+     * Retrieve the calibrated boundary box. If not calibrated yet or saved by an older
+     * version with cutout skew, computes default margins matching standard 8 Ball Pool table.
+     */
+    fun getBoundaryBox(screenWidth: Float, screenHeight: Float): RectF {
+        val landW = kotlin.math.max(screenWidth, screenHeight)
+        val landH = kotlin.math.min(screenWidth, screenHeight)
+
+        val calibVersion = prefs.getInt(KEY_CALIB_VERSION, 0)
+        val isCalibrated = prefs.getBoolean(KEY_BOUND_CALIBRATED, false)
+
+        if (isCalibrated && calibVersion >= CURRENT_CALIB_VERSION) {
+            val left = prefs.getFloat(KEY_BOUND_LEFT, landW * 0.191f)
+            val top = prefs.getFloat(KEY_BOUND_TOP, landH * 0.228f)
+            val right = prefs.getFloat(KEY_BOUND_RIGHT, landW * (1f - 0.191f))
+            val bottom = prefs.getFloat(KEY_BOUND_BOTTOM, landH * 0.921f)
+
+            // Sanity check to avoid inverted or collapsed rectangles and auto-clamp to screen
+            val minMargin = 20f
+            val clampedL = left.coerceIn(minMargin, landW * 0.45f)
+            val clampedT = top.coerceIn(minMargin, landH * 0.45f)
+            val clampedR = right.coerceIn(landW * 0.55f, landW - minMargin)
+            val clampedB = bottom.coerceIn(landH * 0.55f, landH - minMargin)
+
+            if (clampedR > clampedL + 50f && clampedB > clampedT + 50f) {
+                return RectF(clampedL, clampedT, clampedR, clampedB)
+            }
+        }
+
+        // If calibration was from an older version with cutout offset, reset it
+        if (isCalibrated && calibVersion < CURRENT_CALIB_VERSION) {
+            resetBoundaryBox()
+        }
+
+        // Default bounds: 8 Ball Pool table proportions (2:1 playing surface centered horizontally)
+        val insetX = (landW * 0.191f).coerceAtLeast(40f)
+        val topY = (landH * 0.228f).coerceAtLeast(40f)
+        val botY = (landH * 0.921f).coerceAtLeast(topY + 100f)
+        return RectF(insetX, topY, landW - insetX, botY)
+    }
+
+    /**
+     * Reset boundary box calibration to default margins.
+     */
+    fun resetBoundaryBox() {
+        prefs.edit().apply {
+            remove(KEY_BOUND_LEFT)
+            remove(KEY_BOUND_TOP)
+            remove(KEY_BOUND_RIGHT)
+            remove(KEY_BOUND_BOTTOM)
+            remove(KEY_BOUND_CALIBRATED)
+            remove(KEY_CALIB_VERSION)
+            apply()
+        }
+    }
+
+    /**
+     * Save the last active ruler mode index.
+     */
+    fun saveMode(modeOrdinal: Int) {
+        prefs.edit().putInt(KEY_ACTIVE_MODE, modeOrdinal).apply()
+    }
+
+    /**
+     * Retrieve the last active ruler mode index.
+     */
+    fun getMode(): Int {
+        return prefs.getInt(KEY_ACTIVE_MODE, 0)
+    }
+
+    /**
+     * Save last handle positions to persist between overlay launches.
+     */
+    fun savePoints(pointA: PointF, pointB: PointF, pointC: PointF) {
+        prefs.edit().apply {
+            putFloat(KEY_PT_A_X, pointA.x)
+            putFloat(KEY_PT_A_Y, pointA.y)
+            putFloat(KEY_PT_B_X, pointB.x)
+            putFloat(KEY_PT_B_Y, pointB.y)
+            putFloat(KEY_PT_C_X, pointC.x)
+            putFloat(KEY_PT_C_Y, pointC.y)
+            putBoolean(KEY_POINTS_INITIALIZED, true)
+            apply()
+        }
+    }
+
+    /**
+     * Retrieve last handle positions, or initialize to reasonable defaults inside screen.
+     */
+    fun getPoints(screenWidth: Float, screenHeight: Float): Triple<PointF, PointF, PointF> {
+        val hasPoints = prefs.getBoolean(KEY_POINTS_INITIALIZED, false)
+        if (hasPoints) {
+            val ax = prefs.getFloat(KEY_PT_A_X, screenWidth * 0.5f)
+            val ay = prefs.getFloat(KEY_PT_A_Y, screenHeight * 0.7f)
+            val bx = prefs.getFloat(KEY_PT_B_X, screenWidth * 0.5f)
+            val by = prefs.getFloat(KEY_PT_B_Y, screenHeight * 0.4f)
+            val cx = prefs.getFloat(KEY_PT_C_X, screenWidth * 0.8f)
+            val cy = prefs.getFloat(KEY_PT_C_Y, screenHeight * 0.4f)
+            return Triple(PointF(ax, ay), PointF(bx, by), PointF(cx, cy))
+        }
+
+        // Sensible default positions
+        val defaultA = PointF(screenWidth * 0.5f, screenHeight * 0.65f)
+        val defaultB = PointF(screenWidth * 0.5f, screenHeight * 0.35f)
+        val defaultC = PointF(screenWidth * 0.75f, screenHeight * 0.35f)
+        return Triple(defaultA, defaultB, defaultC)
+    }
+
+    /**
+     * Save line stroke width and opacity alpha.
+     */
+    fun saveLineStyle(strokeWidth: Float, alpha: Int) {
+        prefs.edit().apply {
+            putFloat(KEY_LINE_STROKE_WIDTH, strokeWidth)
+            putInt(KEY_LINE_ALPHA, alpha)
+            apply()
+        }
+    }
+
+    fun getLineStrokeWidth(): Float {
+        return prefs.getFloat(KEY_LINE_STROKE_WIDTH, 3.5f)
+    }
+
+    fun getLineAlpha(): Int {
+        return prefs.getInt(KEY_LINE_ALPHA, 220)
+    }
+
+    /**
+     * Save and retrieve line color (ARGB / Int).
+     */
+    fun saveLineColor(color: Int) {
+        prefs.edit().putInt(KEY_LINE_COLOR, color).apply()
+    }
+
+    fun getLineColor(): Int {
+        return prefs.getInt(KEY_LINE_COLOR, DEFAULT_LINE_COLOR)
+    }
+
+    /**
+     * Save and retrieve mirror bank line color (ARGB / Int).
+     */
+    fun saveSecondaryRayColor(color: Int) {
+        prefs.edit().putInt(KEY_BANK_LINE_COLOR, color).apply()
+    }
+
+    fun getSecondaryRayColor(): Int {
+        return prefs.getInt(KEY_BANK_LINE_COLOR, DEFAULT_BANK_LINE_COLOR)
+    }
+
+    /**
+     * Save and retrieve radial lines visibility toggle.
+     */
+    fun saveShowRadialGuides(show: Boolean) {
+        prefs.edit().putBoolean(KEY_SHOW_SIX_LINES, show).apply()
+    }
+
+    fun getShowRadialGuides(): Boolean {
+        return prefs.getBoolean(KEY_SHOW_SIX_LINES, true)
+    }
+
+    /**
+     * Save and retrieve target ring radius.
+     */
+    fun saveRingRadius(radius: Float) {
+        prefs.edit().putFloat(KEY_BALL_RADIUS, radius).apply()
+    }
+
+    fun getRingRadius(): Float {
+        return prefs.getFloat(KEY_BALL_RADIUS, 13.5f)
+    }
+
+    companion object {
+        private const val PREFS_NAME = "screen_protractor_prefs"
+        private const val DEFAULT_MARGIN_RATIO = 0.08f
+        const val DEFAULT_LINE_COLOR = 0xFF00E5FF.toInt() // Cyan #00E5FF
+        const val DEFAULT_BANK_LINE_COLOR = 0xFFFFAB00.toInt() // Amber/Gold #FFAB00
+
+        private const val KEY_BOUND_LEFT = "bound_left"
+        private const val KEY_BOUND_TOP = "bound_top"
+        private const val KEY_BOUND_RIGHT = "bound_right"
+        private const val KEY_BOUND_BOTTOM = "bound_bottom"
+        private const val KEY_BOUND_CALIBRATED = "bound_calibrated"
+        private const val KEY_CALIB_VERSION = "calib_version"
+        private const val CURRENT_CALIB_VERSION = 3
+
+        private const val KEY_ACTIVE_MODE = "active_mode"
+
+        private const val KEY_PT_A_X = "pt_a_x"
+        private const val KEY_PT_A_Y = "pt_a_y"
+        private const val KEY_PT_B_X = "pt_b_x"
+        private const val KEY_PT_B_Y = "pt_b_y"
+        private const val KEY_PT_C_X = "pt_c_x"
+        private const val KEY_PT_C_Y = "pt_c_y"
+        private const val KEY_POINTS_INITIALIZED = "points_initialized"
+
+        private const val KEY_LINE_STROKE_WIDTH = "line_stroke_width"
+        private const val KEY_LINE_ALPHA = "line_alpha"
+        private const val KEY_LINE_COLOR = "line_color"
+        private const val KEY_BANK_LINE_COLOR = "secondary_ray_color"
+
+        private const val KEY_SHOW_SIX_LINES = "show_radial_guides"
+        private const val KEY_BALL_RADIUS = "target_ring_radius"
+    }
+}
+
+==> app/src/main/res/drawable/bg_btn_off.xml <==
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#C62828" />
+    <corners android:radius="8dp" />
+</shape>
+
+==> app/src/main/res/drawable/bg_btn_on.xml <==
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#2E7D32" />
+    <corners android:radius="8dp" />
+</shape>
+
+==> app/src/main/res/drawable/bg_card.xml <==
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/surface_card" />
+    <stroke
+        android:width="1dp"
+        android:color="@color/surface_card_border" />
+    <corners android:radius="16dp" />
+</shape>
+
+==> app/src/main/res/drawable/bg_control_bar.xml <==
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/overlay_control_bg" />
+    <stroke
+        android:width="1dp"
+        android:color="@color/overlay_control_border" />
+    <corners android:radius="12dp" />
+</shape>
+
+==> app/src/main/res/drawable/bg_control_btn.xml <==
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#26FFFFFF" />
+    <corners android:radius="8dp" />
+</shape>
+
+==> app/src/main/res/drawable/bg_control_btn_active.xml <==
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#4D00E5FF" />
+    <stroke
+        android:width="1dp"
+        android:color="#00E5FF" />
+    <corners android:radius="8dp" />
+</shape>
+
+==> app/src/main/res/drawable/bg_minimized_bubble.xml <==
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="#E61E1E1E" />
+    <stroke
+        android:width="1.5dp"
+        android:color="#00E5FF" />
+</shape>
+
+==> app/src/main/res/drawable/ic_launcher_background.xml <==
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#1E1E1E"
+        android:pathData="M0,0h108v108h-108z"/>
+</vector>
+
+==> app/src/main/res/drawable/ic_launcher_foreground.xml <==
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Protractor Arc -->
+    <path
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:pathData="M30,68 A24,24 0 0,1 78,68 L30,68 Z"/>
+    <!-- Angle Ray 1 -->
+    <path
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M54,68 L78,44"/>
+    <!-- Angle Ray 2 (Reflected) -->
+    <path
+        android:strokeColor="#FFD600"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M78,44 L60,26"/>
+    <!-- Center Dot -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,68m-3,0a3,3 0 1,0 6,0a3,3 0 1,0 -6,0"/>
+</vector>
+
+==> app/src/main/res/drawable/ic_notification.xml <==
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <path
+      android:fillColor="#00E5FF"
+      android:pathData="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12C20,13.1 19.8,14.1 19.4,15L15,10.6V8H13V9.6L10.4,7H8.8L12,10.2V12H13.8L17,15.2C15.8,16.9 14,18 12,18A6,6 0 0,1 6,12A8,8 0 0,1 12,4Z"/>
+</vector>
+
+==> app/src/main/res/layout/activity_main.xml <==
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background_dark"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <!-- Header -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="24dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tvAppTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/app_name"
+                android:textColor="@color/cyan_accent"
+                android:textSize="26sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvAppSubtitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="@string/app_description"
+                android:textColor="@color/text_secondary"
+                android:textSize="14sp"
+                android:lineSpacingExtra="2dp" />
+        </LinearLayout>
+
+        <!-- Permission Card -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardPermission"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            app:cardBackgroundColor="@color/surface_card"
+            app:cardCornerRadius="14dp"
+            app:cardElevation="2dp"
+            app:strokeColor="@color/surface_card_border"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/permission_title"
+                    android:textColor="@color/text_primary"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvPermissionDesc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="@string/permission_desc"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <View
+                        android:id="@+id/indicatorStatus"
+                        android:layout_width="10dp"
+                        android:layout_height="10dp"
+                        android:background="@drawable/bg_control_btn" />
+
+                    <TextView
+                        android:id="@+id/tvPermissionStatus"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:text="@string/permission_not_granted"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnGrantPermission"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/btn_grant_permission"
+                        android:textColor="@color/black"
+                        android:textSize="12sp"
+                        app:backgroundTint="@color/cyan_accent"
+                        app:cornerRadius="8dp" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Actions Card -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            app:cardBackgroundColor="@color/surface_card"
+            app:cardCornerRadius="14dp"
+            app:cardElevation="2dp"
+            app:strokeColor="@color/surface_card_border"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Controls &amp; Overlay Execution"
+                    android:textColor="@color/text_primary"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnStartOverlay"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/btn_start_overlay"
+                    android:textColor="@color/black"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    app:backgroundTint="@color/cyan_accent"
+                    app:cornerRadius="10dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnStopOverlay"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/btn_stop_overlay"
+                    android:textColor="@color/white"
+                    android:textSize="14sp"
+                    app:backgroundTint="@color/surface_card_border"
+                    app:cornerRadius="10dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnResetCalibration"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="@string/btn_reset_calibration"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Instructions Card -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="24dp"
+            app:cardBackgroundColor="@color/surface_card"
+            app:cardCornerRadius="14dp"
+            app:cardElevation="2dp"
+            app:strokeColor="@color/surface_card_border"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Quick Instructions"
+                    android:textColor="@color/text_primary"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:lineSpacingExtra="3dp"
+                        android:text="• [::] Drag Handle: Hold and move the floating toolbar anywhere.\n• [Ghost 4s]: Auto-hide overlay for 4 seconds for instant unobstructed execution.\n• [Handles A/B/C]: Offset finger grip pads preventing finger obstruction with tether lines.\n• [6-Line]: 1-Point Target Mode with 6 direct vertex rays and 10 mirror reflection rays (plain lines).\n• [Calib / Save Bound]: 8-handle calibration (auto-clamped in Landscape) &amp; [Reset Bound]. Border is clean-hidden when saved.\n• [⚙]: Open thickness, opacity, and line color picker sub-panel.\n• [− / +]: Minimize toolbar into a mini capsule with instant [ON] / [OFF] toggle.\n• [✕]: Dismiss the overlay service completely."
+                        android:textColor="@color/text_secondary"
+                        android:textSize="13sp" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+    </LinearLayout>
+</ScrollView>
+
+==> app/src/main/res/layout/layout_floating_control.xml <==
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/controlBarRoot"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content">
+
+    <!-- 1. Full Toolbar Container -->
+    <LinearLayout
+        android:id="@+id/fullToolbarContainer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <!-- Top Toolbar Pill -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_control_bar"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="8dp"
+            android:paddingTop="4dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="4dp">
+
+            <!-- Drag Handle Area -->
+            <TextView
+                android:id="@+id/btnDragHandle"
+                android:layout_width="28dp"
+                android:layout_height="36dp"
+                android:gravity="center"
+                android:text="@string/control_drag_handle"
+                android:textColor="@color/cyan_accent"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <!-- Quick-Ghost (4s Auto-Hide) Button -->
+            <TextView
+                android:id="@+id/btnQuickGhost"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/bg_control_btn"
+                android:gravity="center"
+                android:paddingStart="9dp"
+                android:paddingEnd="9dp"
+                android:text="@string/control_ghost"
+                android:textColor="@color/yellow_accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <!-- Hide / Show Canvas Toggle Button -->
+            <TextView
+                android:id="@+id/btnToggleVisibility"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/bg_control_btn"
+                android:gravity="center"
+                android:paddingStart="9dp"
+                android:paddingEnd="9dp"
+                android:text="@string/control_hide"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <!-- Mode Cycle Button -->
+            <TextView
+                android:id="@+id/btnCycleMode"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/bg_control_btn"
+                android:gravity="center"
+                android:paddingStart="9dp"
+                android:paddingEnd="9dp"
+                android:text="@string/control_mode_auto"
+                android:textColor="@color/cyan_accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <!-- Calibration Mode Toggle Button -->
+            <TextView
+                android:id="@+id/btnToggleCalibrate"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/bg_control_btn"
+                android:gravity="center"
+                android:paddingStart="9dp"
+                android:paddingEnd="9dp"
+                android:text="@string/control_calibrate"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <!-- Reset Calibration Boundary to Center (Landscape & Portrait safe) -->
+            <TextView
+                android:id="@+id/btnResetBound"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/bg_control_btn"
+                android:gravity="center"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:text="@string/control_reset_bound"
+                android:textColor="@color/yellow_accent"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
+            <!-- 6-Pocket Radial Lines Toggle Button -->
+            <TextView
+                android:id="@+id/btnToggleSixLines"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/bg_control_btn_active"
+                android:gravity="center"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:text="@string/control_six_lines"
+                android:textColor="@color/cyan_accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <!-- Line Settings (Thickness / Opacity) Toggle Button -->
+            <TextView
+                android:id="@+id/btnToggleSettings"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/bg_control_btn"
+                android:gravity="center"
+                android:text="@string/control_settings"
+                android:textColor="@color/cyan_accent"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <!-- Minimize Button -->
+            <TextView
+                android:id="@+id/btnMinimize"
+                android:layout_width="30dp"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/bg_control_btn"
+                android:gravity="center"
+                android:text="@string/control_minimize"
+                android:textColor="@color/text_secondary"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <!-- Close / Stop Button -->
+            <TextView
+                android:id="@+id/btnCloseOverlay"
+                android:layout_width="30dp"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/bg_control_btn"
+                android:gravity="center"
+                android:text="@string/control_close"
+                android:textColor="@color/red_danger"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+        </LinearLayout>
+
+        <!-- Sub-Panel: Line Thickness & Opacity Sliders -->
+        <LinearLayout
+            android:id="@+id/panelSettings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/bg_control_bar"
+            android:orientation="vertical"
+            android:paddingStart="12dp"
+            android:paddingTop="10dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="10dp"
+            android:visibility="gone">
+
+            <!-- Line Thickness Slider -->
+            <TextView
+                android:id="@+id/tvThicknessValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Thickness: 3.5 dp"
+                android:textColor="@color/cyan_accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <SeekBar
+                android:id="@+id/seekThickness"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:max="30"
+                android:min="1"
+                android:progress="7"
+                android:progressTint="@color/cyan_accent"
+                android:thumbTint="@color/cyan_accent" />
+
+            <!-- Line Opacity Slider -->
+            <TextView
+                android:id="@+id/tvOpacityValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Opacity: 86%"
+                android:textColor="@color/yellow_accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <SeekBar
+                android:id="@+id/seekOpacity"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:max="255"
+                android:min="25"
+                android:progress="220"
+                android:progressTint="@color/yellow_accent"
+                android:thumbTint="@color/yellow_accent" />
+
+            <!-- Ball Ring Size Slider -->
+            <TextView
+                android:id="@+id/tvBallSizeValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Target Ring Size: 13.5 dp"
+                android:textColor="@color/cyan_accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <SeekBar
+                android:id="@+id/seekBallSize"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:max="30"
+                android:min="8"
+                android:progress="14"
+                android:progressTint="@color/cyan_accent"
+                android:thumbTint="@color/cyan_accent" />
+
+            <!-- Line Color Section -->
+            <TextView
+                android:id="@+id/tvColorTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/label_line_color"
+                android:textColor="@color/cyan_accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <!-- Row: Circular Preset Swatches and Color Preview -->
+            <LinearLayout
+                android:id="@+id/rowPresetColors"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <View
+                    android:id="@+id/btnColorWhite"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="8dp" />
+
+                <View
+                    android:id="@+id/btnColorCyan"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="8dp" />
+
+                <View
+                    android:id="@+id/btnColorYellow"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="8dp" />
+
+                <View
+                    android:id="@+id/btnColorGreen"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="8dp" />
+
+                <View
+                    android:id="@+id/btnColorRed"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="8dp" />
+
+                <View
+                    android:id="@+id/btnColorMagenta"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="8dp" />
+
+                <!-- Current Color Preview Indicator -->
+                <View
+                    android:id="@+id/viewColorPreview"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginStart="4dp" />
+
+            </LinearLayout>
+
+            <!-- Hue Spectrum Slider (0 - 360) -->
+            <TextView
+                android:id="@+id/tvHueValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Spectrum Hue: 185°"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+
+            <SeekBar
+                android:id="@+id/seekHue"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:max="360"
+                android:min="0"
+                android:progress="185" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- 2. Minimized Floating Capsule Bar (Draggable Mini Bar with Quick ON/OFF Switch & Expand Button) -->
+    <LinearLayout
+        android:id="@+id/minimizedCapsule"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="@android:color/transparent"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="0dp"
+        android:paddingTop="0dp"
+        android:paddingEnd="0dp"
+        android:paddingBottom="0dp"
+        android:visibility="gone">
+
+        <!-- Mini Drag Grip Handle -->
+        <TextView
+            android:id="@+id/btnMiniDrag"
+            android:layout_width="22dp"
+            android:layout_height="32dp"
+            android:gravity="center"
+            android:text="@string/control_drag_handle"
+            android:textColor="@color/cyan_accent"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <!-- Mini Quick ON / OFF Switch -->
+        <TextView
+            android:id="@+id/btnMiniToggleOnOff"
+            android:layout_width="wrap_content"
+            android:layout_height="30dp"
+            android:layout_marginStart="3dp"
+            android:background="@drawable/bg_btn_on"
+            android:gravity="center"
+            android:minWidth="44dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:text="@string/control_on"
+            android:textColor="@android:color/white"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <!-- Mini Expand Button [+] -->
+        <TextView
+            android:id="@+id/btnMiniExpand"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginStart="0dp"
+            android:background="@drawable/bg_minimized_bubble"
+            android:gravity="center"
+            android:text="@string/control_maximize"
+            android:textColor="@color/cyan_accent"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:alpha="0.65" />
+
+    </LinearLayout>
+
+</FrameLayout>
+
+==> app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <==
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>
+
+==> app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml <==
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>
+
+==> app/src/main/res/values/colors.xml <==
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="background_dark">#FF121212</color>
+    <color name="surface_dark">#FF1E1E1E</color>
+    <color name="surface_card">#FF252525</color>
+    <color name="surface_card_border">#FF383838</color>
+    
+    <!-- Accent Colors -->
+    <color name="cyan_accent">#00E5FF</color>
+    <color name="cyan_accent_dark">#00B0FF</color>
+    <color name="yellow_accent">#FFD600</color>
+    <color name="green_status">#00E676</color>
+    <color name="red_danger">#FF5252</color>
+
+    <!-- Overlay Colors -->
+    <color name="overlay_control_bg">#CC1E1E1E</color>
+    <color name="overlay_control_border">#55FFFFFF</color>
+    <color name="overlay_primary_line">#00E5FF</color>
+    <color name="overlay_reflected_line">#FFD600</color>
+    <color name="overlay_boundary">#80FFFFFF</color>
+    <color name="overlay_handle_touch">#4000E5FF</color>
+    <color name="overlay_handle_center">#FFFFFFFF</color>
+
+    <!-- Text Colors -->
+    <color name="text_primary">#FFFFFFFF</color>
+    <color name="text_secondary">#B0BEC5</color>
+    <color name="text_hint">#78909C</color>
+</resources>
+
+==> app/src/main/res/values/strings.xml <==
+<resources>
+    <string name="app_name">Screen Angle Ruler</string>
+    <string name="app_description">Precision geometric screen overlay ruler and vector 2D reflection visualizer.</string>
+
+    <!-- Permissions -->
+    <string name="permission_title">Overlay Permission Required</string>
+    <string name="permission_desc">This app needs permission to display over other apps to render the geometry ruler overlay on screen.</string>
+    <string name="permission_granted">Overlay Permission Active</string>
+    <string name="permission_not_granted">Overlay Permission Not Granted</string>
+    <string name="btn_grant_permission">Grant Permission</string>
+
+    <!-- Actions -->
+    <string name="btn_start_overlay">Start Ruler Overlay</string>
+    <string name="btn_stop_overlay">Stop Overlay</string>
+    <string name="btn_reset_calibration">Reset Calibration</string>
+
+    <!-- Foreground Service -->
+    <string name="notification_channel_name">Screen Protractor Service</string>
+    <string name="notification_channel_desc">Active geometry ruler overlay service notification</string>
+    <string name="notification_title">Screen Angle Ruler Active</string>
+    <string name="notification_text">Floating ruler overlay is running. Tap to open settings.</string>
+    <string name="notification_action_stop">Stop</string>
+
+    <!-- Overlay Controls -->
+    <string name="control_drag_handle">::</string>
+    <string name="control_edit">Edit</string>
+    <string name="control_lock">Lock</string>
+    <string name="control_ghost">Ghost 4s</string>
+    <string name="control_ghosting">Ghosting...</string>
+    <string name="control_hide">Hide</string>
+    <string name="control_show">Show</string>
+    <string name="control_calibrate">Calib</string>
+    <string name="control_save_bound">Save Bound</string>
+    <string name="control_reset_bound">Reset Bound</string>
+    <string name="control_six_lines">6-Line</string>
+    <string name="control_settings">⚙</string>
+    <string name="control_mode_auto">Auto-Reflect</string>
+    <string name="control_mode_manual">Manual 3-Pt</string>
+    <string name="control_mode_edge">Edge-Marker</string>
+    <string name="control_minimize">−</string>
+    <string name="control_maximize">+</string>
+    <string name="control_on">ON</string>
+    <string name="control_off">OFF</string>
+    <string name="control_close">✕</string>
+
+    <!-- Settings Panel -->
+    <string name="label_thickness">Thickness: %1$.1f dp</string>
+    <string name="label_opacity">Opacity: %1$d%%</string>
+    <string name="label_ball_size">Target Ring Size: %1$.1f dp</string>
+    <string name="label_line_color">Line Color</string>
+    <string name="label_hue">Spectrum Hue: %1$d°</string>
+    <string name="label_hue_white">Color: Pure White</string>
+
+    <!-- Calibration Info -->
+    <string name="calib_instructions">Drag corner handles to align boundary box with target area.</string>
+    <string name="toast_calib_saved">Boundary box calibration saved.</string>
+    <string name="toast_calib_reset">Boundary box reset to center.</string>
+    <string name="toast_permission_needed">Please grant Overlay Permission to start the ruler.</string>
+</resources>
+
+==> app/src/main/res/values/themes.xml <==
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.ScreenAngleRuler" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- Primary brand color. -->
+        <item name="colorPrimary">@color/cyan_accent</item>
+        <item name="colorPrimaryVariant">@color/cyan_accent_dark</item>
+        <item name="colorOnPrimary">@color/black</item>
+        <!-- Secondary brand color. -->
+        <item name="colorSecondary">@color/yellow_accent</item>
+        <item name="colorSecondaryVariant">@color/yellow_accent</item>
+        <item name="colorOnSecondary">@color/black</item>
+        <!-- Status bar color. -->
+        <item name="android:statusBarColor">@color/background_dark</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:navigationBarColor">@color/background_dark</item>
+        <!-- Background and Surface -->
+        <item name="android:windowBackground">@color/background_dark</item>
+        <item name="colorSurface">@color/surface_dark</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+    </style>
+</resources>

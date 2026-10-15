@@ -57,10 +57,11 @@ class CanvasOverlayView @JvmOverloads constructor(
     var isCalibrating: Boolean = false
         private set
 
-    // Feature 1: 6-Pocket Radial Lines & Ball Radius
-    var showSixPocketLines: Boolean = true
+    // Feature 1: Radial Lines & Target Ring Radius
+    var showRadialGuides: Boolean = true
         private set
-    var ballRadius: Float = 13.5f
+
+    var ringRadiusDp: Float = 13.5f
         private set
 
     // Window Offset for Table-Bounded Window Cropping
@@ -215,14 +216,14 @@ class CanvasOverlayView @JvmOverloads constructor(
         strokeWidth = 3f * density
     }
 
-    // Feature 1: 6 Pocket Calibration Rings (Jaw Guides in Calibration Mode)
-    private val pocketJawRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    // Feature 1: 6 Vertex Calibration Rings (Vertex Guides in Calibration Mode)
+    private val vertexRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#00E5FF")
         style = Paint.Style.STROKE
         strokeWidth = 2f * density
     }
 
-    private val pocketJawCrossPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val vertexCrossPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#00E5FF")
         style = Paint.Style.STROKE
         strokeWidth = 1.5f * density
@@ -272,7 +273,7 @@ class CanvasOverlayView @JvmOverloads constructor(
     private val linePath = Path()
     private val textBounds = Rect()
     private val badgeRect = RectF()
-    private val cushionBox = RectF()
+    private val innerInsetBox = RectF()
 
     var onCanvasSizeChanged: ((w: Int, h: Int) -> Unit)? = null
 
@@ -303,8 +304,8 @@ class CanvasOverlayView @JvmOverloads constructor(
         updateBankLineColor(currentBankLineColor)
         updateLineStyle(currentStrokeWidth, currentAlpha)
 
-        showSixPocketLines = prefsManager.getShowSixLines()
-        ballRadius = prefsManager.getBallRadius()
+        showRadialGuides = prefsManager.getShowRadialGuides()
+        ringRadiusDp = prefsManager.getRingRadius()
     }
 
     /**
@@ -426,20 +427,20 @@ class CanvasOverlayView @JvmOverloads constructor(
         invalidate()
     }
 
-    fun setShowSixPocketLines(show: Boolean) {
-        showSixPocketLines = show
-        prefsManager.saveShowSixLines(show)
+    fun setShowRadialGuides(show: Boolean) {
+        showRadialGuides = show
+        prefsManager.saveShowRadialGuides(show)
         invalidate()
     }
 
-    fun toggleSixPocketLines(): Boolean {
-        setShowSixPocketLines(!showSixPocketLines)
-        return showSixPocketLines
+    fun toggleRadialGuides(): Boolean {
+        setShowRadialGuides(!showRadialGuides)
+        return showRadialGuides
     }
 
-    fun setBallRadius(radius: Float) {
-        ballRadius = radius
-        prefsManager.saveBallRadius(radius)
+    fun setRingRadius(radius: Float) {
+        ringRadiusDp = radius
+        prefsManager.saveRingRadius(radius)
         invalidate()
     }
 
@@ -520,7 +521,7 @@ class CanvasOverlayView @JvmOverloads constructor(
         }
 
         if (!isCalibrating) {
-            if (showSixPocketLines) {
+            if (showRadialGuides) {
                 // Requirement 2: Mode 1-Titik Fokus (Single-Point Target Mode)
                 // Hide connecting line A-B and reflection rays.
                 // Only render Point B's stem tether (from grip pad to Point B)
@@ -528,7 +529,7 @@ class CanvasOverlayView @JvmOverloads constructor(
                     canvas.drawLine(gripB.x, gripB.y, pointB.x, pointB.y, stemLinePaint)
                 }
                 // Render Point B's white center dot + 6 Direct rays + 6 Mirror Bank rays
-                drawTargetBallAndRadialLines(canvas)
+                drawTargetAndRadialGuides(canvas)
             } else {
                 // Normal modes (Auto-Reflect, Manual 3-Pt, Edge-Marker)
                 drawStemTethers(canvas)
@@ -593,7 +594,13 @@ class CanvasOverlayView @JvmOverloads constructor(
      * so that the aiming line never cuts into the cushion rail when the ball approaches the cushion.
      * Zero-allocation primitive Float calculations.
      */
-    private fun drawOptimalPocketRay(
+    /**
+     * 12-Jaw Gate & Pro-Side Clearance Algorithm:
+     * Calculates the dynamically optimal pocket entry target between jaws J1(j1x, j1y) and J2(j2x, j2y)
+     * so that the aiming line never cuts into the cushion rail when the ball approaches the cushion.
+     * Zero-allocation primitive Float calculations.
+     */
+    private fun drawOptimalVertexRay(
         canvas: Canvas,
         bx: Float,
         by: Float,
@@ -647,12 +654,12 @@ class CanvasOverlayView @JvmOverloads constructor(
      * Zero-Allocation Target Mode: 6 Direct Rays with 12-Jaw Gate Clearance + 10 Cushion Bank Rays.
      * Direct primitive calculations per frame without allocating any Array or PointF objects.
      */
-    private fun drawTargetBallAndRadialLines(canvas: Canvas) {
+    private fun drawTargetAndRadialGuides(canvas: Canvas) {
         val bx = pointB.x
         val by = pointB.y
 
         // 1. Ball-Fit Ring: High-Contrast Hollow Reticle matching ball size
-        val ringRadius = ballRadius * density
+        val ringRadius = ringRadiusDp * density
         canvas.drawCircle(bx, by, ringRadius, aimShadowPaint)
         canvas.drawCircle(bx, by, ringRadius, aimRingPaint)
 
@@ -661,7 +668,7 @@ class CanvasOverlayView @JvmOverloads constructor(
         canvas.drawCircle(bx, by, 1.5f * density, aimCenterDotPaint)
 
         // Draw the 6 direct rays and 10 mirror reflection rays if enabled
-        if (showSixPocketLines) {
+        if (showRadialGuides) {
             val startDist = ringRadius + (3f * density)
             val directEndDist = 85f * density
             val bankEndDist = 64f * density
@@ -681,7 +688,7 @@ class CanvasOverlayView @JvmOverloads constructor(
             val diagNorm = 0.7071f
 
             // Top-Left (Corner)
-            drawOptimalPocketRay(
+            drawOptimalVertexRay(
                 canvas, bx, by,
                 l + cornerJawDist, t,
                 l, t + cornerJawDist,
@@ -690,7 +697,7 @@ class CanvasOverlayView @JvmOverloads constructor(
             )
 
             // Top-Center (Side)
-            drawOptimalPocketRay(
+            drawOptimalVertexRay(
                 canvas, bx, by,
                 cx - sideJawDist, t,
                 cx + sideJawDist, t,
@@ -699,7 +706,7 @@ class CanvasOverlayView @JvmOverloads constructor(
             )
 
             // Top-Right (Corner)
-            drawOptimalPocketRay(
+            drawOptimalVertexRay(
                 canvas, bx, by,
                 r - cornerJawDist, t,
                 r, t + cornerJawDist,
@@ -708,7 +715,7 @@ class CanvasOverlayView @JvmOverloads constructor(
             )
 
             // Bottom-Left (Corner)
-            drawOptimalPocketRay(
+            drawOptimalVertexRay(
                 canvas, bx, by,
                 l + cornerJawDist, b,
                 l, b - cornerJawDist,
@@ -717,7 +724,7 @@ class CanvasOverlayView @JvmOverloads constructor(
             )
 
             // Bottom-Center (Side)
-            drawOptimalPocketRay(
+            drawOptimalVertexRay(
                 canvas, bx, by,
                 cx - sideJawDist, b,
                 cx + sideJawDist, b,
@@ -726,7 +733,7 @@ class CanvasOverlayView @JvmOverloads constructor(
             )
 
             // Bottom-Right (Corner)
-            drawOptimalPocketRay(
+            drawOptimalVertexRay(
                 canvas, bx, by,
                 r - cornerJawDist, b,
                 r, b - cornerJawDist,
@@ -736,7 +743,7 @@ class CanvasOverlayView @JvmOverloads constructor(
 
             // 2. 10 Mirror Bank Rays (Pantulan Dinding Rel)
             // Collision plane accounts for physical cushion nose + ball radius
-            val cushionBounceInset = (5f * density) + (ballRadius * density)
+            val cushionBounceInset = (5f * density) + (ringRadiusDp * density)
             val bounceL = l + cushionBounceInset
             val bounceR = r - cushionBounceInset
             val bounceT = t + cushionBounceInset
@@ -790,12 +797,12 @@ class CanvasOverlayView @JvmOverloads constructor(
         val b = boundaryBox.bottom
         val cx = boundaryBox.centerX()
 
-        drawPocketJawRing(canvas, l, t)   // Top-Left
-        drawPocketJawRing(canvas, cx, t)  // Top-Center
-        drawPocketJawRing(canvas, r, t)   // Top-Right
-        drawPocketJawRing(canvas, l, b)   // Bottom-Left
-        drawPocketJawRing(canvas, cx, b)  // Bottom-Center
-        drawPocketJawRing(canvas, r, b)   // Bottom-Right
+        drawVertexGuideRing(canvas, l, t)   // Top-Left
+        drawVertexGuideRing(canvas, cx, t)  // Top-Center
+        drawVertexGuideRing(canvas, r, t)   // Top-Right
+        drawVertexGuideRing(canvas, l, b)   // Bottom-Left
+        drawVertexGuideRing(canvas, cx, b)  // Bottom-Center
+        drawVertexGuideRing(canvas, r, b)   // Bottom-Right
 
         val label = "Calibration: Drag 8 handles to align target bounds"
         textPaint.getTextBounds(label, 0, label.length, textBounds)
@@ -812,24 +819,31 @@ class CanvasOverlayView @JvmOverloads constructor(
         canvas.drawText(label, textX, textY, textPaint)
     }
 
-    private fun drawPocketJawRing(canvas: Canvas, px: Float, py: Float) {
+    private fun drawVertexGuideRing(canvas: Canvas, px: Float, py: Float) {
         val ringRadius = 12f * density
-        canvas.drawCircle(px, py, ringRadius, pocketJawRingPaint)
+        canvas.drawCircle(px, py, ringRadius, vertexRingPaint)
         val crossArm = 4f * density
-        canvas.drawLine(px - crossArm, py, px + crossArm, py, pocketJawCrossPaint)
-        canvas.drawLine(px, py - crossArm, px, py + crossArm, pocketJawCrossPaint)
+        canvas.drawLine(px - crossArm, py, px + crossArm, py, vertexCrossPaint)
+        canvas.drawLine(px, py - crossArm, px, py + crossArm, vertexCrossPaint)
     }
 
     /**
-     * Requirement 2: Render side-rail calibration handles (left and right edges).
+     * Requirement 2: Render side-rail calibration handles (left and right edges)
+     * and top/bottom center indicators.
      * The 6 pocket positions are clearly indicated by the 6 cyan jaw target rings.
      */
     private fun drawEightCalibrationHandles(canvas: Canvas) {
+        val cx = boundaryBox.centerX()
         val cy = boundaryBox.centerY()
+        val sideRadius = edgeHandleRadius * 0.75f
 
         // 2 Side Edge Centers (Left & Right rail resize handles)
         drawHandlePin(canvas, boundaryBox.left, cy, edgeHandleRadius)
         drawHandlePin(canvas, boundaryBox.right, cy, edgeHandleRadius)
+
+        // Top & Bottom Edge Centers (Resize indicators)
+        drawHandlePin(canvas, cx, boundaryBox.top, sideRadius)
+        drawHandlePin(canvas, cx, boundaryBox.bottom, sideRadius)
     }
 
     private fun drawHandlePin(canvas: Canvas, cx: Float, cy: Float, radius: Float) {
@@ -838,9 +852,9 @@ class CanvasOverlayView @JvmOverloads constructor(
         canvas.drawCircle(cx, cy, 4f * density, handleCenterPaint)
     }
 
-    private fun updateCushionBox() {
-        val cushionBounceInset = (5f * density) + (ballRadius * density)
-        cushionBox.set(
+    private fun updateInnerInsetBox() {
+        val cushionBounceInset = (5f * density) + (ringRadiusDp * density)
+        innerInsetBox.set(
             boundaryBox.left + cushionBounceInset,
             boundaryBox.top + cushionBounceInset,
             boundaryBox.right - cushionBounceInset,
@@ -849,8 +863,8 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     private fun drawAutoReflection(canvas: Canvas) {
-        updateCushionBox()
-        val reflection = GeometryUtils.computeReflection(pointA, pointB, cushionBox)
+        updateInnerInsetBox()
+        val reflection = GeometryUtils.computeReflection(pointA, pointB, innerInsetBox)
 
         if (reflection != null) {
             // Primary Line: A -> Hit Point
@@ -911,8 +925,8 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     private fun drawEdgeMarkerOnly(canvas: Canvas) {
-        updateCushionBox()
-        val reflection = GeometryUtils.computeReflection(pointA, pointB, cushionBox)
+        updateInnerInsetBox()
+        val reflection = GeometryUtils.computeReflection(pointA, pointB, innerInsetBox)
 
         if (reflection != null) {
             canvas.drawCircle(

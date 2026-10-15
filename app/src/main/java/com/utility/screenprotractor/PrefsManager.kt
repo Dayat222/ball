@@ -172,33 +172,33 @@ class PrefsManager(context: Context) {
     /**
      * Save and retrieve mirror bank line color (ARGB / Int).
      */
-    fun saveBankLineColor(color: Int) {
+    fun saveSecondaryRayColor(color: Int) {
         prefs.edit().putInt(KEY_BANK_LINE_COLOR, color).apply()
     }
 
-    fun getBankLineColor(): Int {
+    fun getSecondaryRayColor(): Int {
         return prefs.getInt(KEY_BANK_LINE_COLOR, DEFAULT_BANK_LINE_COLOR)
     }
 
     /**
-     * Save and retrieve 6-Pocket Radial lines visibility toggle.
+     * Save and retrieve radial lines visibility toggle.
      */
-    fun saveShowSixLines(show: Boolean) {
+    fun saveShowRadialGuides(show: Boolean) {
         prefs.edit().putBoolean(KEY_SHOW_SIX_LINES, show).apply()
     }
 
-    fun getShowSixLines(): Boolean {
+    fun getShowRadialGuides(): Boolean {
         return prefs.getBoolean(KEY_SHOW_SIX_LINES, true)
     }
 
     /**
-     * Save and retrieve ball radius.
+     * Save and retrieve target ring radius.
      */
-    fun saveBallRadius(radius: Float) {
+    fun saveRingRadius(radius: Float) {
         prefs.edit().putFloat(KEY_BALL_RADIUS, radius).apply()
     }
 
-    fun getBallRadius(): Float {
+    fun getRingRadius(): Float {
         return prefs.getFloat(KEY_BALL_RADIUS, 13.5f)
     }
 
@@ -229,9 +229,9 @@ class PrefsManager(context: Context) {
         private const val KEY_LINE_STROKE_WIDTH = "line_stroke_width"
         private const val KEY_LINE_ALPHA = "line_alpha"
         private const val KEY_LINE_COLOR = "line_color"
-        private const val KEY_BANK_LINE_COLOR = "bank_line_color"
+        private const val KEY_BANK_LINE_COLOR = "secondary_ray_color"
 
-        private const val KEY_SHOW_SIX_LINES = "show_six_lines"
-        private const val KEY_BALL_RADIUS = "ball_radius"
+        private const val KEY_SHOW_SIX_LINES = "show_radial_guides"
+        private const val KEY_BALL_RADIUS = "target_ring_radius"
     }
 }

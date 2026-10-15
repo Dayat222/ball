@@ -457,7 +457,6 @@ class OverlayService : Service() {
         var downRawY = 0f
 
         // Long-Press Tracking (Smart Offset Flip)
-        val longPressHandler = Handler(Looper.getMainLooper())
         var isLongPressed = false
         var hasMovedSignificantly = false
 
@@ -511,7 +510,7 @@ class OverlayService : Service() {
 
                     hasMovedSignificantly = false
                     isLongPressed = false
-                    longPressHandler.postDelayed(longPressRunnable, 450L)
+                    ghostHandler.postDelayed(longPressRunnable, 450L)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -523,7 +522,7 @@ class OverlayService : Service() {
                     val totalMoveFromDown = hypot(event.rawX - downRawX, event.rawY - downRawY)
                     if (totalMoveFromDown > 8f * resources.displayMetrics.density) {
                         hasMovedSignificantly = true
-                        longPressHandler.removeCallbacks(longPressRunnable)
+                        ghostHandler.removeCallbacks(longPressRunnable)
                     }
 
                     val speed = hypot(frameDx, frameDy)
@@ -571,7 +570,7 @@ class OverlayService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    longPressHandler.removeCallbacks(longPressRunnable)
+                    ghostHandler.removeCallbacks(longPressRunnable)
 
                     if (event.actionMasked == MotionEvent.ACTION_UP && !isLongPressed) {
                         val tapDuration = System.currentTimeMillis() - downTime
@@ -680,8 +679,8 @@ class OverlayService : Service() {
         btnMode.setOnClickListener {
             val canvas = canvasOverlayView ?: return@setOnClickListener
             // Switching mode turns off 6-Line single-point target mode
-            if (canvas.showSixPocketLines) {
-                canvas.setShowSixPocketLines(false)
+            if (canvas.showRadialGuides) {
+                canvas.setShowRadialGuides(false)
                 updateSixLinesButtonUI()
             }
             val nextMode = canvas.cycleRulerMode()
@@ -716,7 +715,7 @@ class OverlayService : Service() {
         updateSixLinesButtonUI()
         btnSixLines?.setOnClickListener {
             val canvas = canvasOverlayView ?: return@setOnClickListener
-            canvas.toggleSixPocketLines()
+            canvas.toggleRadialGuides()
             updateSixLinesButtonUI()
             syncHandlesVisibility()
         }
@@ -783,7 +782,7 @@ class OverlayService : Service() {
         })
 
         // Ball Ring Size Slider Setup
-        val initialBallRadius = prefsManager.getBallRadius()
+        val initialBallRadius = prefsManager.getRingRadius()
         seekBallSize.progress = initialBallRadius.roundToInt().coerceIn(8, 30)
         tvBallSize.text = getString(R.string.label_ball_size, initialBallRadius)
 
@@ -792,7 +791,7 @@ class OverlayService : Service() {
                 val radiusDp = progress.coerceIn(8, 30) * 1.0f
                 tvBallSize.text = getString(R.string.label_ball_size, radiusDp)
                 if (fromUser) {
-                    canvasOverlayView?.setBallRadius(radiusDp)
+                    canvasOverlayView?.setRingRadius(radiusDp)
                 }
             }
 
@@ -801,8 +800,8 @@ class OverlayService : Service() {
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
                 val progress = seekBar?.progress ?: 14
                 val radiusDp = progress.coerceIn(8, 30) * 1.0f
-                prefsManager.saveBallRadius(radiusDp)
-                canvasOverlayView?.setBallRadius(radiusDp)
+                prefsManager.saveRingRadius(radiusDp)
+                canvasOverlayView?.setRingRadius(radiusDp)
             }
         })
 
@@ -931,7 +930,7 @@ class OverlayService : Service() {
     }
 
     private fun updateSixLinesButtonUI() {
-        val isActive = canvasOverlayView?.showSixPocketLines ?: true
+        val isActive = canvasOverlayView?.showRadialGuides ?: true
         if (isActive) {
             btnSixLines?.setBackgroundResource(R.drawable.bg_control_btn_active)
             btnSixLines?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
@@ -1053,7 +1052,7 @@ class OverlayService : Service() {
             return
         }
 
-        val isSixLinesActive = canvasOverlayView?.showSixPocketLines ?: false
+        val isSixLinesActive = canvasOverlayView?.showRadialGuides ?: false
         if (isSixLinesActive) {
             handleViewA?.visibility = View.GONE
             handleViewB?.visibility = View.VISIBLE

@@ -95,31 +95,28 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     // Paint: Reflected Line (Hit Point -> Reflected End / Point B -> C)
     private val reflectedLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#FFD600")
+        color = Color.parseColor("#00E5FF")
         style = Paint.Style.STROKE
         strokeWidth = 3.5f * density
         pathEffect = DashPathEffect(floatArrayOf(15f * density, 10f * density), 0f)
     }
 
-    // Paint: 6-Pocket Radial Short Lines from Target Ball
-    private val pocketLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    // Paint: 6-Pocket Radial Short Lines from Target Ball (sixLinePaint)
+    private val sixLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#00E5FF")
         style = Paint.Style.STROKE
         strokeWidth = 3.5f * density
         strokeCap = Paint.Cap.ROUND
     }
+    private val pocketLinePaint get() = sixLinePaint
 
-    // Paint: Target Ball (Point B) Circle Representation
-    private val targetBallFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#2600E5FF")
-        style = Paint.Style.FILL
-    }
-
-    private val targetBallStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#CC00E5FF")
-        style = Paint.Style.STROKE
-        strokeWidth = 2f * density
-    }
+    // Active line styling state
+    var currentLineColor: Int = PrefsManager.DEFAULT_LINE_COLOR
+        private set
+    var currentAlpha: Int = 220
+        private set
+    var currentStrokeWidth: Float = 3.5f
+        private set
 
     // Paint: Connecting Stem/Tether Line between Grip Pad and Aim Point
     private val stemLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -208,14 +205,24 @@ class CanvasOverlayView @JvmOverloads constructor(
             currentMode = RulerMode.values()[savedModeOrdinal]
         }
 
-        // Load saved line styling
+        // Load saved line styling & color
         val savedStroke = prefsManager.getLineStrokeWidth()
         val savedAlpha = prefsManager.getLineAlpha()
+        val savedColor = prefsManager.getLineColor()
+        updateLineColor(savedColor)
         updateLineStyle(savedStroke, savedAlpha)
 
         // Load 6-pocket line preference and ball radius
         showSixPocketLines = prefsManager.getShowSixLines()
         ballRadius = prefsManager.getBallRadius()
+    }
+
+    init {
+        currentLineColor = prefsManager.getLineColor()
+        currentAlpha = prefsManager.getLineAlpha()
+        currentStrokeWidth = prefsManager.getLineStrokeWidth()
+        updateLineColor(currentLineColor)
+        updateLineStyle(currentStrokeWidth, currentAlpha)
     }
 
     /**
@@ -259,22 +266,43 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     /**
+     * Requirement 2: Dynamically adjust line color across primary, reflected, and 6-pocket lines,
+     * preserving currently active opacity alpha.
+     */
+    fun updateLineColor(color: Int) {
+        currentLineColor = color
+        val r = Color.red(color)
+        val g = Color.green(color)
+        val b = Color.blue(color)
+        val argb = Color.argb(currentAlpha, r, g, b)
+
+        primaryLinePaint.color = argb
+        reflectedLinePaint.color = argb
+        sixLinePaint.color = argb
+
+        invalidate()
+    }
+
+    /**
      * Dynamically adjust line thickness and opacity.
      */
     fun updateLineStyle(strokeWidth: Float, alpha: Int) {
-        val clampedAlpha = alpha.coerceIn(25, 255)
+        currentAlpha = alpha.coerceIn(25, 255)
+        currentStrokeWidth = strokeWidth
         val strokePx = strokeWidth * density
 
         primaryLinePaint.strokeWidth = strokePx
-        primaryLinePaint.alpha = clampedAlpha
-
         reflectedLinePaint.strokeWidth = strokePx
-        reflectedLinePaint.alpha = clampedAlpha
+        sixLinePaint.strokeWidth = strokePx
 
-        pocketLinePaint.strokeWidth = strokePx
-        pocketLinePaint.alpha = clampedAlpha
+        val r = Color.red(currentLineColor)
+        val g = Color.green(currentLineColor)
+        val b = Color.blue(currentLineColor)
+        val argb = Color.argb(currentAlpha, r, g, b)
 
-        targetBallStrokePaint.strokeWidth = (strokeWidth * 0.7f).coerceAtLeast(1.5f) * density
+        primaryLinePaint.color = argb
+        reflectedLinePaint.color = argb
+        sixLinePaint.color = argb
 
         invalidate()
     }
@@ -385,7 +413,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         }
         if (hasGripB) {
             canvas.drawLine(gripB.x, gripB.y, pointB.x, pointB.y, stemLinePaint)
-            canvas.drawCircle(pointB.x, pointB.y, 4f * density, aimDotPaint)
         }
         if (hasGripC && currentMode == RulerMode.MANUAL_3_POINT) {
             canvas.drawLine(gripC.x, gripC.y, pointC.x, pointC.y, stemLinePaint)
@@ -394,17 +421,16 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     /**
-     * Feature 1: Draw target ball circle (radius 28f) and 6-Pocket radial lines on Point B.
+     * Requirement 1: Center solid white dot (radius 6f) on Point B and 6-Pocket radial guide lines.
+     * Large blue ballRadius outline is removed for an unobstructed view.
      */
     private fun drawTargetBallAndRadialLines(canvas: Canvas) {
         val bx = pointB.x
         val by = pointB.y
-        val ballR = ballRadius * density
 
-        // Draw target ball representation circle
-        canvas.drawCircle(bx, by, ballR, targetBallFillPaint)
-        canvas.drawCircle(bx, by, ballR, targetBallStrokePaint)
-        canvas.drawCircle(bx, by, 3f * density, aimDotPaint)
+        // 1 distinct solid white dot at center of Point B (radius = 6f)
+        val centerDotRadius = 6f * density
+        canvas.drawCircle(bx, by, centerDotRadius, aimDotPaint)
 
         // Draw the 6 pocket radial guide lines if enabled
         if (showSixPocketLines) {
@@ -417,8 +443,8 @@ class CanvasOverlayView @JvmOverloads constructor(
                 PointF(boundaryBox.right, boundaryBox.bottom)                  // Bottom-Right
             )
 
-            val startDist = ballR + (10f * density)
-            val endDist = startDist + (75f * density)
+            val startDist = 14f * density
+            val endDist = 85f * density
 
             for (pocket in pockets) {
                 val dx = pocket.x - bx
@@ -433,7 +459,7 @@ class CanvasOverlayView @JvmOverloads constructor(
                     val endX = bx + ux * endDist
                     val endY = by + uy * endDist
 
-                    canvas.drawLine(startX, startY, endX, endY, pocketLinePaint)
+                    canvas.drawLine(startX, startY, endX, endY, sixLinePaint)
                     canvas.drawCircle(endX, endY, 2.5f * density, aimDotPaint)
                 }
             }

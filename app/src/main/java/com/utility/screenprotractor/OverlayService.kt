@@ -12,6 +12,7 @@ import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.PointF
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -563,12 +564,124 @@ class OverlayService : Service() {
             }
         })
 
-        // 8. Collapsible Floating Control (Minimize Toolbar)
+        // 8. Feature 2: Line Color Picker (Preset Swatches & Hue Spectrum Slider)
+        val density = resources.displayMetrics.density
+        val btnColorWhite = controlView.findViewById<View>(R.id.btnColorWhite)
+        val btnColorCyan = controlView.findViewById<View>(R.id.btnColorCyan)
+        val btnColorYellow = controlView.findViewById<View>(R.id.btnColorYellow)
+        val btnColorGreen = controlView.findViewById<View>(R.id.btnColorGreen)
+        val btnColorRed = controlView.findViewById<View>(R.id.btnColorRed)
+        val btnColorMagenta = controlView.findViewById<View>(R.id.btnColorMagenta)
+        val viewColorPreview = controlView.findViewById<View>(R.id.viewColorPreview)
+        val tvHue = controlView.findViewById<TextView>(R.id.tvHueValue)
+        val seekHue = controlView.findViewById<SeekBar>(R.id.seekHue)
+
+        val presetButtons = listOf(
+            btnColorWhite to Color.WHITE,
+            btnColorCyan to Color.parseColor("#00E5FF"),
+            btnColorYellow to Color.parseColor("#FFD600"),
+            btnColorGreen to Color.parseColor("#00E676"),
+            btnColorRed to Color.parseColor("#FF1744"),
+            btnColorMagenta to Color.parseColor("#D500F9")
+        )
+
+        var selectedColor = prefsManager.getLineColor()
+
+        // Rainbow gradient for seekHue track
+        val rainbowColors = intArrayOf(
+            Color.RED,
+            Color.YELLOW,
+            Color.GREEN,
+            Color.CYAN,
+            Color.BLUE,
+            Color.MAGENTA,
+            Color.RED
+        )
+        val rainbowGradient = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, rainbowColors).apply {
+            cornerRadius = 4f * density
+        }
+        seekHue.progressDrawable = rainbowGradient
+
+        fun createSwatchDrawable(color: Int, isSelected: Boolean): GradientDrawable {
+            return GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(color)
+                if (isSelected) {
+                    setStroke((3f * density).roundToInt(), Color.WHITE)
+                } else {
+                    setStroke((1f * density).roundToInt(), Color.parseColor("#66FFFFFF"))
+                }
+            }
+        }
+
+        fun updateColorUI(color: Int) {
+            selectedColor = color
+            for ((view, pColor) in presetButtons) {
+                val isSelected = (color == pColor)
+                view.background = createSwatchDrawable(pColor, isSelected)
+            }
+            viewColorPreview.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(color)
+                setStroke((2f * density).roundToInt(), Color.WHITE)
+            }
+
+            if (color == Color.WHITE) {
+                tvHue.text = getString(R.string.label_hue_white)
+            } else {
+                val hsv = FloatArray(3)
+                Color.colorToHSV(color, hsv)
+                val hue = hsv[0].roundToInt().coerceIn(0, 360)
+                tvHue.text = getString(R.string.label_hue, hue)
+                seekHue.progress = hue
+            }
+        }
+
+        updateColorUI(selectedColor)
+
+        for ((view, color) in presetButtons) {
+            view.setOnClickListener {
+                updateColorUI(color)
+                canvasOverlayView?.updateLineColor(color)
+                prefsManager.saveLineColor(color)
+            }
+        }
+
+        seekHue.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    val hue = progress.toFloat()
+                    val color = Color.HSVToColor(floatArrayOf(hue, 1f, 1f))
+                    selectedColor = color
+                    tvHue.text = getString(R.string.label_hue, progress)
+                    canvasOverlayView?.updateLineColor(color)
+
+                    for ((view, pColor) in presetButtons) {
+                        view.background = createSwatchDrawable(pColor, color == pColor)
+                    }
+                    viewColorPreview.background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(color)
+                        setStroke((2f * density).roundToInt(), Color.WHITE)
+                    }
+                }
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val hue = (seekBar?.progress ?: 185).toFloat()
+                val color = Color.HSVToColor(floatArrayOf(hue, 1f, 1f))
+                prefsManager.saveLineColor(color)
+            }
+        })
+
+        // 9. Collapsible Floating Control (Minimize Toolbar)
         btnMinimize.setOnClickListener {
             minimizeToolbar()
         }
 
-        // 9. Close Overlay
+        // 10. Close Overlay
         btnClose.setOnClickListener {
             stopSelf()
         }

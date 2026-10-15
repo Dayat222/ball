@@ -223,6 +223,90 @@
                 android:progressTint="@color/yellow_accent"
                 android:thumbTint="@color/yellow_accent" />
 
+            <!-- Line Color Section -->
+            <TextView
+                android:id="@+id/tvColorTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/label_line_color"
+                android:textColor="@color/cyan_accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <!-- Row: Circular Preset Swatches and Color Preview -->
+            <LinearLayout
+                android:id="@+id/rowPresetColors"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <View
+                    android:id="@+id/btnColorWhite"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="8dp" />
+
+                <View
+                    android:id="@+id/btnColorCyan"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="8dp" />
+
+                <View
+                    android:id="@+id/btnColorYellow"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="8dp" />
+
+                <View
+                    android:id="@+id/btnColorGreen"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="8dp" />
+
+                <View
+                    android:id="@+id/btnColorRed"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="8dp" />
+
+                <View
+                    android:id="@+id/btnColorMagenta"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="8dp" />
+
+                <!-- Current Color Preview Indicator -->
+                <View
+                    android:id="@+id/viewColorPreview"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginStart="4dp" />
+
+            </LinearLayout>
+
+            <!-- Hue Spectrum Slider (0 - 360) -->
+            <TextView
+                android:id="@+id/tvHueValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Spectrum Hue: 185°"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+
+            <SeekBar
+                android:id="@+id/seekHue"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:max="360"
+                android:min="0"
+                android:progress="185" />
+
         </LinearLayout>
 
     </LinearLayout>

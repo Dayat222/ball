@@ -10,12 +10,12 @@ A precision geometric screen overlay ruler and vector 2D reflection visualizer (
   - **Always Pass-Through Canvas Overlay (`MATCH_PARENT` x `MATCH_PARENT`):** Full-screen transparent canvas permanently set with `FLAG_NOT_TOUCHABLE` and `FLAG_NOT_FOCUSABLE`. All touches on screen pass directly through to underlying apps.
   - **Clean View:** Boundary box and calibration pins are strictly visible only during calibration mode. Once saved, the border is completely hidden from view while retaining active reflection calculations.
   - **Offset Finger Grip Handles (Anti-Finger Obstruction):** Independent `HandleView` grip pads positioned below actual aim points with visual tether lines, preventing fingers from covering the target ball.
-  - **6-Pocket Radial Short Lines:** Automatically calculates vectors from the target ball (Point B) towards the 6 table pockets and draws directional guide lines.
+  - **Clean Point B Aim Dot & 6-Pocket Radial Lines:** Solid white center dot (`6dp`) with 6 directional pocket guide lines radiating towards table pockets (large blue circle outline removed for clear aim visibility).
   - **Collapsible Mini Capsule Bar:** Tap `[−]` to collapse toolbar into a draggable mini capsule containing quick `[ON]` / `[OFF]` switch and `[+]` expand button.
   - **Draggable Floating Control Bar (`WRAP_CONTENT` x `WRAP_CONTENT`):** Compact dark UI (`#CC1E1E1E`, 12dp rounded corners) with Quick-Ghost, 6-Line toggle, calibration controls, and line sliders.
 - **Instant Controls & Quick-Ghost:**
   - **Landscape & Portrait 8-Handle Calibration:** 8 draggable handles (4 corners + 4 edge centers) with auto-clamping preventing borders from overflowing screen bounds, plus a `[Reset Bound]` button.
-  - **Real-Time Line Customization (`[⚙]`):** Sub-panel with sliders for line thickness (`0.5dp` – `15dp`) and line opacity (`10%` – `100%`), saved automatically.
+  - **Real-Time Line Customization (`[⚙]`):** Sub-panel with sliders for line thickness (`0.5dp` – `15dp`), line opacity (`10%` – `100%`), and **Line Color Picker** (6 preset color swatches + 360° Hue spectrum slider with live preview).
   - **Quick-Ghost (Auto-Hide 4s):** Temporarily hides all overlay graphics and handles for 4 seconds for unobstructed execution, auto-restoring automatically.
   - **Direct-Touch Interaction:** Move handles A, B, C freely at any time without having to toggle an Edit/Lock mode.
   - **Quick ON/OFF Switch:** Instant one-tap toggle on minimized bar (`[ON]` / `[OFF]`) for 100% clean screen during shots.
@@ -23,7 +23,7 @@ A precision geometric screen overlay ruler and vector 2D reflection visualizer (
   - **Auto-Reflection ($\theta_i = \theta_r$):** Ray-box intersection from Point A through Point B hitting calibrated boundary walls, reflecting automatically with angle computation.
   - **Manual 3-Point:** Freely reposition Start (A), Pivot (B), and End (C) to measure angles ($\angle ABC$).
   - **Edge-Marker Only:** Minimalist mode displaying indicator dots ($16\text{dp}$) directly at the boundary wall bounce points without obstructing the middle of the screen.
-- **Persistent Calibration:** Boundary box coordinates, line styles, 6-line toggle, and handle positions are persisted in `SharedPreferences`.
+- **Persistent Calibration:** Boundary box coordinates, line styles (thickness, opacity, color), 6-line toggle, and handle positions are persisted in `SharedPreferences`.
 - **Strict Offline & Safe Policy:**
   - 100% offline (No `android.permission.INTERNET`).
   - No `AccessibilityService`, `MediaProjection`, or `QUERY_ALL_PACKAGES`.

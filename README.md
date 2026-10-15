@@ -9,7 +9,7 @@ A precision geometric screen overlay ruler and vector 2D reflection visualizer (
 - **Multi-Window Overlay Service:**
   - **Always Pass-Through Canvas Overlay (`MATCH_PARENT` x `MATCH_PARENT`):** Full-screen transparent canvas permanently set with `FLAG_NOT_TOUCHABLE` and `FLAG_NOT_FOCUSABLE`. All touches on screen pass directly through to underlying apps.
   - **Clean View:** Boundary box and calibration pins are strictly visible only during calibration mode. Once saved, the border is completely hidden from view while retaining active reflection calculations.
-  - **Offset Finger Grip Handles (Anti-Finger Obstruction):** Independent `HandleView` grip pads positioned below actual aim points with visual tether lines, preventing fingers from covering the target ball.
+  - **Minimalist Plus-Sign Handles (`+`) & Live Alpha Sync:** Independent `42dp x 42dp` transparent touch pads displaying a clean center crosshair (`+`) without circle borders or labels, with transparency and color synchronized in real-time with line settings.
   - **1-Point Target Mode with 6 Direct & 10 Mirror Bank Rays (Plain Lines):**
     - **Single-Point Mode:** Activating 6-Line mode automatically hides handles A and C, displaying only Point B with its stem tether for an uncluttered target view.
     - **6 Direct Pocket Rays:** Clean plain lines (`85dp`) pointing directly to all 6 table pockets from Point B's center white dot (`6dp`), using the user's primary line color.

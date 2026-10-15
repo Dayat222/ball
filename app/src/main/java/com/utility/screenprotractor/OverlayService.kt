@@ -263,9 +263,14 @@ class OverlayService : Service() {
         val screenH = displayMetrics.heightPixels.toFloat()
 
         val (ptA, ptB, ptC) = prefsManager.getPoints(screenW, screenH)
+        val initialAlpha = prefsManager.getLineAlpha()
+        val initialColor = prefsManager.getLineColor()
 
         // 1. Handle A
-        handleViewA = HandleView(this, "A")
+        handleViewA = HandleView(this, "A").apply {
+            updateColor(initialColor)
+            updateHandleAlpha(initialAlpha)
+        }
         val gripPosA = calculateGripFromAim(ptA, screenH)
         handleParamsA = createHandleLayoutParams(gripPosA)
         setupHandleTouchListener(handleViewA!!, handleParamsA, screenH) { aimX, aimY, gripX, gripY ->
@@ -275,7 +280,10 @@ class OverlayService : Service() {
         canvasOverlayView?.setPointA(ptA.x, ptA.y, gripPosA.x, gripPosA.y)
 
         // 2. Handle B (Target Ball)
-        handleViewB = HandleView(this, "B")
+        handleViewB = HandleView(this, "B").apply {
+            updateColor(initialColor)
+            updateHandleAlpha(initialAlpha)
+        }
         val gripPosB = calculateGripFromAim(ptB, screenH)
         handleParamsB = createHandleLayoutParams(gripPosB)
         setupHandleTouchListener(handleViewB!!, handleParamsB, screenH) { aimX, aimY, gripX, gripY ->
@@ -285,7 +293,10 @@ class OverlayService : Service() {
         canvasOverlayView?.setPointB(ptB.x, ptB.y, gripPosB.x, gripPosB.y)
 
         // 3. Handle C
-        handleViewC = HandleView(this, "C")
+        handleViewC = HandleView(this, "C").apply {
+            updateColor(initialColor)
+            updateHandleAlpha(initialAlpha)
+        }
         val gripPosC = calculateGripFromAim(ptC, screenH)
         handleParamsC = createHandleLayoutParams(gripPosC)
         setupHandleTouchListener(handleViewC!!, handleParamsC, screenH) { aimX, aimY, gripX, gripY ->
@@ -548,6 +559,7 @@ class OverlayService : Service() {
                 tvOpacity.text = getString(R.string.label_opacity, pct)
                 val strokeWidth = (seekThickness.progress.coerceAtLeast(1) * 0.5f)
                 canvasOverlayView?.updateLineStyle(strokeWidth, alpha)
+                updateAllHandlesAlpha(alpha)
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -556,6 +568,7 @@ class OverlayService : Service() {
                 val alpha = (seekBar?.progress ?: 220).coerceIn(25, 255)
                 val strokeWidth = (seekThickness.progress.coerceAtLeast(1) * 0.5f)
                 prefsManager.saveLineStyle(strokeWidth, alpha)
+                updateAllHandlesAlpha(alpha)
             }
         })
 
@@ -611,6 +624,7 @@ class OverlayService : Service() {
 
         fun updateColorUI(color: Int) {
             selectedColor = color
+            updateAllHandlesColor(color)
             for ((view, pColor) in presetButtons) {
                 val isSelected = (color == pColor)
                 view.background = createSwatchDrawable(pColor, isSelected)
@@ -650,6 +664,7 @@ class OverlayService : Service() {
                     selectedColor = color
                     tvHue.text = getString(R.string.label_hue, progress)
                     canvasOverlayView?.updateLineColor(color)
+                    updateAllHandlesColor(color)
 
                     for ((view, pColor) in presetButtons) {
                         view.background = createSwatchDrawable(pColor, color == pColor)
@@ -825,6 +840,18 @@ class OverlayService : Service() {
     }
 
     private fun syncHandleCVisibility() = syncHandlesVisibility()
+
+    private fun updateAllHandlesAlpha(alpha: Int) {
+        handleViewA?.updateHandleAlpha(alpha)
+        handleViewB?.updateHandleAlpha(alpha)
+        handleViewC?.updateHandleAlpha(alpha)
+    }
+
+    private fun updateAllHandlesColor(color: Int) {
+        handleViewA?.updateColor(color)
+        handleViewB?.updateColor(color)
+        handleViewC?.updateColor(color)
+    }
 
     @SuppressLint("ClickableViewAccessibility")
     private fun setupDraggableBar(dragHandle: View, entireView: View) {

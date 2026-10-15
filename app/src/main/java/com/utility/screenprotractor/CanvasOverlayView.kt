@@ -15,6 +15,7 @@ import android.view.MotionEvent
 import android.view.View
 import java.util.Locale
 import kotlin.math.hypot
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
@@ -348,6 +349,11 @@ class CanvasOverlayView @JvmOverloads constructor(
 
         bankLinePaint.color = bankArgb
         bankDotPaint.color = bankArgb
+
+        // Synchronize stem/tether line and center aim dot alpha
+        val stemAlpha = (currentAlpha * 0.7f).roundToInt().coerceIn(20, 255)
+        stemLinePaint.color = Color.argb(stemAlpha, 255, 255, 255)
+        aimDotPaint.color = Color.argb(currentAlpha, 255, 255, 255)
 
         invalidate()
     }

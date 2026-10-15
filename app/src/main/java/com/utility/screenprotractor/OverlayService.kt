@@ -59,8 +59,8 @@ class OverlayService : Service() {
     private lateinit var handleParamsB: WindowManager.LayoutParams
     private lateinit var handleParamsC: WindowManager.LayoutParams
     private var handleSizePx = 0
-    private var handleOffsetX = 85f
-    private var handleOffsetY = 45f
+    private var handleOffsetX = 48f
+    private var handleOffsetY = 36f
     private var isOffsetInvertedA = false
     private var isOffsetInvertedB = false
     private var isOffsetInvertedC = false
@@ -100,8 +100,8 @@ class OverlayService : Service() {
 
         val density = resources.displayMetrics.density
         handleSizePx = (42f * density).roundToInt()
-        handleOffsetX = 85f * density
-        handleOffsetY = 45f * density
+        handleOffsetX = 48f * density
+        handleOffsetY = 36f * density
 
         // 1. Promote to Foreground Service
         startForegroundServiceWithNotification()
@@ -226,6 +226,7 @@ class OverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
+            alpha = 0.78f
         }
 
         try {
@@ -236,50 +237,23 @@ class OverlayService : Service() {
     }
 
     /**
-     * Localized Micro-Canvas Window Manager:
-     * When 6-Pocket Radial mode is active and not calibrating, shrinks the canvas overlay window
-     * to a 180dp x 180dp box centered at Point B to prevent screen touch obstruction.
-     * Expands to fullscreen (MATCH_PARENT) when calibrating or in normal 3-point/auto-reflect modes.
+     * Canvas Window Layout Manager:
+     * Fullscreen (MATCH_PARENT) canvas overlay. Touch events are toggled depending on calibration mode.
+     * Alpha is set to 0.78f to satisfy Android 12+ untrusted touch / pass-through thresholds.
      */
     private fun updateCanvasWindowBounds() {
         val canvas = canvasOverlayView ?: return
-        val realSize = getRealScreenSize()
-        val screenW = realSize.x.toFloat()
-        val screenH = realSize.y.toFloat()
+        canvasLayoutParams.width = WindowManager.LayoutParams.MATCH_PARENT
+        canvasLayoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
+        canvasLayoutParams.x = 0
+        canvasLayoutParams.y = 0
+        canvasLayoutParams.alpha = 0.78f
 
-        val useMicroWindow = canvas.showSixPocketLines && !isCalibrationActive
-
-        if (useMicroWindow) {
-            // Ukuran kotak lokal 180dp x 180dp berpusat di koordinat Point B
-            val microSizePx = (180f * resources.displayMetrics.density).roundToInt()
-            val winX = (canvas.pointB.x - microSizePx / 2f).roundToInt()
-            val winY = (canvas.pointB.y - microSizePx / 2f).roundToInt()
-
-            canvasLayoutParams.width = microSizePx
-            canvasLayoutParams.height = microSizePx
-            canvasLayoutParams.x = winX
-            canvasLayoutParams.y = winY
-            canvasLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-
-            canvas.setMicroWindowOffset(true, winX.toFloat(), winY.toFloat())
-        } else {
-            // Mode Layar Penuh untuk Kalibrasi atau Mode Auto-Reflect / Manual 3-Point
-            canvasLayoutParams.width = WindowManager.LayoutParams.MATCH_PARENT
-            canvasLayoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
-            canvasLayoutParams.x = 0
-            canvasLayoutParams.y = 0
-
-            val touchFlag = if (isCalibrationActive) 0 else WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-            canvasLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    touchFlag or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-
-            canvas.setMicroWindowOffset(false, 0f, 0f)
-        }
+        val touchFlag = if (isCalibrationActive) 0 else WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        canvasLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                touchFlag or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
 
         try {
             windowManager.updateViewLayout(canvas, canvasLayoutParams)
@@ -395,9 +369,13 @@ class OverlayService : Service() {
         val currentScreenW = realSize.x.toFloat()
         val currentScreenH = realSize.y.toFloat()
 
-        val gripX = aim.x.coerceIn(0f, currentScreenW)
+        val gripX = (aim.x + handleOffsetX).coerceIn(handleSizePx / 2f, currentScreenW - handleSizePx / 2f)
         val targetGripY = if (isInverted) aim.y - handleOffsetY else aim.y + handleOffsetY
-        val gripY = targetGripY.coerceIn(0f, currentScreenH)
+        val gripY = if (targetGripY + handleSizePx > currentScreenH - (20f * resources.displayMetrics.density)) {
+            aim.y - handleOffsetY
+        } else {
+            targetGripY
+        }.coerceIn(0f, currentScreenH)
         return PointF(gripX, gripY)
     }
 
@@ -466,7 +444,7 @@ class OverlayService : Service() {
 
             view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
 
-            val aimX = currentGripX.coerceIn(0f, currentScreenW)
+            val aimX = (currentGripX - handleOffsetX).coerceIn(0f, currentScreenW)
             val offsetDir = if (isOffsetInverted) handleOffsetY else -handleOffsetY
             val aimY = (currentGripY + offsetDir).coerceIn(0f, currentScreenH)
             onMoved(aimX, aimY, currentGripX, currentGripY)
@@ -545,7 +523,7 @@ class OverlayService : Service() {
                         e.printStackTrace()
                     }
 
-                    val aimX = currentGripX.coerceIn(0f, currentScreenW)
+                    val aimX = (currentGripX - handleOffsetX).coerceIn(0f, currentScreenW)
                     val offsetDir = if (isOffsetInverted) handleOffsetY else -handleOffsetY
                     val aimY = (currentGripY + offsetDir).coerceIn(0f, currentScreenH)
 

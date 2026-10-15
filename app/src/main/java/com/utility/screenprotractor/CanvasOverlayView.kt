@@ -63,19 +63,6 @@ class CanvasOverlayView @JvmOverloads constructor(
     var ballRadius: Float = 13.5f
         private set
 
-    // Localized Micro-Canvas Window state
-    private var windowOffsetX: Float = 0f
-    private var windowOffsetY: Float = 0f
-    var isMicroWindowMode: Boolean = false
-        private set
-
-    fun setMicroWindowOffset(enabled: Boolean, offsetX: Float, offsetY: Float) {
-        isMicroWindowMode = enabled
-        windowOffsetX = offsetX
-        windowOffsetY = offsetY
-        invalidate()
-    }
-
     // Actual Aim Coordinates (where rays originate and reflect)
     var pointA = PointF()
         private set
@@ -255,37 +242,24 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     var onCanvasSizeChanged: ((w: Int, h: Int) -> Unit)? = null
 
-    private fun getFullDisplaySize(): Point {
-        val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bounds = wm.currentWindowMetrics.bounds
-            Point(bounds.width(), bounds.height())
-        } else {
-            val point = Point()
-            @Suppress("DEPRECATION")
-            wm.defaultDisplay.getRealSize(point)
-            point
-        }
-    }
-
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        if (isMicroWindowMode) return
         if (w <= 0 || h <= 0) return
 
-        val fullSize = getFullDisplaySize()
-        val screenW = fullSize.x.toFloat()
-        val screenH = fullSize.y.toFloat()
+        val screenW = w.toFloat()
+        val screenH = h.toFloat()
 
         // Load saved boundary box and auto-clamp to active screen size (Landscape/Portrait safe)
         boundaryBox = prefsManager.getBoundaryBox(screenW, screenH)
         clampBoundaryBox(screenW, screenH)
 
-        // Load saved points
-        val (savedA, savedB, savedC) = prefsManager.getPoints(screenW, screenH)
-        pointA = savedA
-        pointB = savedB
-        pointC = savedC
+        // Load saved points only if not initialized yet
+        if (pointB.x == 0f && pointB.y == 0f) {
+            val (savedA, savedB, savedC) = prefsManager.getPoints(screenW, screenH)
+            pointA = savedA
+            pointB = savedB
+            pointC = savedC
+        }
 
         // Load saved mode
         val savedModeOrdinal = prefsManager.getMode()
@@ -306,22 +280,10 @@ class CanvasOverlayView @JvmOverloads constructor(
         showSixPocketLines = prefsManager.getShowSixLines()
         ballRadius = prefsManager.getBallRadius()
 
-        onCanvasSizeChanged?.invoke(fullSize.x, fullSize.y)
+        onCanvasSizeChanged?.invoke(w, h)
     }
 
     init {
-        val fullSize = getFullDisplaySize()
-        val screenW = fullSize.x.toFloat()
-        val screenH = fullSize.y.toFloat()
-
-        boundaryBox = prefsManager.getBoundaryBox(screenW, screenH)
-        clampBoundaryBox(screenW, screenH)
-
-        val (savedA, savedB, savedC) = prefsManager.getPoints(screenW, screenH)
-        pointA = savedA
-        pointB = savedB
-        pointC = savedC
-
         currentLineColor = prefsManager.getLineColor()
         currentBankLineColor = prefsManager.getBankLineColor()
         currentAlpha = prefsManager.getLineAlpha()
@@ -360,9 +322,8 @@ class CanvasOverlayView @JvmOverloads constructor(
      * Requirement 2: Reset boundary box to proportional center rectangle.
      */
     fun resetToProportionalCenter() {
-        val fullSize = getFullDisplaySize()
-        val w = fullSize.x.toFloat().coerceAtLeast(200f)
-        val h = fullSize.y.toFloat().coerceAtLeast(200f)
+        val w = width.toFloat().coerceAtLeast(200f)
+        val h = height.toFloat().coerceAtLeast(200f)
         val l = w * 0.18f
         val t = h * 0.18f
         val r = w * 0.82f
@@ -511,9 +472,8 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     fun resetBoundaryCalibration() {
-        val fullSize = getFullDisplaySize()
-        val screenW = fullSize.x.toFloat().coerceAtLeast(100f)
-        val screenH = fullSize.y.toFloat().coerceAtLeast(100f)
+        val screenW = width.toFloat().coerceAtLeast(100f)
+        val screenH = height.toFloat().coerceAtLeast(100f)
         prefsManager.resetBoundaryBox()
         boundaryBox = prefsManager.getBoundaryBox(screenW, screenH)
         clampBoundaryBox(screenW, screenH)
@@ -522,9 +482,8 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     override fun onConfigurationChanged(newConfig: Configuration?) {
         super.onConfigurationChanged(newConfig)
-        val fullSize = getFullDisplaySize()
-        val screenW = fullSize.x.toFloat()
-        val screenH = fullSize.y.toFloat()
+        val screenW = width.toFloat().coerceAtLeast(100f)
+        val screenH = height.toFloat().coerceAtLeast(100f)
         boundaryBox = prefsManager.getBoundaryBox(screenW, screenH)
         clampBoundaryBox(screenW, screenH)
         invalidate()
@@ -532,10 +491,6 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val saveCount = canvas.save()
-        if (isMicroWindowMode && !isCalibrating) {
-            canvas.translate(-windowOffsetX, -windowOffsetY)
-        }
 
         // Requirement 1: Clean View. ONLY draw boundary box and handles when isCalibrating == true
         if (isCalibrating) {
@@ -547,8 +502,8 @@ class CanvasOverlayView @JvmOverloads constructor(
             if (showSixPocketLines) {
                 // Requirement 2: Mode 1-Titik Fokus (Single-Point Target Mode)
                 // Hide connecting line A-B and reflection rays.
-                // Only render Point B's stem tether (from grip pad to Point B) if not in micro window mode
-                if (hasGripB && !isMicroWindowMode) {
+                // Only render Point B's stem tether (from grip pad to Point B)
+                if (hasGripB) {
                     canvas.drawLine(gripB.x, gripB.y, pointB.x, pointB.y, stemLinePaint)
                 }
                 // Render Point B's white center dot + 6 Direct rays + 6 Mirror Bank rays
@@ -563,8 +518,6 @@ class CanvasOverlayView @JvmOverloads constructor(
                 }
             }
         }
-
-        canvas.restoreToCount(saveCount)
     }
 
     /**
@@ -612,72 +565,6 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     /**
-     * 12-Jaw Gate & Pro-Side Clearance Algorithm:
-     * Calculates the optimal pocket entry sweet spot between two jaws J1(j1x, j1y) and J2(j2x, j2y)
-     * from ball position (bx, by) with pro-side bias and inward mouth clearance.
-     * Zero-allocation in onDraw (pure primitive Float calculations).
-     */
-    private fun drawOptimalPocketRay(
-        canvas: Canvas,
-        bx: Float,
-        by: Float,
-        j1x: Float,
-        j1y: Float,
-        j2x: Float,
-        j2y: Float,
-        inwardNormalX: Float,
-        inwardNormalY: Float,
-        maxNormalInset: Float,
-        startDist: Float,
-        endDist: Float,
-        paint: Paint
-    ) {
-        // 1. Titik tengah gerbang mulut lekukan (Mouth Gate Midpoint)
-        val midX = (j1x + j2x) * 0.5f
-        val midY = (j1y + j2y) * 0.5f
-
-        // 2. Panjang bukaan mulut lekukan dan jarak bola ke masing-masing sudut lekukan (Jaw 1 & Jaw 2)
-        val gateLen = kotlin.math.hypot(j2x - j1x, j2y - j1y).coerceAtLeast(1f)
-        val d1 = kotlin.math.hypot(bx - j1x, by - j1y)
-        val d2 = kotlin.math.hypot(bx - j2x, by - j2y)
-
-        // 3. Rasio kemiringan sudut datang bola terhadap bukaan mulut lubang (-1.0 s/d +1.0)
-        // Jika s < 0 berarti Jaw 1 lebih dekat (Near Jaw) dan Jaw 2 lebih jauh (Far Jaw).
-        // Jika s > 0 berarti Jaw 2 lebih dekat (Near Jaw) dan Jaw 1 lebih jauh (Far Jaw).
-        val s = ((d1 - d2) / gateLen).coerceIn(-1f, 1f)
-        val absS = kotlin.math.abs(s)
-
-        // 4. Pro-Side Jaw Bias: Geser titik bidik menjauhi Near Jaw (yang memantulkan bola keluar)
-        // menuju sisi dalam Far Jaw (yang dinding miringnya menangkap bola masuk ke lubang)
-        val proSideBias = 0.22f * s
-        val gateShiftX = proSideBias * (j1x - j2x)
-        val gateShiftY = proSideBias * (j1y - j2y)
-
-        // 5. Inward Mouth Clearance: Saat sudut sangat miring (absS mendekati 1),
-        // majukan sedikit titik masuk ke arah dalam meja agar bola tidak menyerempet tanduk Near Jaw
-        val normalShift = (absS * absS) * maxNormalInset
-
-        val targetX = midX + gateShiftX + (inwardNormalX * normalShift)
-        val targetY = midY + gateShiftY + (inwardNormalY * normalShift)
-
-        // 6. Gambar garis pandu dari luar cincin bola menuju titik optimal
-        val dx = targetX - bx
-        val dy = targetY - by
-        val dist = kotlin.math.hypot(dx, dy)
-        if (dist > 1f) {
-            val ux = dx / dist
-            val uy = dy / dist
-            canvas.drawLine(
-                bx + ux * startDist,
-                by + uy * startDist,
-                bx + ux * endDist,
-                by + uy * endDist,
-                paint
-            )
-        }
-    }
-
-    /**
      * Zero-Allocation Target Mode: Plain 6 Direct Rays + 10 Mirror Reflection Rays.
      * Direct primitive calculations per frame without allocating any Array or PointF objects.
      */
@@ -705,95 +592,47 @@ class CanvasOverlayView @JvmOverloads constructor(
             val t = boundaryBox.top
             val b = boundaryBox.bottom
             val cx = boundaryBox.centerX()
+            val tableW = (r - l).coerceAtLeast(1f)
 
-            // 12-Jaw Gate Geometry Constants
-            val cornerJawDist = 14f * density
-            val sideJawDist = 14f * density
-            val maxNormalCorner = 6f * density
-            val maxNormalSide = 9f * density
-            val diagNorm = 0.7071f
+            // 1. 4 Corner Pockets - Tembak langsung ke koordinat sudut tanpa offset yang meleset
+            drawRadialRay(canvas, bx, by, l, t, startDist, directEndDist, sixLinePaint) // Top-Left
+            drawRadialRay(canvas, bx, by, r, t, startDist, directEndDist, sixLinePaint) // Top-Right
+            drawRadialRay(canvas, bx, by, l, b, startDist, directEndDist, sixLinePaint) // Bottom-Left
+            drawRadialRay(canvas, bx, by, r, b, startDist, directEndDist, sixLinePaint) // Bottom-Right
 
-            // Group A: 6 Direct Vertex Rays via 12-Jaw Gate & Pro-Side Clearance - Zero Object Allocation!
-            // 1. Top-Left Corner Pocket
-            drawOptimalPocketRay(
-                canvas, bx, by,
-                l + cornerJawDist, t,
-                l, t + cornerJawDist,
-                diagNorm, diagNorm, maxNormalCorner,
-                startDist, directEndDist, sixLinePaint
-            )
-            // 2. Top-Center Side Pocket
-            drawOptimalPocketRay(
-                canvas, bx, by,
-                cx - sideJawDist, t,
-                cx + sideJawDist, t,
-                0f, 1f, maxNormalSide,
-                startDist, directEndDist, sixLinePaint
-            )
-            // 3. Top-Right Corner Pocket
-            drawOptimalPocketRay(
-                canvas, bx, by,
-                r - cornerJawDist, t,
-                r, t + cornerJawDist,
-                -diagNorm, diagNorm, maxNormalCorner,
-                startDist, directEndDist, sixLinePaint
-            )
-            // 4. Bottom-Left Corner Pocket
-            drawOptimalPocketRay(
-                canvas, bx, by,
-                l + cornerJawDist, b,
-                l, b - cornerJawDist,
-                diagNorm, -diagNorm, maxNormalCorner,
-                startDist, directEndDist, sixLinePaint
-            )
-            // 5. Bottom-Center Side Pocket
-            drawOptimalPocketRay(
-                canvas, bx, by,
-                cx - sideJawDist, b,
-                cx + sideJawDist, b,
-                0f, -1f, maxNormalSide,
-                startDist, directEndDist, sixLinePaint
-            )
-            // 6. Bottom-Right Corner Pocket
-            drawOptimalPocketRay(
-                canvas, bx, by,
-                r - cornerJawDist, b,
-                r, b - cornerJawDist,
-                -diagNorm, -diagNorm, maxNormalCorner,
-                startDist, directEndDist, sixLinePaint
-            )
+            // 2. 2 Side/Center Pockets - Kompensasi bukaan mulut lubang tengah
+            val sideAngleFactor = (kotlin.math.abs(bx - cx) / (tableW * 0.5f)).coerceIn(0f, 1f)
+            val sideMouthClearance = (sideAngleFactor * sideAngleFactor) * (4f * density)
+            drawRadialRay(canvas, bx, by, cx, t + sideMouthClearance, startDist, directEndDist, sixLinePaint) // Top-Center
+            drawRadialRay(canvas, bx, by, cx, b - sideMouthClearance, startDist, directEndDist, sixLinePaint) // Bottom-Center
 
-            // Group B: 10 Mirror Reflection Rays (4 Bounds with Effective Cushion Bounce) - Zero Object Allocation!
-            val cushionInset = 6f * density
-            val bounceL = l + cushionInset
-            val bounceR = r - cushionInset
-            val bounceT = t + cushionInset
-            val bounceB = b - cushionInset
+            // 3. 10 Mirror Bank Rays (Pantulan Dinding Rel)
+            val bounceInset = 5f * density
+            val bounceL = l + bounceInset
+            val bounceR = r - bounceInset
+            val bounceT = t + bounceInset
+            val bounceB = b - bounceInset
 
-            val mirrorTopCornerY = 2f * bounceT - b
-            val mirrorTopCenterY = 2f * bounceT - (b - 6f * density)
-
-            val mirrorBottomCornerY = 2f * bounceB - t
-            val mirrorBottomCenterY = 2f * bounceB - (t + 6f * density)
-
+            val mirrorTopY = 2f * bounceT - b
+            val mirrorBottomY = 2f * bounceB - t
             val mirrorRightX = 2f * bounceR - l
             val mirrorLeftX = 2f * bounceL - r
 
-            // 1. Via Top Bound (3 rays)
-            drawRadialRay(canvas, bx, by, l, mirrorTopCornerY, startDist, bankEndDist, bankLinePaint)
-            drawRadialRay(canvas, bx, by, cx, mirrorTopCenterY, startDist, bankEndDist, bankLinePaint)
-            drawRadialRay(canvas, bx, by, r, mirrorTopCornerY, startDist, bankEndDist, bankLinePaint)
+            // Top Bound (3 rays)
+            drawRadialRay(canvas, bx, by, l, mirrorTopY, startDist, bankEndDist, bankLinePaint)
+            drawRadialRay(canvas, bx, by, cx, mirrorTopY, startDist, bankEndDist, bankLinePaint)
+            drawRadialRay(canvas, bx, by, r, mirrorTopY, startDist, bankEndDist, bankLinePaint)
 
-            // 2. Via Bottom Bound (3 rays)
-            drawRadialRay(canvas, bx, by, l, mirrorBottomCornerY, startDist, bankEndDist, bankLinePaint)
-            drawRadialRay(canvas, bx, by, cx, mirrorBottomCenterY, startDist, bankEndDist, bankLinePaint)
-            drawRadialRay(canvas, bx, by, r, mirrorBottomCornerY, startDist, bankEndDist, bankLinePaint)
+            // Bottom Bound (3 rays)
+            drawRadialRay(canvas, bx, by, l, mirrorBottomY, startDist, bankEndDist, bankLinePaint)
+            drawRadialRay(canvas, bx, by, cx, mirrorBottomY, startDist, bankEndDist, bankLinePaint)
+            drawRadialRay(canvas, bx, by, r, mirrorBottomY, startDist, bankEndDist, bankLinePaint)
 
-            // 3. Via Right Bound (2 rays)
+            // Right Bound (2 rays)
             drawRadialRay(canvas, bx, by, mirrorRightX, t, startDist, bankEndDist, bankLinePaint)
             drawRadialRay(canvas, bx, by, mirrorRightX, b, startDist, bankEndDist, bankLinePaint)
 
-            // 4. Via Left Bound (2 rays)
+            // Left Bound (2 rays)
             drawRadialRay(canvas, bx, by, mirrorLeftX, t, startDist, bankEndDist, bankLinePaint)
             drawRadialRay(canvas, bx, by, mirrorLeftX, b, startDist, bankEndDist, bankLinePaint)
         }
@@ -832,9 +671,9 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     private fun drawPocketJawRing(canvas: Canvas, px: Float, py: Float) {
-        val ringRadius = 14f * density
+        val ringRadius = 12f * density
         canvas.drawCircle(px, py, ringRadius, pocketJawRingPaint)
-        val crossArm = 5f * density
+        val crossArm = 4f * density
         canvas.drawLine(px - crossArm, py, px + crossArm, py, pocketJawCrossPaint)
         canvas.drawLine(px, py - crossArm, px, py + crossArm, pocketJawCrossPaint)
     }

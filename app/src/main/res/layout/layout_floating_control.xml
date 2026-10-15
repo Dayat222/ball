@@ -223,6 +223,28 @@
                 android:progressTint="@color/yellow_accent"
                 android:thumbTint="@color/yellow_accent" />
 
+            <!-- Ball Ring Size Slider -->
+            <TextView
+                android:id="@+id/tvBallSizeValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Target Ring Size: 13.5 dp"
+                android:textColor="@color/cyan_accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <SeekBar
+                android:id="@+id/seekBallSize"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:max="30"
+                android:min="8"
+                android:progress="14"
+                android:progressTint="@color/cyan_accent"
+                android:thumbTint="@color/cyan_accent" />
+
             <!-- Line Color Section -->
             <TextView
                 android:id="@+id/tvColorTitle"

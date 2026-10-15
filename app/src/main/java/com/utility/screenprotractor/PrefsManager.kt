@@ -186,7 +186,7 @@ class PrefsManager(context: Context) {
     }
 
     fun getBallRadius(): Float {
-        return prefs.getFloat(KEY_BALL_RADIUS, 28f)
+        return prefs.getFloat(KEY_BALL_RADIUS, 13.5f)
     }
 
     companion object {

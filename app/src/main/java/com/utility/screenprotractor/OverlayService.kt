@@ -358,25 +358,26 @@ class OverlayService : Service() {
         params: WindowManager.LayoutParams,
         onMoved: (aimX: Float, aimY: Float, gripX: Float, gripY: Float) -> Unit
     ) {
-        var initialX = 0
-        var initialY = 0
+        var initialExactX = 0f
+        var initialExactY = 0f
         var initialTouchX = 0f
         var initialTouchY = 0f
 
         view.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    initialX = params.x
-                    initialY = params.y
+                    initialExactX = params.x + (handleSizePx / 2f)
+                    initialExactY = params.y + (handleSizePx / 2f)
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - initialTouchX).toInt()
-                    val dy = (event.rawY - initialTouchY).toInt()
-                    params.x = initialX + dx
-                    params.y = initialY + dy
+                    val gripX = initialExactX + (event.rawX - initialTouchX)
+                    val gripY = initialExactY + (event.rawY - initialTouchY)
+
+                    params.x = (gripX - handleSizePx / 2f).roundToInt()
+                    params.y = (gripY - handleSizePx / 2f).roundToInt()
 
                     try {
                         windowManager.updateViewLayout(view, params)
@@ -388,9 +389,6 @@ class OverlayService : Service() {
                         ?: resources.displayMetrics.widthPixels).toFloat()
                     val currentScreenH = (canvasOverlayView?.height?.takeIf { it > 0 }
                         ?: resources.displayMetrics.heightPixels).toFloat()
-
-                    val gripX = params.x + (handleSizePx / 2f)
-                    val gripY = params.y + (handleSizePx / 2f)
 
                     // Calculate aim coordinate to the top-left of the grip pad (anti-finger obstruction: grip is at bottom-right)
                     val aimX = (gripX - handleOffsetX).coerceIn(0f, currentScreenW)
@@ -455,6 +453,8 @@ class OverlayService : Service() {
         val seekThickness = controlView.findViewById<SeekBar>(R.id.seekThickness)
         val tvOpacity = controlView.findViewById<TextView>(R.id.tvOpacityValue)
         val seekOpacity = controlView.findViewById<SeekBar>(R.id.seekOpacity)
+        val tvBallSize = controlView.findViewById<TextView>(R.id.tvBallSizeValue)
+        val seekBallSize = controlView.findViewById<SeekBar>(R.id.seekBallSize)
 
         // 1. Dragging toolbar
         setupDraggableBar(btnDrag, controlView)
@@ -592,6 +592,30 @@ class OverlayService : Service() {
                 val strokeWidth = (seekThickness.progress.coerceAtLeast(1) * 0.5f)
                 prefsManager.saveLineStyle(strokeWidth, alpha)
                 updateAllHandlesAlpha(alpha)
+            }
+        })
+
+        // Ball Ring Size Slider Setup
+        val initialBallRadius = prefsManager.getBallRadius()
+        seekBallSize.progress = initialBallRadius.roundToInt().coerceIn(8, 30)
+        tvBallSize.text = getString(R.string.label_ball_size, initialBallRadius)
+
+        seekBallSize.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val radiusDp = progress.coerceIn(8, 30) * 1.0f
+                tvBallSize.text = getString(R.string.label_ball_size, radiusDp)
+                if (fromUser) {
+                    canvasOverlayView?.setBallRadius(radiusDp)
+                }
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val progress = seekBar?.progress ?: 14
+                val radiusDp = progress.coerceIn(8, 30) * 1.0f
+                prefsManager.saveBallRadius(radiusDp)
+                canvasOverlayView?.setBallRadius(radiusDp)
             }
         })
 

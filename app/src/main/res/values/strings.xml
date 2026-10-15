@@ -46,6 +46,7 @@
     <!-- Settings Panel -->
     <string name="label_thickness">Thickness: %1$.1f dp</string>
     <string name="label_opacity">Opacity: %1$d%%</string>
+    <string name="label_ball_size">Target Ring Size: %1$.1f dp</string>
     <string name="label_line_color">Line Color</string>
     <string name="label_hue">Spectrum Hue: %1$d°</string>
     <string name="label_hue_white">Color: Pure White</string>

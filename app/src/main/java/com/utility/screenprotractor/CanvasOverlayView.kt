@@ -56,7 +56,7 @@ class CanvasOverlayView @JvmOverloads constructor(
     // Feature 1: 6-Pocket Radial Lines & Ball Radius
     var showSixPocketLines: Boolean = true
         private set
-    var ballRadius: Float = 28f
+    var ballRadius: Float = 13.5f
         private set
 
     // Actual Aim Coordinates (where rays originate and reflect)
@@ -146,6 +146,29 @@ class CanvasOverlayView @JvmOverloads constructor(
     private val aimDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         style = Paint.Style.FILL
+    }
+
+    // Paints: High-Contrast Hollow Bullseye & Ball-Fit Ring for Point B
+    private val aimShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.argb((220 * 0.85f).roundToInt(), 0, 0, 0)
+        strokeWidth = 2.8f * density
+    }
+
+    private val aimRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.argb(220, 255, 255, 255)
+        strokeWidth = 1.4f * density
+    }
+
+    private val aimCenterShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.argb((220 * 0.85f).roundToInt(), 0, 0, 0)
+    }
+
+    private val aimCenterDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.argb(220, 255, 255, 255)
     }
 
     // Paint: Boundary Box Active Calibration Highlight
@@ -373,6 +396,12 @@ class CanvasOverlayView @JvmOverloads constructor(
         stemLinePaint.color = Color.argb(stemAlpha, 255, 255, 255)
         aimDotPaint.color = Color.argb(currentAlpha, 255, 255, 255)
 
+        val shadowAlpha = (currentAlpha * 0.85f).roundToInt().coerceIn(20, 255)
+        aimShadowPaint.color = Color.argb(shadowAlpha, 0, 0, 0)
+        aimCenterShadowPaint.color = Color.argb(shadowAlpha, 0, 0, 0)
+        aimRingPaint.color = Color.argb(currentAlpha, 255, 255, 255)
+        aimCenterDotPaint.color = Color.argb(currentAlpha, 255, 255, 255)
+
         invalidate()
     }
 
@@ -528,13 +557,18 @@ class CanvasOverlayView @JvmOverloads constructor(
         val bx = pointB.x
         val by = pointB.y
 
-        // 1 distinct solid white dot at center of Point B (radius = 6dp)
-        val centerDotRadius = 6f * density
-        canvas.drawCircle(bx, by, centerDotRadius, aimDotPaint)
+        // 1. Ball-Fit Ring: High-Contrast Hollow Reticle matching ball size
+        val ringRadius = ballRadius * density
+        canvas.drawCircle(bx, by, ringRadius, aimShadowPaint)
+        canvas.drawCircle(bx, by, ringRadius, aimRingPaint)
+
+        // 2. Micro Center Pinpoint: Double contrast micro center dot
+        canvas.drawCircle(bx, by, 2.5f * density, aimCenterShadowPaint)
+        canvas.drawCircle(bx, by, 1.5f * density, aimCenterDotPaint)
 
         // Draw the 6 direct rays and 10 mirror reflection rays if enabled
         if (showSixPocketLines) {
-            val startDist = 14f * density
+            val startDist = ringRadius + (3f * density)
             val directEndDist = 85f * density
             val bankEndDist = 64f * density
 

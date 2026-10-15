@@ -398,7 +398,7 @@ class CanvasOverlayView @JvmOverloads constructor(
         }
 
         currentLineColor = prefsManager.getLineColor()
-        currentBankLineColor = prefsManager.getBankLineColor()
+        currentBankLineColor = prefsManager.getSecondaryRayColor()
         currentAlpha = prefsManager.getLineAlpha()
         currentStrokeWidth = prefsManager.getLineStrokeWidth()
         updateLineColor(currentLineColor)
@@ -3133,6 +3133,9 @@ class PrefsManager(context: Context) {
     fun getSecondaryRayColor(): Int {
         return prefs.getInt(KEY_BANK_LINE_COLOR, DEFAULT_BANK_LINE_COLOR)
     }
+
+    fun saveBankLineColor(color: Int) = saveSecondaryRayColor(color)
+    fun getBankLineColor(): Int = getSecondaryRayColor()
 
     /**
      * Save and retrieve radial lines visibility toggle.

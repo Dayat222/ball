@@ -180,6 +180,9 @@ class PrefsManager(context: Context) {
         return prefs.getInt(KEY_BANK_LINE_COLOR, DEFAULT_BANK_LINE_COLOR)
     }
 
+    fun saveBankLineColor(color: Int) = saveSecondaryRayColor(color)
+    fun getBankLineColor(): Int = getSecondaryRayColor()
+
     /**
      * Save and retrieve radial lines visibility toggle.
      */

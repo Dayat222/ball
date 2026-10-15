@@ -297,7 +297,7 @@ class CanvasOverlayView @JvmOverloads constructor(
         }
 
         currentLineColor = prefsManager.getLineColor()
-        currentBankLineColor = prefsManager.getBankLineColor()
+        currentBankLineColor = prefsManager.getSecondaryRayColor()
         currentAlpha = prefsManager.getLineAlpha()
         currentStrokeWidth = prefsManager.getLineStrokeWidth()
         updateLineColor(currentLineColor)

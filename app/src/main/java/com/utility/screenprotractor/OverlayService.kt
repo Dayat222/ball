@@ -226,10 +226,7 @@ class OverlayService : Service() {
             }
 
             canvas.setCalibrating(true)
-
-            handleViewA?.visibility = View.GONE
-            handleViewB?.visibility = View.GONE
-            handleViewC?.visibility = View.GONE
+            syncHandlesVisibility()
 
             btnCalibrate?.text = getString(R.string.control_save_bound)
             btnCalibrate?.setBackgroundResource(R.drawable.bg_control_btn_active)
@@ -245,11 +242,7 @@ class OverlayService : Service() {
                 e.printStackTrace()
             }
 
-            if (!isCanvasHidden && !isGhostActive) {
-                handleViewA?.visibility = View.VISIBLE
-                handleViewB?.visibility = View.VISIBLE
-                syncHandleCVisibility()
-            }
+            syncHandlesVisibility()
 
             btnCalibrate?.text = getString(R.string.control_calibrate)
             btnCalibrate?.setBackgroundResource(R.drawable.bg_control_btn)
@@ -301,9 +294,7 @@ class OverlayService : Service() {
         windowManager.addView(handleViewC, handleParamsC)
         canvasOverlayView?.setPointC(ptC.x, ptC.y, gripPosC.x, gripPosC.y)
 
-        val activeModeOrdinal = prefsManager.getMode()
-        val isManual3Pt = activeModeOrdinal == CanvasOverlayView.RulerMode.MANUAL_3_POINT.ordinal
-        handleViewC?.visibility = if (isManual3Pt) View.VISIBLE else View.GONE
+        syncHandlesVisibility()
     }
 
     private fun calculateGripFromAim(aim: PointF, screenH: Float): PointF {
@@ -468,6 +459,11 @@ class OverlayService : Service() {
         // 4. Cycle Mode
         btnMode.setOnClickListener {
             val canvas = canvasOverlayView ?: return@setOnClickListener
+            // Switching mode turns off 6-Line single-point target mode
+            if (canvas.showSixPocketLines) {
+                canvas.setShowSixPocketLines(false)
+                updateSixLinesButtonUI()
+            }
             val nextMode = canvas.cycleRulerMode()
 
             btnMode.text = when (nextMode) {
@@ -476,9 +472,7 @@ class OverlayService : Service() {
                 CanvasOverlayView.RulerMode.EDGE_MARKER_ONLY -> getString(R.string.control_mode_edge)
             }
 
-            if (!isCalibrationActive) {
-                syncHandleCVisibility()
-            }
+            syncHandlesVisibility()
         }
 
         // 5. Calibration Mode Toggle & Boundary Reset
@@ -497,12 +491,13 @@ class OverlayService : Service() {
             Toast.makeText(this, R.string.toast_calib_reset, Toast.LENGTH_SHORT).show()
         }
 
-        // 6. Feature 1: Toggle 6-Pocket Radial Lines on Target Ball
+        // 6. Feature 1: Toggle 6-Pocket Radial Lines & Mirror Bank on Target Ball
         updateSixLinesButtonUI()
         btnSixLines?.setOnClickListener {
             val canvas = canvasOverlayView ?: return@setOnClickListener
             canvas.toggleSixPocketLines()
             updateSixLinesButtonUI()
+            syncHandlesVisibility()
         }
 
         // 7. Settings Sub-Panel (Thickness & Opacity Sliders)
@@ -744,15 +739,10 @@ class OverlayService : Service() {
         isCanvasHidden = !isCanvasHidden
         if (isCanvasHidden) {
             canvasOverlayView?.visibility = View.GONE
-            handleViewA?.visibility = View.GONE
-            handleViewB?.visibility = View.GONE
-            handleViewC?.visibility = View.GONE
         } else {
             canvasOverlayView?.visibility = View.VISIBLE
-            handleViewA?.visibility = View.VISIBLE
-            handleViewB?.visibility = View.VISIBLE
-            syncHandleCVisibility()
         }
+        syncHandlesVisibility()
         updateVisibilityButtonUI()
         updateMiniOnOffButtonUI()
     }
@@ -786,9 +776,7 @@ class OverlayService : Service() {
         isGhostActive = true
 
         canvasOverlayView?.visibility = View.GONE
-        handleViewA?.visibility = View.GONE
-        handleViewB?.visibility = View.GONE
-        handleViewC?.visibility = View.GONE
+        syncHandlesVisibility()
 
         btnGhost?.text = getString(R.string.control_ghosting)
         btnGhost?.setBackgroundResource(R.drawable.bg_control_btn_active)
@@ -805,29 +793,38 @@ class OverlayService : Service() {
 
         if (!isCanvasHidden) {
             canvasOverlayView?.visibility = View.VISIBLE
-            if (!isCalibrationActive) {
-                handleViewA?.visibility = View.VISIBLE
-                handleViewB?.visibility = View.VISIBLE
-                syncHandleCVisibility()
-            }
         }
+        syncHandlesVisibility()
         updateVisibilityButtonUI()
         updateMiniOnOffButtonUI()
     }
 
-    private fun syncHandleCVisibility() {
+    private fun syncHandlesVisibility() {
         if (isCanvasHidden || isGhostActive || isCalibrationActive) {
+            handleViewA?.visibility = View.GONE
+            handleViewB?.visibility = View.GONE
             handleViewC?.visibility = View.GONE
             return
         }
 
-        val currentMode = canvasOverlayView?.currentMode ?: CanvasOverlayView.RulerMode.AUTO_REFLECT
-        handleViewC?.visibility = if (currentMode == CanvasOverlayView.RulerMode.MANUAL_3_POINT) {
-            View.VISIBLE
+        val isSixLinesActive = canvasOverlayView?.showSixPocketLines ?: false
+        if (isSixLinesActive) {
+            handleViewA?.visibility = View.GONE
+            handleViewB?.visibility = View.VISIBLE
+            handleViewC?.visibility = View.GONE
         } else {
-            View.GONE
+            handleViewA?.visibility = View.VISIBLE
+            handleViewB?.visibility = View.VISIBLE
+            val currentMode = canvasOverlayView?.currentMode ?: CanvasOverlayView.RulerMode.AUTO_REFLECT
+            handleViewC?.visibility = if (currentMode == CanvasOverlayView.RulerMode.MANUAL_3_POINT) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
         }
     }
+
+    private fun syncHandleCVisibility() = syncHandlesVisibility()
 
     @SuppressLint("ClickableViewAccessibility")
     private fun setupDraggableBar(dragHandle: View, entireView: View) {

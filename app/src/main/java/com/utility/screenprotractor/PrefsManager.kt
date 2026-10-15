@@ -157,6 +157,17 @@ class PrefsManager(context: Context) {
     }
 
     /**
+     * Save and retrieve mirror bank line color (ARGB / Int).
+     */
+    fun saveBankLineColor(color: Int) {
+        prefs.edit().putInt(KEY_BANK_LINE_COLOR, color).apply()
+    }
+
+    fun getBankLineColor(): Int {
+        return prefs.getInt(KEY_BANK_LINE_COLOR, DEFAULT_BANK_LINE_COLOR)
+    }
+
+    /**
      * Save and retrieve 6-Pocket Radial lines visibility toggle.
      */
     fun saveShowSixLines(show: Boolean) {
@@ -182,6 +193,7 @@ class PrefsManager(context: Context) {
         private const val PREFS_NAME = "screen_protractor_prefs"
         private const val DEFAULT_MARGIN_RATIO = 0.08f
         const val DEFAULT_LINE_COLOR = 0xFF00E5FF.toInt() // Cyan #00E5FF
+        const val DEFAULT_BANK_LINE_COLOR = 0xFFFFAB00.toInt() // Amber/Gold #FFAB00
 
         private const val KEY_BOUND_LEFT = "bound_left"
         private const val KEY_BOUND_TOP = "bound_top"
@@ -202,6 +214,7 @@ class PrefsManager(context: Context) {
         private const val KEY_LINE_STROKE_WIDTH = "line_stroke_width"
         private const val KEY_LINE_ALPHA = "line_alpha"
         private const val KEY_LINE_COLOR = "line_color"
+        private const val KEY_BANK_LINE_COLOR = "bank_line_color"
 
         private const val KEY_SHOW_SIX_LINES = "show_six_lines"
         private const val KEY_BALL_RADIUS = "ball_radius"

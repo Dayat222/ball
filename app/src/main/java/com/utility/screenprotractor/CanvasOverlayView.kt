@@ -110,8 +110,23 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
     private val pocketLinePaint get() = sixLinePaint
 
+    // Paint: 6 Mirror Bank Rays from Target Ball (bankLinePaint)
+    private val bankLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FFAB00")
+        style = Paint.Style.STROKE
+        strokeWidth = 3.5f * density
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private val bankDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FFAB00")
+        style = Paint.Style.FILL
+    }
+
     // Active line styling state
     var currentLineColor: Int = PrefsManager.DEFAULT_LINE_COLOR
+        private set
+    var currentBankLineColor: Int = PrefsManager.DEFAULT_BANK_LINE_COLOR
         private set
     var currentAlpha: Int = 220
         private set
@@ -209,7 +224,9 @@ class CanvasOverlayView @JvmOverloads constructor(
         val savedStroke = prefsManager.getLineStrokeWidth()
         val savedAlpha = prefsManager.getLineAlpha()
         val savedColor = prefsManager.getLineColor()
+        val savedBankColor = prefsManager.getBankLineColor()
         updateLineColor(savedColor)
+        updateBankLineColor(savedBankColor)
         updateLineStyle(savedStroke, savedAlpha)
 
         // Load 6-pocket line preference and ball radius
@@ -219,9 +236,11 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     init {
         currentLineColor = prefsManager.getLineColor()
+        currentBankLineColor = prefsManager.getBankLineColor()
         currentAlpha = prefsManager.getLineAlpha()
         currentStrokeWidth = prefsManager.getLineStrokeWidth()
         updateLineColor(currentLineColor)
+        updateBankLineColor(currentBankLineColor)
         updateLineStyle(currentStrokeWidth, currentAlpha)
     }
 
@@ -284,6 +303,22 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     /**
+     * Adjust contrasting color for 6 Mirror Bank rays, preserving currently active alpha.
+     */
+    fun updateBankLineColor(color: Int) {
+        currentBankLineColor = color
+        val br = Color.red(color)
+        val bg = Color.green(color)
+        val bb = Color.blue(color)
+        val bankArgb = Color.argb(currentAlpha, br, bg, bb)
+
+        bankLinePaint.color = bankArgb
+        bankDotPaint.color = bankArgb
+
+        invalidate()
+    }
+
+    /**
      * Dynamically adjust line thickness and opacity.
      */
     fun updateLineStyle(strokeWidth: Float, alpha: Int) {
@@ -294,6 +329,7 @@ class CanvasOverlayView @JvmOverloads constructor(
         primaryLinePaint.strokeWidth = strokePx
         reflectedLinePaint.strokeWidth = strokePx
         sixLinePaint.strokeWidth = strokePx
+        bankLinePaint.strokeWidth = strokePx
 
         val r = Color.red(currentLineColor)
         val g = Color.green(currentLineColor)
@@ -303,6 +339,14 @@ class CanvasOverlayView @JvmOverloads constructor(
         primaryLinePaint.color = argb
         reflectedLinePaint.color = argb
         sixLinePaint.color = argb
+
+        val br = Color.red(currentBankLineColor)
+        val bg = Color.green(currentBankLineColor)
+        val bb = Color.blue(currentBankLineColor)
+        val bankArgb = Color.argb(currentAlpha, br, bg, bb)
+
+        bankLinePaint.color = bankArgb
+        bankDotPaint.color = bankArgb
 
         invalidate()
     }
@@ -385,21 +429,25 @@ class CanvasOverlayView @JvmOverloads constructor(
             drawEightCalibrationHandles(canvas)
         }
 
-        // Draw stem/tether connecting lines from Grip Pads to Aim Points
         if (!isCalibrating) {
-            drawStemTethers(canvas)
-        }
-
-        // Render geometry lines and markers according to mode
-        when (currentMode) {
-            RulerMode.AUTO_REFLECT -> drawAutoReflection(canvas)
-            RulerMode.MANUAL_3_POINT -> drawManualThreePoint(canvas)
-            RulerMode.EDGE_MARKER_ONLY -> drawEdgeMarkerOnly(canvas)
-        }
-
-        // Feature 1: Draw Target Ball circle and 6-Pocket Radial Lines on Point B
-        if (!isCalibrating) {
-            drawTargetBallAndRadialLines(canvas)
+            if (showSixPocketLines) {
+                // Requirement 2: Mode 1-Titik Fokus (Single-Point Target Mode)
+                // Hide connecting line A-B and reflection rays.
+                // Only render Point B's stem tether (from grip pad to Point B)
+                if (hasGripB) {
+                    canvas.drawLine(gripB.x, gripB.y, pointB.x, pointB.y, stemLinePaint)
+                }
+                // Render Point B's white center dot + 6 Direct rays + 6 Mirror Bank rays
+                drawTargetBallAndRadialLines(canvas)
+            } else {
+                // Normal modes (Auto-Reflect, Manual 3-Pt, Edge-Marker)
+                drawStemTethers(canvas)
+                when (currentMode) {
+                    RulerMode.AUTO_REFLECT -> drawAutoReflection(canvas)
+                    RulerMode.MANUAL_3_POINT -> drawManualThreePoint(canvas)
+                    RulerMode.EDGE_MARKER_ONLY -> drawEdgeMarkerOnly(canvas)
+                }
+            }
         }
     }
 
@@ -421,8 +469,9 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     /**
-     * Requirement 1: Center solid white dot (radius 6f) on Point B and 6-Pocket radial guide lines.
-     * Large blue ballRadius outline is removed for an unobstructed view.
+     * Requirement 1: 1-Point 6-Line Direct Rays + 6-Line Mirror Bank Rays on Point B.
+     * Direct Rays: 6 lines pointing towards the 6 table pockets (length 85dp).
+     * Mirror Bank Rays: 6 lines pointing towards the 6 virtual mirror pockets (length 62dp with 3.5dp gold tip dots).
      */
     private fun drawTargetBallAndRadialLines(canvas: Canvas) {
         val bx = pointB.x
@@ -432,9 +481,14 @@ class CanvasOverlayView @JvmOverloads constructor(
         val centerDotRadius = 6f * density
         canvas.drawCircle(bx, by, centerDotRadius, aimDotPaint)
 
-        // Draw the 6 pocket radial guide lines if enabled
+        // Draw the 6 direct pocket lines and 6 mirror bank lines if enabled
         if (showSixPocketLines) {
-            val pockets = arrayOf(
+            val startDist = 14f * density
+            val directEndDist = 85f * density
+            val bankEndDist = 62f * density
+
+            // Group A: 6 Direct Pocket Rays
+            val directPockets = arrayOf(
                 PointF(boundaryBox.left, boundaryBox.top),                     // Top-Left
                 PointF(boundaryBox.centerX(), boundaryBox.top),                // Top-Center
                 PointF(boundaryBox.right, boundaryBox.top),                    // Top-Right
@@ -443,10 +497,7 @@ class CanvasOverlayView @JvmOverloads constructor(
                 PointF(boundaryBox.right, boundaryBox.bottom)                  // Bottom-Right
             )
 
-            val startDist = 14f * density
-            val endDist = 85f * density
-
-            for (pocket in pockets) {
+            for (pocket in directPockets) {
                 val dx = pocket.x - bx
                 val dy = pocket.y - by
                 val dist = sqrt(dx * dx + dy * dy)
@@ -456,11 +507,47 @@ class CanvasOverlayView @JvmOverloads constructor(
 
                     val startX = bx + ux * startDist
                     val startY = by + uy * startDist
-                    val endX = bx + ux * endDist
-                    val endY = by + uy * endDist
+                    val endX = bx + ux * directEndDist
+                    val endY = by + uy * directEndDist
 
                     canvas.drawLine(startX, startY, endX, endY, sixLinePaint)
                     canvas.drawCircle(endX, endY, 2.5f * density, aimDotPaint)
+                }
+            }
+
+            // Group B: 6 Mirror Bank Rays (via Top & Bottom cushions)
+            // 1. Top Cushion Bank (aiming for the 3 bottom pockets bouncing off top rail)
+            val mirrorTopY = 2f * boundaryBox.top - boundaryBox.bottom
+            // 2. Bottom Cushion Bank (aiming for the 3 top pockets bouncing off bottom rail)
+            val mirrorBottomY = 2f * boundaryBox.bottom - boundaryBox.top
+
+            val mirrorBankPockets = arrayOf(
+                // Via Top Cushion (bottom pockets mirrored across top rail)
+                PointF(boundaryBox.left, mirrorTopY),
+                PointF(boundaryBox.centerX(), mirrorTopY),
+                PointF(boundaryBox.right, mirrorTopY),
+                // Via Bottom Cushion (top pockets mirrored across bottom rail)
+                PointF(boundaryBox.left, mirrorBottomY),
+                PointF(boundaryBox.centerX(), mirrorBottomY),
+                PointF(boundaryBox.right, mirrorBottomY)
+            )
+
+            for (vPocket in mirrorBankPockets) {
+                val dx = vPocket.x - bx
+                val dy = vPocket.y - by
+                val dist = sqrt(dx * dx + dy * dy)
+                if (dist > 1e-4f) {
+                    val ux = dx / dist
+                    val uy = dy / dist
+
+                    val startX = bx + ux * startDist
+                    val startY = by + uy * startDist
+                    val endX = bx + ux * bankEndDist
+                    val endY = by + uy * bankEndDist
+
+                    canvas.drawLine(startX, startY, endX, endY, bankLinePaint)
+                    // Distinct 3.5dp dot at the tip of each bank shot ray
+                    canvas.drawCircle(endX, endY, 3.5f * density, bankDotPaint)
                 }
             }
         }

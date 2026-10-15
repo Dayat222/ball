@@ -9,6 +9,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.PointF
@@ -55,8 +56,8 @@ class OverlayService : Service() {
     private lateinit var handleParamsB: WindowManager.LayoutParams
     private lateinit var handleParamsC: WindowManager.LayoutParams
     private var handleSizePx = 0
-    private var handleOffsetX = 45f
-    private var handleOffsetY = 50f
+    private var handleOffsetX = 85f
+    private var handleOffsetY = 45f
 
     // Floating Control Bar
     private var floatingControlView: View? = null
@@ -93,8 +94,8 @@ class OverlayService : Service() {
 
         val density = resources.displayMetrics.density
         handleSizePx = (42f * density).roundToInt()
-        handleOffsetX = 45f * density
-        handleOffsetY = 50f * density
+        handleOffsetX = 85f * density
+        handleOffsetY = 45f * density
 
         // 1. Promote to Foreground Service
         startForegroundServiceWithNotification()
@@ -190,7 +191,11 @@ class OverlayService : Service() {
     }
 
     private fun setupCanvasOverlay() {
-        canvasOverlayView = CanvasOverlayView(this)
+        canvasOverlayView = CanvasOverlayView(this).apply {
+            onCanvasSizeChanged = { _, _ ->
+                repositionHandlesToAimPoints()
+            }
+        }
 
         canvasLayoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -862,6 +867,41 @@ class OverlayService : Service() {
         handleViewA?.updateColor(color)
         handleViewB?.updateColor(color)
         handleViewC?.updateColor(color)
+    }
+
+    private fun repositionHandlesToAimPoints() {
+        val canvas = canvasOverlayView ?: return
+        val hA = handleViewA ?: return
+        val hB = handleViewB ?: return
+        val hC = handleViewC ?: return
+
+        val gripPosA = calculateGripFromAim(canvas.pointA)
+        val gripPosB = calculateGripFromAim(canvas.pointB)
+        val gripPosC = calculateGripFromAim(canvas.pointC)
+
+        handleParamsA.x = (gripPosA.x - handleSizePx / 2f).toInt()
+        handleParamsA.y = (gripPosA.y - handleSizePx / 2f).toInt()
+        handleParamsB.x = (gripPosB.x - handleSizePx / 2f).toInt()
+        handleParamsB.y = (gripPosB.y - handleSizePx / 2f).toInt()
+        handleParamsC.x = (gripPosC.x - handleSizePx / 2f).toInt()
+        handleParamsC.y = (gripPosC.y - handleSizePx / 2f).toInt()
+
+        try {
+            windowManager.updateViewLayout(hA, handleParamsA)
+            windowManager.updateViewLayout(hB, handleParamsB)
+            windowManager.updateViewLayout(hC, handleParamsC)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        canvas.setPointA(canvas.pointA.x, canvas.pointA.y, gripPosA.x, gripPosA.y)
+        canvas.setPointB(canvas.pointB.x, canvas.pointB.y, gripPosB.x, gripPosB.y)
+        canvas.setPointC(canvas.pointC.x, canvas.pointC.y, gripPosC.x, gripPosC.y)
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        repositionHandlesToAimPoints()
     }
 
     @SuppressLint("ClickableViewAccessibility")

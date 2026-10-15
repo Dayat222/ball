@@ -199,6 +199,8 @@ class CanvasOverlayView @JvmOverloads constructor(
     private val textBounds = Rect()
     private val badgeRect = RectF()
 
+    var onCanvasSizeChanged: ((w: Int, h: Int) -> Unit)? = null
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (w <= 0 || h <= 0) return
@@ -234,6 +236,8 @@ class CanvasOverlayView @JvmOverloads constructor(
         // Load 6-pocket line preference and ball radius
         showSixPocketLines = prefsManager.getShowSixLines()
         ballRadius = prefsManager.getBallRadius()
+
+        onCanvasSizeChanged?.invoke(w, h)
     }
 
     init {

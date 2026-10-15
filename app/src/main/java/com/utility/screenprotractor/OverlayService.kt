@@ -19,6 +19,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
@@ -29,6 +30,7 @@ import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.roundToInt
 
 /**
@@ -58,6 +60,9 @@ class OverlayService : Service() {
     private var handleSizePx = 0
     private var handleOffsetX = 85f
     private var handleOffsetY = 45f
+    private var isOffsetInvertedA = false
+    private var isOffsetInvertedB = false
+    private var isOffsetInvertedC = false
 
     // Floating Control Bar
     private var floatingControlView: View? = null
@@ -278,9 +283,14 @@ class OverlayService : Service() {
             updateColor(initialColor)
             updateHandleAlpha(initialAlpha)
         }
-        val gripPosA = calculateGripFromAim(ptA)
+        val gripPosA = calculateGripFromAim(ptA, isOffsetInvertedA)
         handleParamsA = createHandleLayoutParams(gripPosA)
-        setupHandleTouchListener(handleViewA!!, handleParamsA) { aimX, aimY, gripX, gripY ->
+        setupHandleTouchListener(
+            handleViewA!!,
+            handleParamsA,
+            initialInverted = isOffsetInvertedA,
+            onInversionChanged = { isOffsetInvertedA = it }
+        ) { aimX, aimY, gripX, gripY ->
             canvasOverlayView?.setPointA(aimX, aimY, gripX, gripY)
         }
         windowManager.addView(handleViewA, handleParamsA)
@@ -291,9 +301,14 @@ class OverlayService : Service() {
             updateColor(initialColor)
             updateHandleAlpha(initialAlpha)
         }
-        val gripPosB = calculateGripFromAim(ptB)
+        val gripPosB = calculateGripFromAim(ptB, isOffsetInvertedB)
         handleParamsB = createHandleLayoutParams(gripPosB)
-        setupHandleTouchListener(handleViewB!!, handleParamsB) { aimX, aimY, gripX, gripY ->
+        setupHandleTouchListener(
+            handleViewB!!,
+            handleParamsB,
+            initialInverted = isOffsetInvertedB,
+            onInversionChanged = { isOffsetInvertedB = it }
+        ) { aimX, aimY, gripX, gripY ->
             canvasOverlayView?.setPointB(aimX, aimY, gripX, gripY)
         }
         windowManager.addView(handleViewB, handleParamsB)
@@ -304,9 +319,14 @@ class OverlayService : Service() {
             updateColor(initialColor)
             updateHandleAlpha(initialAlpha)
         }
-        val gripPosC = calculateGripFromAim(ptC)
+        val gripPosC = calculateGripFromAim(ptC, isOffsetInvertedC)
         handleParamsC = createHandleLayoutParams(gripPosC)
-        setupHandleTouchListener(handleViewC!!, handleParamsC) { aimX, aimY, gripX, gripY ->
+        setupHandleTouchListener(
+            handleViewC!!,
+            handleParamsC,
+            initialInverted = isOffsetInvertedC,
+            onInversionChanged = { isOffsetInvertedC = it }
+        ) { aimX, aimY, gripX, gripY ->
             canvasOverlayView?.setPointC(aimX, aimY, gripX, gripY)
         }
         windowManager.addView(handleViewC, handleParamsC)
@@ -315,7 +335,7 @@ class OverlayService : Service() {
         syncHandlesVisibility()
     }
 
-    private fun calculateGripFromAim(aim: PointF): PointF {
+    private fun calculateGripFromAim(aim: PointF, isInverted: Boolean = false): PointF {
         val currentScreenW = (canvasOverlayView?.width?.takeIf { it > 0 }
             ?: resources.displayMetrics.widthPixels).toFloat()
         val currentScreenH = (canvasOverlayView?.height?.takeIf { it > 0 }
@@ -328,12 +348,8 @@ class OverlayService : Service() {
             targetGripX
         }
 
-        val targetGripY = aim.y + handleOffsetY
-        val gripY = if (targetGripY + handleSizePx > currentScreenH - (10f * resources.displayMetrics.density)) {
-            aim.y - handleOffsetY
-        } else {
-            targetGripY
-        }
+        val targetGripY = if (isInverted) aim.y - handleOffsetY else aim.y + handleOffsetY
+        val gripY = targetGripY.coerceIn(handleSizePx / 2f, currentScreenH - handleSizePx / 2f)
         return PointF(gripX, gripY)
     }
 
@@ -347,8 +363,8 @@ class OverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = (center.x - handleSizePx / 2f).toInt()
-            y = (center.y - handleSizePx / 2f).toInt()
+            x = (center.x - handleSizePx / 2f).roundToInt()
+            y = (center.y - handleSizePx / 2f).roundToInt()
         }
     }
 
@@ -356,28 +372,126 @@ class OverlayService : Service() {
     private fun setupHandleTouchListener(
         view: View,
         params: WindowManager.LayoutParams,
+        initialInverted: Boolean = false,
+        onInversionChanged: ((Boolean) -> Unit)? = null,
         onMoved: (aimX: Float, aimY: Float, gripX: Float, gripY: Float) -> Unit
     ) {
-        var initialExactX = 0f
-        var initialExactY = 0f
-        var initialTouchX = 0f
-        var initialTouchY = 0f
+        var isOffsetInverted = initialInverted
+
+        // Touch Tracking & Velocity Sensitivity
+        var lastRawX = 0f
+        var lastRawY = 0f
+        var currentGripX = 0f
+        var currentGripY = 0f
+
+        // Double-Tap Tracking (Quick Ghost 4s)
+        var lastTapTime = 0L
+        var downTime = 0L
+        var downRawX = 0f
+        var downRawY = 0f
+
+        // Long-Press Tracking (Smart Offset Flip)
+        val longPressHandler = Handler(Looper.getMainLooper())
+        var isLongPressed = false
+        var hasMovedSignificantly = false
+
+        fun flipOffset() {
+            val newInverted = !isOffsetInverted
+            isOffsetInverted = newInverted
+            onInversionChanged?.invoke(newInverted)
+
+            val currentScreenH = (canvasOverlayView?.height?.takeIf { it > 0 }
+                ?: resources.displayMetrics.heightPixels).toFloat()
+            val currentScreenW = (canvasOverlayView?.width?.takeIf { it > 0 }
+                ?: resources.displayMetrics.widthPixels).toFloat()
+
+            // Invert grip Y: if newInverted, grip jumps above ball (-2 * handleOffsetY)
+            // if !newInverted, grip jumps below ball (+2 * handleOffsetY)
+            val deltaY = if (newInverted) -2f * handleOffsetY else 2f * handleOffsetY
+            currentGripY = (currentGripY + deltaY).coerceIn(handleSizePx / 2f, currentScreenH - handleSizePx / 2f)
+
+            params.y = (currentGripY - handleSizePx / 2f).roundToInt()
+            try {
+                windowManager.updateViewLayout(view, params)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+
+            val effectiveOffsetY = if (isOffsetInverted) -handleOffsetY else handleOffsetY
+            val aimX = (currentGripX - handleOffsetX).coerceIn(0f, currentScreenW)
+            val aimY = (currentGripY - effectiveOffsetY).coerceIn(0f, currentScreenH)
+            onMoved(aimX, aimY, currentGripX, currentGripY)
+        }
+
+        val longPressRunnable = Runnable {
+            if (!hasMovedSignificantly) {
+                isLongPressed = true
+                flipOffset()
+            }
+        }
 
         view.setOnTouchListener { _, event ->
-            when (event.action) {
+            when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    initialExactX = params.x + (handleSizePx / 2f)
-                    initialExactY = params.y + (handleSizePx / 2f)
-                    initialTouchX = event.rawX
-                    initialTouchY = event.rawY
+                    lastRawX = event.rawX
+                    lastRawY = event.rawY
+                    downRawX = event.rawX
+                    downRawY = event.rawY
+                    downTime = System.currentTimeMillis()
+
+                    currentGripX = params.x + (handleSizePx / 2f)
+                    currentGripY = params.y + (handleSizePx / 2f)
+
+                    hasMovedSignificantly = false
+                    isLongPressed = false
+                    longPressHandler.postDelayed(longPressRunnable, 450L)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val gripX = initialExactX + (event.rawX - initialTouchX)
-                    val gripY = initialExactY + (event.rawY - initialTouchY)
+                    val frameDx = event.rawX - lastRawX
+                    val frameDy = event.rawY - lastRawY
+                    lastRawX = event.rawX
+                    lastRawY = event.rawY
 
-                    params.x = (gripX - handleSizePx / 2f).roundToInt()
-                    params.y = (gripY - handleSizePx / 2f).roundToInt()
+                    val totalMoveFromDown = hypot(event.rawX - downRawX, event.rawY - downRawY)
+                    if (totalMoveFromDown > 8f * resources.displayMetrics.density) {
+                        hasMovedSignificantly = true
+                        longPressHandler.removeCallbacks(longPressRunnable)
+                    }
+
+                    val speed = hypot(frameDx, frameDy)
+                    // Deadzone Anti-Jitter: ignore micro movements during rest or lift-off
+                    if (speed < 0.4f) {
+                        return@setOnTouchListener true
+                    }
+
+                    // Dynamic Sensitivity Multiplier (Sniper Fine-Tuning Mode)
+                    val sensitivity = when {
+                        speed < 3.5f -> 0.28f  // Sniper Mode: ultra-fine alignment
+                        speed < 10f -> 0.65f   // Medium adjustments
+                        else -> 1.0f           // Fast panning
+                    }
+
+                    currentGripX += frameDx * sensitivity
+                    currentGripY += frameDy * sensitivity
+
+                    val currentScreenW = (canvasOverlayView?.width?.takeIf { it > 0 }
+                        ?: resources.displayMetrics.widthPixels).toFloat()
+                    val currentScreenH = (canvasOverlayView?.height?.takeIf { it > 0 }
+                        ?: resources.displayMetrics.heightPixels).toFloat()
+
+                    // Auto-Flip when dragged past bottom limit and handle is below ball
+                    if (!isOffsetInverted && currentGripY > currentScreenH - (handleSizePx * 0.8f)) {
+                        flipOffset()
+                    }
+
+                    currentGripX = currentGripX.coerceIn(handleSizePx / 2f, currentScreenW - handleSizePx / 2f)
+                    currentGripY = currentGripY.coerceIn(handleSizePx / 2f, currentScreenH - handleSizePx / 2f)
+
+                    params.x = (currentGripX - handleSizePx / 2f).roundToInt()
+                    params.y = (currentGripY - handleSizePx / 2f).roundToInt()
 
                     try {
                         windowManager.updateViewLayout(view, params)
@@ -385,19 +499,32 @@ class OverlayService : Service() {
                         e.printStackTrace()
                     }
 
-                    val currentScreenW = (canvasOverlayView?.width?.takeIf { it > 0 }
-                        ?: resources.displayMetrics.widthPixels).toFloat()
-                    val currentScreenH = (canvasOverlayView?.height?.takeIf { it > 0 }
-                        ?: resources.displayMetrics.heightPixels).toFloat()
+                    val effectiveOffsetY = if (isOffsetInverted) -handleOffsetY else handleOffsetY
+                    val aimX = (currentGripX - handleOffsetX).coerceIn(0f, currentScreenW)
+                    val aimY = (currentGripY - effectiveOffsetY).coerceIn(0f, currentScreenH)
 
-                    // Calculate aim coordinate to the top-left of the grip pad (anti-finger obstruction: grip is at bottom-right)
-                    val aimX = (gripX - handleOffsetX).coerceIn(0f, currentScreenW)
-                    val aimY = (gripY - handleOffsetY).coerceIn(0f, currentScreenH)
-
-                    onMoved(aimX, aimY, gripX, gripY)
+                    onMoved(aimX, aimY, currentGripX, currentGripY)
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    longPressHandler.removeCallbacks(longPressRunnable)
+
+                    if (event.actionMasked == MotionEvent.ACTION_UP && !isLongPressed) {
+                        val tapDuration = System.currentTimeMillis() - downTime
+                        val totalMove = hypot(event.rawX - downRawX, event.rawY - downRawY)
+
+                        if (tapDuration < 220L && totalMove < (10f * resources.displayMetrics.density)) {
+                            val now = System.currentTimeMillis()
+                            if (now - lastTapTime < 320L) {
+                                toggleQuickGhost()
+                                lastTapTime = 0L
+                            } else {
+                                lastTapTime = now
+                            }
+                        }
+                    }
+
+                    isLongPressed = false
                     persistHandlePositions()
                     true
                 }
@@ -899,16 +1026,16 @@ class OverlayService : Service() {
         val hB = handleViewB ?: return
         val hC = handleViewC ?: return
 
-        val gripPosA = calculateGripFromAim(canvas.pointA)
-        val gripPosB = calculateGripFromAim(canvas.pointB)
-        val gripPosC = calculateGripFromAim(canvas.pointC)
+        val gripPosA = calculateGripFromAim(canvas.pointA, isOffsetInvertedA)
+        val gripPosB = calculateGripFromAim(canvas.pointB, isOffsetInvertedB)
+        val gripPosC = calculateGripFromAim(canvas.pointC, isOffsetInvertedC)
 
-        handleParamsA.x = (gripPosA.x - handleSizePx / 2f).toInt()
-        handleParamsA.y = (gripPosA.y - handleSizePx / 2f).toInt()
-        handleParamsB.x = (gripPosB.x - handleSizePx / 2f).toInt()
-        handleParamsB.y = (gripPosB.y - handleSizePx / 2f).toInt()
-        handleParamsC.x = (gripPosC.x - handleSizePx / 2f).toInt()
-        handleParamsC.y = (gripPosC.y - handleSizePx / 2f).toInt()
+        handleParamsA.x = (gripPosA.x - handleSizePx / 2f).roundToInt()
+        handleParamsA.y = (gripPosA.y - handleSizePx / 2f).roundToInt()
+        handleParamsB.x = (gripPosB.x - handleSizePx / 2f).roundToInt()
+        handleParamsB.y = (gripPosB.y - handleSizePx / 2f).roundToInt()
+        handleParamsC.x = (gripPosC.x - handleSizePx / 2f).roundToInt()
+        handleParamsC.y = (gripPosC.y - handleSizePx / 2f).roundToInt()
 
         try {
             windowManager.updateViewLayout(hA, handleParamsA)

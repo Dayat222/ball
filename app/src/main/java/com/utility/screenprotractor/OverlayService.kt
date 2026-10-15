@@ -984,10 +984,12 @@ class OverlayService : Service() {
         if (isCanvasHidden) {
             btnMiniToggleOnOff?.text = getString(R.string.control_off)
             btnMiniToggleOnOff?.setBackgroundResource(R.drawable.bg_btn_off)
-            btnMiniExpand?.alpha = 0.35f
+            btnMiniExpand?.setTextColor(ContextCompat.getColor(this, R.color.red_danger))
+            btnMiniExpand?.alpha = 0.5f
         } else {
             btnMiniToggleOnOff?.text = getString(R.string.control_on)
             btnMiniToggleOnOff?.setBackgroundResource(R.drawable.bg_btn_on)
+            btnMiniExpand?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
             btnMiniExpand?.alpha = 0.65f
         }
     }

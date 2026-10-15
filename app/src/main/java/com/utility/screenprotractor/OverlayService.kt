@@ -12,6 +12,7 @@ import android.content.pm.ServiceInfo
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Point
 import android.graphics.PointF
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -195,6 +196,18 @@ class OverlayService : Service() {
         }
     }
 
+    private fun getRealScreenSize(): Point {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = windowManager.currentWindowMetrics.bounds
+            Point(bounds.width(), bounds.height())
+        } else {
+            val point = Point()
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.getRealSize(point)
+            point
+        }
+    }
+
     private fun setupCanvasOverlay() {
         canvasOverlayView = CanvasOverlayView(this).apply {
             onCanvasSizeChanged = { _, _ ->
@@ -230,23 +243,17 @@ class OverlayService : Service() {
      */
     private fun updateCanvasWindowBounds() {
         val canvas = canvasOverlayView ?: return
-        val dm = resources.displayMetrics
-        val screenW = dm.widthPixels.toFloat()
-        val screenH = dm.heightPixels.toFloat()
+        val realSize = getRealScreenSize()
+        val screenW = realSize.x.toFloat()
+        val screenH = realSize.y.toFloat()
 
         val useMicroWindow = canvas.showSixPocketLines && !isCalibrationActive
 
         if (useMicroWindow) {
             // Ukuran kotak lokal 180dp x 180dp berpusat di koordinat Point B
-            val microSizePx = (180f * dm.density).roundToInt()
-            val bx = canvas.pointB.x
-            val by = canvas.pointB.y
-
-            val maxWinX = (screenW - microSizePx).roundToInt().coerceAtLeast(0)
-            val maxWinY = (screenH - microSizePx).roundToInt().coerceAtLeast(0)
-
-            val winX = (bx - microSizePx / 2f).roundToInt().coerceIn(0, maxWinX)
-            val winY = (by - microSizePx / 2f).roundToInt().coerceIn(0, maxWinY)
+            val microSizePx = (180f * resources.displayMetrics.density).roundToInt()
+            val winX = (canvas.pointB.x - microSizePx / 2f).roundToInt()
+            val winY = (canvas.pointB.y - microSizePx / 2f).roundToInt()
 
             canvasLayoutParams.width = microSizePx
             canvasLayoutParams.height = microSizePx
@@ -316,9 +323,9 @@ class OverlayService : Service() {
      * The grip pad is positioned below the actual target ball to keep the ball visible.
      */
     private fun setupFloatingHandles() {
-        val displayMetrics = resources.displayMetrics
-        val screenW = displayMetrics.widthPixels.toFloat()
-        val screenH = displayMetrics.heightPixels.toFloat()
+        val realSize = getRealScreenSize()
+        val screenW = realSize.x.toFloat()
+        val screenH = realSize.y.toFloat()
 
         val (ptA, ptB, ptC) = prefsManager.getPoints(screenW, screenH)
         val initialAlpha = prefsManager.getLineAlpha()
@@ -384,19 +391,13 @@ class OverlayService : Service() {
     }
 
     private fun calculateGripFromAim(aim: PointF, isInverted: Boolean = false): PointF {
-        val dm = resources.displayMetrics
-        val currentScreenW = dm.widthPixels.toFloat()
-        val currentScreenH = dm.heightPixels.toFloat()
+        val realSize = getRealScreenSize()
+        val currentScreenW = realSize.x.toFloat()
+        val currentScreenH = realSize.y.toFloat()
 
-        val targetGripX = aim.x + handleOffsetX
-        val gripX = if (targetGripX + handleSizePx > currentScreenW - (10f * resources.displayMetrics.density)) {
-            aim.x - handleOffsetX
-        } else {
-            targetGripX
-        }
-
+        val gripX = aim.x.coerceIn(0f, currentScreenW)
         val targetGripY = if (isInverted) aim.y - handleOffsetY else aim.y + handleOffsetY
-        val gripY = targetGripY.coerceIn(handleSizePx / 2f, currentScreenH - handleSizePx / 2f)
+        val gripY = targetGripY.coerceIn(0f, currentScreenH)
         return PointF(gripX, gripY)
     }
 
@@ -447,14 +448,14 @@ class OverlayService : Service() {
             isOffsetInverted = newInverted
             onInversionChanged?.invoke(newInverted)
 
-            val dm = resources.displayMetrics
-            val currentScreenH = dm.heightPixels.toFloat()
-            val currentScreenW = dm.widthPixels.toFloat()
+            val realSize = getRealScreenSize()
+            val currentScreenW = realSize.x.toFloat()
+            val currentScreenH = realSize.y.toFloat()
 
             // Invert grip Y: if newInverted, grip jumps above ball (-2 * handleOffsetY)
             // if !newInverted, grip jumps below ball (+2 * handleOffsetY)
             val deltaY = if (newInverted) -2f * handleOffsetY else 2f * handleOffsetY
-            currentGripY = (currentGripY + deltaY).coerceIn(handleSizePx / 2f, currentScreenH - handleSizePx / 2f)
+            currentGripY = (currentGripY + deltaY).coerceIn(0f, currentScreenH)
 
             params.y = (currentGripY - handleSizePx / 2f).roundToInt()
             try {
@@ -465,9 +466,9 @@ class OverlayService : Service() {
 
             view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
 
-            val effectiveOffsetY = if (isOffsetInverted) -handleOffsetY else handleOffsetY
-            val aimX = (currentGripX - handleOffsetX).coerceIn(0f, currentScreenW)
-            val aimY = (currentGripY - effectiveOffsetY).coerceIn(0f, currentScreenH)
+            val aimX = currentGripX.coerceIn(0f, currentScreenW)
+            val offsetDir = if (isOffsetInverted) handleOffsetY else -handleOffsetY
+            val aimY = (currentGripY + offsetDir).coerceIn(0f, currentScreenH)
             onMoved(aimX, aimY, currentGripX, currentGripY)
         }
 
@@ -523,18 +524,17 @@ class OverlayService : Service() {
                     currentGripX += frameDx * sensitivity
                     currentGripY += frameDy * sensitivity
 
-                    val currentScreenW = (canvasOverlayView?.width?.takeIf { it > 0 }
-                        ?: resources.displayMetrics.widthPixels).toFloat()
-                    val currentScreenH = (canvasOverlayView?.height?.takeIf { it > 0 }
-                        ?: resources.displayMetrics.heightPixels).toFloat()
+                    val realSize = getRealScreenSize()
+                    val currentScreenW = realSize.x.toFloat()
+                    val currentScreenH = realSize.y.toFloat()
 
                     // Auto-Flip when dragged past bottom limit and handle is below ball
                     if (!isOffsetInverted && currentGripY > currentScreenH - (handleSizePx * 0.8f)) {
                         flipOffset()
                     }
 
-                    currentGripX = currentGripX.coerceIn(handleSizePx / 2f, currentScreenW - handleSizePx / 2f)
-                    currentGripY = currentGripY.coerceIn(handleSizePx / 2f, currentScreenH - handleSizePx / 2f)
+                    currentGripX = currentGripX.coerceIn(0f, currentScreenW)
+                    currentGripY = currentGripY.coerceIn(0f, currentScreenH)
 
                     params.x = (currentGripX - handleSizePx / 2f).roundToInt()
                     params.y = (currentGripY - handleSizePx / 2f).roundToInt()
@@ -545,9 +545,9 @@ class OverlayService : Service() {
                         e.printStackTrace()
                     }
 
-                    val effectiveOffsetY = if (isOffsetInverted) -handleOffsetY else handleOffsetY
-                    val aimX = (currentGripX - handleOffsetX).coerceIn(0f, currentScreenW)
-                    val aimY = (currentGripY - effectiveOffsetY).coerceIn(0f, currentScreenH)
+                    val aimX = currentGripX.coerceIn(0f, currentScreenW)
+                    val offsetDir = if (isOffsetInverted) handleOffsetY else -handleOffsetY
+                    val aimY = (currentGripY + offsetDir).coerceIn(0f, currentScreenH)
 
                     onMoved(aimX, aimY, currentGripX, currentGripY)
                     true

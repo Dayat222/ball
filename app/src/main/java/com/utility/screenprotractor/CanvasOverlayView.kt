@@ -2,17 +2,21 @@ package com.utility.screenprotractor
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Point
 import android.graphics.PointF
 import android.graphics.Rect
 import android.graphics.RectF
+import android.os.Build
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowManager
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -251,13 +255,27 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     var onCanvasSizeChanged: ((w: Int, h: Int) -> Unit)? = null
 
+    private fun getFullDisplaySize(): Point {
+        val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = wm.currentWindowMetrics.bounds
+            Point(bounds.width(), bounds.height())
+        } else {
+            val point = Point()
+            @Suppress("DEPRECATION")
+            wm.defaultDisplay.getRealSize(point)
+            point
+        }
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (isMicroWindowMode) return
         if (w <= 0 || h <= 0) return
 
-        val screenW = resources.displayMetrics.widthPixels.toFloat()
-        val screenH = resources.displayMetrics.heightPixels.toFloat()
+        val fullSize = getFullDisplaySize()
+        val screenW = fullSize.x.toFloat()
+        val screenH = fullSize.y.toFloat()
 
         // Load saved boundary box and auto-clamp to active screen size (Landscape/Portrait safe)
         boundaryBox = prefsManager.getBoundaryBox(screenW, screenH)
@@ -288,10 +306,22 @@ class CanvasOverlayView @JvmOverloads constructor(
         showSixPocketLines = prefsManager.getShowSixLines()
         ballRadius = prefsManager.getBallRadius()
 
-        onCanvasSizeChanged?.invoke(w, h)
+        onCanvasSizeChanged?.invoke(fullSize.x, fullSize.y)
     }
 
     init {
+        val fullSize = getFullDisplaySize()
+        val screenW = fullSize.x.toFloat()
+        val screenH = fullSize.y.toFloat()
+
+        boundaryBox = prefsManager.getBoundaryBox(screenW, screenH)
+        clampBoundaryBox(screenW, screenH)
+
+        val (savedA, savedB, savedC) = prefsManager.getPoints(screenW, screenH)
+        pointA = savedA
+        pointB = savedB
+        pointC = savedC
+
         currentLineColor = prefsManager.getLineColor()
         currentBankLineColor = prefsManager.getBankLineColor()
         currentAlpha = prefsManager.getLineAlpha()
@@ -330,9 +360,9 @@ class CanvasOverlayView @JvmOverloads constructor(
      * Requirement 2: Reset boundary box to proportional center rectangle.
      */
     fun resetToProportionalCenter() {
-        val dm = resources.displayMetrics
-        val w = dm.widthPixels.toFloat().coerceAtLeast(200f)
-        val h = dm.heightPixels.toFloat().coerceAtLeast(200f)
+        val fullSize = getFullDisplaySize()
+        val w = fullSize.x.toFloat().coerceAtLeast(200f)
+        val h = fullSize.y.toFloat().coerceAtLeast(200f)
         val l = w * 0.18f
         val t = h * 0.18f
         val r = w * 0.82f
@@ -481,10 +511,20 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     fun resetBoundaryCalibration() {
-        val dm = resources.displayMetrics
-        val screenW = dm.widthPixels.toFloat().coerceAtLeast(100f)
-        val screenH = dm.heightPixels.toFloat().coerceAtLeast(100f)
+        val fullSize = getFullDisplaySize()
+        val screenW = fullSize.x.toFloat().coerceAtLeast(100f)
+        val screenH = fullSize.y.toFloat().coerceAtLeast(100f)
         prefsManager.resetBoundaryBox()
+        boundaryBox = prefsManager.getBoundaryBox(screenW, screenH)
+        clampBoundaryBox(screenW, screenH)
+        invalidate()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration?) {
+        super.onConfigurationChanged(newConfig)
+        val fullSize = getFullDisplaySize()
+        val screenW = fullSize.x.toFloat()
+        val screenH = fullSize.y.toFloat()
         boundaryBox = prefsManager.getBoundaryBox(screenW, screenH)
         clampBoundaryBox(screenW, screenH)
         invalidate()

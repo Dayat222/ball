@@ -80,7 +80,6 @@ class OverlayService : Service() {
     private var btnResetBound: TextView? = null
     private var btnSixLines: TextView? = null
     private var btnSettings: TextView? = null
-    private var btnToggleTangent: TextView? = null
     private var panelSettings: View? = null
 
     // State Tracking
@@ -806,16 +805,6 @@ class OverlayService : Service() {
             }
         })
 
-        // Ghost Ball & 90° Tangent Deflection Toggle
-        btnToggleTangent = controlView.findViewById(R.id.btnToggleTangent)
-        updateTangentButtonUI()
-        btnToggleTangent?.setOnClickListener {
-            val canvas = canvasOverlayView ?: return@setOnClickListener
-            canvas.toggleTangentGuide()
-            updateTangentButtonUI()
-            syncHandlesVisibility()
-        }
-
         // 8. Feature 2: Line Color Picker (Preset Swatches & Hue Spectrum Slider)
         val density = resources.displayMetrics.density
         val btnColorWhite = controlView.findViewById<View>(R.id.btnColorWhite)
@@ -951,19 +940,6 @@ class OverlayService : Service() {
         }
     }
 
-    private fun updateTangentButtonUI() {
-        val isEnabled = canvasOverlayView?.isTangentGuideEnabled ?: true
-        if (isEnabled) {
-            btnToggleTangent?.text = getString(R.string.control_on)
-            btnToggleTangent?.setBackgroundResource(R.drawable.bg_control_btn_active)
-            btnToggleTangent?.setTextColor(ContextCompat.getColor(this, R.color.yellow_accent))
-        } else {
-            btnToggleTangent?.text = getString(R.string.control_off)
-            btnToggleTangent?.setBackgroundResource(R.drawable.bg_control_btn)
-            btnToggleTangent?.setTextColor(Color.WHITE)
-        }
-    }
-
     /**
      * Requirement 3: Minimize full toolbar into a draggable mini capsule with ON/OFF switch.
      */
@@ -1078,8 +1054,7 @@ class OverlayService : Service() {
 
         val isSixLinesActive = canvasOverlayView?.showRadialGuides ?: false
         if (isSixLinesActive) {
-            val showCueAssist = canvasOverlayView?.isTangentGuideEnabled ?: true
-            handleViewA?.visibility = if (showCueAssist) View.VISIBLE else View.GONE
+            handleViewA?.visibility = View.GONE
             handleViewB?.visibility = View.VISIBLE
             handleViewC?.visibility = View.GONE
         } else {

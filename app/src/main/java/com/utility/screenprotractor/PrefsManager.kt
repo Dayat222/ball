@@ -205,17 +205,6 @@ class PrefsManager(context: Context) {
         return prefs.getFloat(KEY_BALL_RADIUS, 13.5f)
     }
 
-    /**
-     * Save and retrieve tangent deflection guide visibility toggle.
-     */
-    fun saveShowTangentGuide(show: Boolean) {
-        prefs.edit().putBoolean(KEY_SHOW_TANGENT_GUIDE, show).apply()
-    }
-
-    fun getShowTangentGuide(): Boolean {
-        return prefs.getBoolean(KEY_SHOW_TANGENT_GUIDE, true)
-    }
-
     companion object {
         private const val PREFS_NAME = "screen_protractor_prefs"
         private const val DEFAULT_MARGIN_RATIO = 0.08f
@@ -247,6 +236,5 @@ class PrefsManager(context: Context) {
 
         private const val KEY_SHOW_SIX_LINES = "show_radial_guides"
         private const val KEY_BALL_RADIUS = "target_ring_radius"
-        private const val KEY_SHOW_TANGENT_GUIDE = "show_tangent_guide"
     }
 }

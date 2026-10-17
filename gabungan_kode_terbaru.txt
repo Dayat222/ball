@@ -51,6 +51,7 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
 
 ==> app/src/main/AndroidManifest.xml <==
@@ -58,10 +59,12 @@ dependencies {
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Strict permission policy: Only overlay and foreground service -->
+    <!-- Permissions: Overlay, foreground service, internet check, and in-app package installer -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:allowBackup="false"
@@ -94,9 +97,418 @@ dependencies {
                 android:value="Screen overlay geometry ruler for visual assistance" />
         </service>
 
+        <!-- FileProvider for safe in-app APK installation -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
     </application>
 
 </manifest>
+
+==> app/src/main/java/com/utility/screenprotractor/AppUpdateManager.kt <==
+package com.utility.screenprotractor
+
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
+import androidx.core.content.FileProvider
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
+import java.net.HttpURLConnection
+import java.net.URL
+
+/**
+ * In-App OTA Update Manager for seamless Over-The-Air application updates.
+ * Checks for updates via GitHub raw version.json (with GitHub API fallback),
+ * downloads APK in background following HTTP redirects, and triggers system package installer.
+ */
+object AppUpdateManager {
+
+    private const val VERSION_JSON_URL =
+        "https://raw.githubusercontent.com/Dayat222/ball/main/version.json"
+    private const val GITHUB_LATEST_RELEASE_API =
+        "https://api.github.com/repos/Dayat222/ball/releases/latest"
+
+    data class UpdateInfo(
+        val remoteVersionCode: Long,
+        val remoteVersionName: String,
+        val downloadUrl: String,
+        val changelog: String,
+        val isUpdateAvailable: Boolean
+    )
+
+    fun getInstalledVersionCode(context: Context): Long {
+        return try {
+            val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(
+                    context.packageName,
+                    PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                packageInfo.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                packageInfo.versionCode.toLong()
+            }
+        } catch (e: Exception) {
+            1L
+        }
+    }
+
+    fun getInstalledVersionName(context: Context): String {
+        return try {
+            val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(
+                    context.packageName,
+                    PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0)
+            }
+            packageInfo.versionName ?: "1.0"
+        } catch (e: Exception) {
+            "1.0"
+        }
+    }
+
+    /**
+     * Checks if a newer version exists online.
+     * Runs asynchronously on Dispatchers.IO and posts result back on Dispatchers.Main.
+     */
+    fun checkForUpdate(
+        context: Context,
+        onResult: (UpdateInfo) -> Unit,
+        onError: (Exception) -> Unit
+    ) {
+        val currentVersionCode = getInstalledVersionCode(context)
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                var updateInfo = fetchFromVersionJson(currentVersionCode)
+                if (updateInfo == null) {
+                    // Fallback to GitHub Releases API if version.json is unreachable
+                    updateInfo = fetchFromGitHubReleases(currentVersionCode)
+                }
+
+                if (updateInfo != null) {
+                    withContext(Dispatchers.Main) {
+                        onResult(updateInfo)
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        onError(IllegalStateException("Gagal memuat informasi versi rilis."))
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onError(e)
+                }
+            }
+        }
+    }
+
+    private fun fetchFromVersionJson(currentVersionCode: Long): UpdateInfo? {
+        return try {
+            val conn = openConnectionWithRedirects(VERSION_JSON_URL)
+            if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                conn.disconnect()
+                return null
+            }
+            val jsonText = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
+
+            val json = JSONObject(jsonText)
+            val remoteCode = json.optLong("versionCode", 1L)
+            val remoteName = json.optString("versionName", "1.0")
+            val downloadUrl = json.optString("downloadUrl", "")
+            val changelog = json.optString("changelog", "Pembaruan kestabilan dan perbaikan fitur.")
+
+            UpdateInfo(
+                remoteVersionCode = remoteCode,
+                remoteVersionName = remoteName,
+                downloadUrl = downloadUrl,
+                changelog = changelog,
+                isUpdateAvailable = remoteCode > currentVersionCode
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun fetchFromGitHubReleases(currentVersionCode: Long): UpdateInfo? {
+        return try {
+            val conn = openConnectionWithRedirects(GITHUB_LATEST_RELEASE_API)
+            if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                conn.disconnect()
+                return null
+            }
+            val jsonText = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
+
+            val json = JSONObject(jsonText)
+            val tagName = json.optString("tag_name", "v1.0")
+            val body = json.optString("body", "Pembaruan otomatis terbaru.")
+
+            var apkUrl = ""
+            val assets = json.optJSONArray("assets")
+            if (assets != null) {
+                for (i in 0 until assets.length()) {
+                    val asset = assets.getJSONObject(i)
+                    val name = asset.optString("name", "")
+                    if (name.endsWith(".apk", ignoreCase = true)) {
+                        apkUrl = asset.optString("browser_download_url", "")
+                        break
+                    }
+                }
+            }
+
+            if (apkUrl.isEmpty()) {
+                apkUrl = "https://github.com/Dayat222/ball/releases/download/latest/app-debug.apk"
+            }
+
+            // Estimate remote version code from tag if format is v1.2 or similar
+            val tagNumber = tagName.removePrefix("v").replace(".", "").toLongOrNull() ?: (currentVersionCode + 1)
+
+            UpdateInfo(
+                remoteVersionCode = tagNumber,
+                remoteVersionName = tagName,
+                downloadUrl = apkUrl,
+                changelog = body,
+                isUpdateAvailable = true
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Downloads APK from updateInfo.downloadUrl with multi-hop redirect following,
+     * reporting percentage progress (0-100), and then triggers installApk.
+     */
+    fun downloadAndInstall(
+        context: Context,
+        updateInfo: UpdateInfo,
+        onProgress: (Int) -> Unit = {},
+        onComplete: (File) -> Unit = {},
+        onError: (Exception) -> Unit = {}
+    ) {
+        val destFile = File(context.cacheDir, "app-update.apk")
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                if (destFile.exists()) {
+                    destFile.delete()
+                }
+
+                val conn = openConnectionWithRedirects(updateInfo.downloadUrl)
+                if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+                    throw IllegalStateException("Server merespons kode status: ${conn.responseCode}")
+                }
+
+                val totalLength = conn.contentLength.toLong()
+                var input: InputStream? = null
+                var output: FileOutputStream? = null
+
+                try {
+                    input = conn.inputStream
+                    output = FileOutputStream(destFile)
+
+                    val buffer = ByteArray(8192)
+                    var bytesRead: Int
+                    var totalDownloaded = 0L
+                    var lastReportedPercent = -1
+
+                    while (input.read(buffer).also { bytesRead = it } != -1) {
+                        output.write(buffer, 0, bytesRead)
+                        totalDownloaded += bytesRead
+
+                        if (totalLength > 0) {
+                            val percent = ((totalDownloaded * 100) / totalLength).toInt().coerceIn(0, 100)
+                            if (percent != lastReportedPercent) {
+                                lastReportedPercent = percent
+                                withContext(Dispatchers.Main) {
+                                    onProgress(percent)
+                                }
+                            }
+                        }
+                    }
+                    output.flush()
+                } finally {
+                    output?.close()
+                    input?.close()
+                    conn.disconnect()
+                }
+
+                if (!destFile.exists() || destFile.length() == 0L) {
+                    throw IllegalStateException("File unduhan kosong atau rusak.")
+                }
+
+                destFile.setReadable(true, false)
+
+                withContext(Dispatchers.Main) {
+                    onComplete(destFile)
+                    installApk(context, destFile)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onError(e)
+                }
+            }
+        }
+    }
+
+    /**
+     * Launches the native Android package installer using FileProvider.
+     * Directs user to grant Unknown App Sources permission if needed on Android 8.0+.
+     */
+    fun installApk(context: Context, apkFile: File) {
+        if (!apkFile.exists() || apkFile.length() == 0L) {
+            Toast.makeText(context, R.string.update_download_failed, Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (!context.packageManager.canRequestPackageInstalls()) {
+                val settingsIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(settingsIntent)
+                Toast.makeText(
+                    context,
+                    "Izinkan 'Instal aplikasi tidak dikenal' lalu ulangi update",
+                    Toast.LENGTH_LONG
+                ).show()
+                return
+            }
+        }
+
+        try {
+            val apkUri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                apkFile
+            )
+
+            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(installIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Toast.makeText(context, "Gagal meluncurkan installer: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /**
+     * Opens an HttpURLConnection, following 301/302/307/308 redirects up to 6 times.
+     * Essential for GitHub Release downloads redirecting to AWS S3 storage.
+     */
+    private fun openConnectionWithRedirects(initialUrl: String): HttpURLConnection {
+        var currentUrl = initialUrl
+        var redirects = 0
+
+        while (redirects < 6) {
+            val conn = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
+                instanceFollowRedirects = true
+                connectTimeout = 15000
+                readTimeout = 15000
+                setRequestProperty("User-Agent", "ScreenAngleRuler-Updater/1.0")
+            }
+            conn.connect()
+
+            val status = conn.responseCode
+            if (status == HttpURLConnection.HTTP_MOVED_TEMP ||
+                status == HttpURLConnection.HTTP_MOVED_PERM ||
+                status == HttpURLConnection.HTTP_SEE_OTHER ||
+                status == 307 || status == 308
+            ) {
+                val newUrl = conn.getHeaderField("Location")
+                conn.disconnect()
+                if (newUrl.isNullOrEmpty()) {
+                    throw IllegalStateException("Redirected with empty Location header")
+                }
+                currentUrl = newUrl
+                redirects++
+            } else {
+                return conn
+            }
+        }
+        throw IllegalStateException("Too many HTTP redirects from $initialUrl")
+    }
+
+    /**
+     * Helper to show a clean Material Dialog on an Activity when an update is available.
+     */
+    fun showUpdateDialog(
+        activity: Activity,
+        updateInfo: UpdateInfo,
+        onDownloadStarted: (() -> Unit)? = null
+    ) {
+        val message = "${updateInfo.changelog}\n\nVersi: ${updateInfo.remoteVersionName}"
+
+        MaterialAlertDialogBuilder(activity)
+            .setTitle(activity.getString(R.string.update_available_title))
+            .setMessage(message)
+            .setPositiveButton(activity.getString(R.string.update_now)) { _, _ ->
+                onDownloadStarted?.invoke()
+                val progressDialog = MaterialAlertDialogBuilder(activity)
+                    .setTitle(activity.getString(R.string.update_checking))
+                    .setMessage(activity.getString(R.string.update_downloading, 0))
+                    .setCancelable(false)
+                    .create()
+                progressDialog.show()
+
+                downloadAndInstall(
+                    context = activity,
+                    updateInfo = updateInfo,
+                    onProgress = { percent ->
+                        progressDialog.setMessage(activity.getString(R.string.update_downloading, percent))
+                    },
+                    onComplete = {
+                        progressDialog.dismiss()
+                    },
+                    onError = { err ->
+                        progressDialog.dismiss()
+                        Toast.makeText(
+                            activity,
+                            "${activity.getString(R.string.update_download_failed)}: ${err.message}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                )
+            }
+            .setNegativeButton(activity.getString(R.string.update_later), null)
+            .show()
+    }
+}
 
 ==> app/src/main/java/com/utility/screenprotractor/CanvasOverlayView.kt <==
 package com.utility.screenprotractor
@@ -1536,7 +1948,10 @@ class MainActivity : AppCompatActivity() {
 
         prefsManager = PrefsManager(this)
 
+        binding.tvCurrentVersion.text = "Versi Terpasang: v${AppUpdateManager.getInstalledVersionName(this)}"
+
         setupClickListeners()
+        checkUpdateSilently()
     }
 
     override fun onResume() {
@@ -1589,6 +2004,57 @@ class MainActivity : AppCompatActivity() {
                 Toast.LENGTH_SHORT
             ).show()
         }
+
+        // Check for Update Button
+        binding.btnCheckUpdate.setOnClickListener {
+            performManualUpdateCheck()
+        }
+    }
+
+    private fun checkUpdateSilently() {
+        AppUpdateManager.checkForUpdate(this, onResult = { info ->
+            if (!isFinishing && !isDestroyed && info.isUpdateAvailable) {
+                AppUpdateManager.showUpdateDialog(this, info) {
+                    binding.tvUpdateStatus.visibility = View.VISIBLE
+                    binding.progressBarUpdate.visibility = View.VISIBLE
+                    binding.tvUpdateStatus.text = getString(R.string.update_checking)
+                }
+            }
+        }, onError = {
+            // Silent check ignores errors to avoid disturbing user
+        })
+    }
+
+    private fun performManualUpdateCheck() {
+        binding.btnCheckUpdate.isEnabled = false
+        binding.tvUpdateStatus.visibility = View.VISIBLE
+        binding.tvUpdateStatus.text = getString(R.string.update_checking)
+        binding.progressBarUpdate.visibility = View.GONE
+
+        AppUpdateManager.checkForUpdate(this, onResult = { info ->
+            binding.btnCheckUpdate.isEnabled = true
+            if (info.isUpdateAvailable) {
+                binding.tvUpdateStatus.text = "Versi baru ${info.remoteVersionName} tersedia!"
+                AppUpdateManager.showUpdateDialog(this, info) {
+                    binding.progressBarUpdate.visibility = View.VISIBLE
+                }
+            } else {
+                binding.tvUpdateStatus.visibility = View.GONE
+                Toast.makeText(
+                    this,
+                    getString(R.string.update_already_latest, info.remoteVersionName),
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }, onError = { error ->
+            binding.btnCheckUpdate.isEnabled = true
+            binding.tvUpdateStatus.visibility = View.GONE
+            Toast.makeText(
+                this,
+                "${getString(R.string.update_check_failed)}: ${error.message}",
+                Toast.LENGTH_LONG
+            ).show()
+        })
     }
 
     private fun hasOverlayPermission(): Boolean {
@@ -2574,6 +3040,48 @@ class OverlayService : Service() {
             }
         })
 
+        // In-App Update Trigger from Floating Bar
+        val btnFloatingCheckUpdate = controlView.findViewById<TextView>(R.id.btnFloatingCheckUpdate)
+        btnFloatingCheckUpdate?.setOnClickListener {
+            Toast.makeText(this, R.string.update_checking, Toast.LENGTH_SHORT).show()
+            AppUpdateManager.checkForUpdate(this, onResult = { info ->
+                if (info.isUpdateAvailable) {
+                    Toast.makeText(
+                        this,
+                        "Versi baru ${info.remoteVersionName} ditemukan! Mengunduh...",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    AppUpdateManager.downloadAndInstall(
+                        context = this,
+                        updateInfo = info,
+                        onProgress = { percent ->
+                            if (percent == 25 || percent == 50 || percent == 75) {
+                                Toast.makeText(this, "Mengunduh pembaruan: $percent%", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        onComplete = {
+                            Toast.makeText(this, "Unduhan selesai. Membuka installer...", Toast.LENGTH_SHORT).show()
+                        },
+                        onError = { err ->
+                            Toast.makeText(this, "Gagal mengunduh: ${err.message}", Toast.LENGTH_LONG).show()
+                        }
+                    )
+                } else {
+                    Toast.makeText(
+                        this,
+                        getString(R.string.update_already_latest, info.remoteVersionName),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }, onError = { err ->
+                Toast.makeText(
+                    this,
+                    "${getString(R.string.update_check_failed)}: ${err.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            })
+        }
+
         // 9. Collapsible Floating Control (Minimize Toolbar)
         btnMinimize.setOnClickListener {
             minimizeToolbar()
@@ -3490,6 +3998,90 @@ class PrefsManager(context: Context) {
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- App Update Card -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardUpdate"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            app:cardBackgroundColor="@color/surface_card"
+            app:cardCornerRadius="14dp"
+            app:cardElevation="2dp"
+            app:strokeColor="@color/surface_card_border"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/label_check_update"
+                            android:textColor="@color/text_primary"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvCurrentVersion"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="Versi Terpasang: v1.0"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnCheckUpdate"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/btn_check_update"
+                        android:textColor="@color/cyan_accent"
+                        android:textSize="12sp"
+                        app:cornerRadius="8dp"
+                        app:strokeColor="@color/cyan_accent"
+                        app:strokeWidth="1dp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvUpdateStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:textColor="@color/yellow_accent"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+
+                <ProgressBar
+                    android:id="@+id/progressBarUpdate"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:indeterminate="false"
+                    android:max="100"
+                    android:progress="0"
+                    android:progressTint="@color/cyan_accent"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- Instructions Card -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
@@ -3861,6 +4453,44 @@ class PrefsManager(context: Context) {
                 android:min="0"
                 android:progress="185" />
 
+            <!-- App Update Section -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="12dp"
+                android:layout_marginBottom="10dp"
+                android:background="@color/surface_card_border" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tvUpdateLabel"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/label_check_update"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/btnFloatingCheckUpdate"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:background="@drawable/bg_control_btn"
+                    android:gravity="center"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="@string/btn_check_update"
+                    android:textColor="@color/cyan_accent"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
         </LinearLayout>
 
     </LinearLayout>
@@ -4031,6 +4661,18 @@ class PrefsManager(context: Context) {
     <string name="toast_calib_saved">Boundary box calibration saved.</string>
     <string name="toast_calib_reset">Boundary box reset to center.</string>
     <string name="toast_permission_needed">Please grant Overlay Permission to start the ruler.</string>
+    <!-- In-App Auto Update -->
+    <string name="label_check_update">App Update</string>
+    <string name="btn_check_update">Cek Update</string>
+    <string name="update_checking">Memeriksa pembaruan...</string>
+    <string name="update_available_title">Pembaruan Tersedia</string>
+    <string name="update_latest_title">Versi Terbaru</string>
+    <string name="update_already_latest">Aplikasi sudah versi terbaru (%s).</string>
+    <string name="update_now">Update Sekarang</string>
+    <string name="update_later">Nanti</string>
+    <string name="update_downloading">Mengunduh pembaruan: %1$d%%</string>
+    <string name="update_download_failed">Gagal mengunduh pembaruan</string>
+    <string name="update_check_failed">Gagal memeriksa pembaruan: periksa koneksi internet</string>
 </resources>
 
 ==> app/src/main/res/values/themes.xml <==
@@ -4055,3 +4697,12 @@ class PrefsManager(context: Context) {
         <item name="colorOnSurface">@color/text_primary</item>
     </style>
 </resources>
+
+==> app/src/main/res/xml/file_paths.xml <==
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="internal_cache" path="." />
+    <external-cache-path name="external_cache" path="." />
+    <files-path name="internal_files" path="." />
+    <external-files-path name="external_files" path="." />
+</paths>

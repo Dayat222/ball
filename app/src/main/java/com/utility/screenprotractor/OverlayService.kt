@@ -912,6 +912,48 @@ class OverlayService : Service() {
             }
         })
 
+        // In-App Update Trigger from Floating Bar
+        val btnFloatingCheckUpdate = controlView.findViewById<TextView>(R.id.btnFloatingCheckUpdate)
+        btnFloatingCheckUpdate?.setOnClickListener {
+            Toast.makeText(this, R.string.update_checking, Toast.LENGTH_SHORT).show()
+            AppUpdateManager.checkForUpdate(this, onResult = { info ->
+                if (info.isUpdateAvailable) {
+                    Toast.makeText(
+                        this,
+                        "Versi baru ${info.remoteVersionName} ditemukan! Mengunduh...",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    AppUpdateManager.downloadAndInstall(
+                        context = this,
+                        updateInfo = info,
+                        onProgress = { percent ->
+                            if (percent == 25 || percent == 50 || percent == 75) {
+                                Toast.makeText(this, "Mengunduh pembaruan: $percent%", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        onComplete = {
+                            Toast.makeText(this, "Unduhan selesai. Membuka installer...", Toast.LENGTH_SHORT).show()
+                        },
+                        onError = { err ->
+                            Toast.makeText(this, "Gagal mengunduh: ${err.message}", Toast.LENGTH_LONG).show()
+                        }
+                    )
+                } else {
+                    Toast.makeText(
+                        this,
+                        getString(R.string.update_already_latest, info.remoteVersionName),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }, onError = { err ->
+                Toast.makeText(
+                    this,
+                    "${getString(R.string.update_check_failed)}: ${err.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            })
+        }
+
         // 9. Collapsible Floating Control (Minimize Toolbar)
         btnMinimize.setOnClickListener {
             minimizeToolbar()

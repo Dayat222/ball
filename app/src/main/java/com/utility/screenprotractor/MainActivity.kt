@@ -37,7 +37,10 @@ class MainActivity : AppCompatActivity() {
 
         prefsManager = PrefsManager(this)
 
+        binding.tvCurrentVersion.text = "Versi Terpasang: v${AppUpdateManager.getInstalledVersionName(this)}"
+
         setupClickListeners()
+        checkUpdateSilently()
     }
 
     override fun onResume() {
@@ -90,6 +93,57 @@ class MainActivity : AppCompatActivity() {
                 Toast.LENGTH_SHORT
             ).show()
         }
+
+        // Check for Update Button
+        binding.btnCheckUpdate.setOnClickListener {
+            performManualUpdateCheck()
+        }
+    }
+
+    private fun checkUpdateSilently() {
+        AppUpdateManager.checkForUpdate(this, onResult = { info ->
+            if (!isFinishing && !isDestroyed && info.isUpdateAvailable) {
+                AppUpdateManager.showUpdateDialog(this, info) {
+                    binding.tvUpdateStatus.visibility = View.VISIBLE
+                    binding.progressBarUpdate.visibility = View.VISIBLE
+                    binding.tvUpdateStatus.text = getString(R.string.update_checking)
+                }
+            }
+        }, onError = {
+            // Silent check ignores errors to avoid disturbing user
+        })
+    }
+
+    private fun performManualUpdateCheck() {
+        binding.btnCheckUpdate.isEnabled = false
+        binding.tvUpdateStatus.visibility = View.VISIBLE
+        binding.tvUpdateStatus.text = getString(R.string.update_checking)
+        binding.progressBarUpdate.visibility = View.GONE
+
+        AppUpdateManager.checkForUpdate(this, onResult = { info ->
+            binding.btnCheckUpdate.isEnabled = true
+            if (info.isUpdateAvailable) {
+                binding.tvUpdateStatus.text = "Versi baru ${info.remoteVersionName} tersedia!"
+                AppUpdateManager.showUpdateDialog(this, info) {
+                    binding.progressBarUpdate.visibility = View.VISIBLE
+                }
+            } else {
+                binding.tvUpdateStatus.visibility = View.GONE
+                Toast.makeText(
+                    this,
+                    getString(R.string.update_already_latest, info.remoteVersionName),
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }, onError = { error ->
+            binding.btnCheckUpdate.isEnabled = true
+            binding.tvUpdateStatus.visibility = View.GONE
+            Toast.makeText(
+                this,
+                "${getString(R.string.update_check_failed)}: ${error.message}",
+                Toast.LENGTH_LONG
+            ).show()
+        })
     }
 
     private fun hasOverlayPermission(): Boolean {

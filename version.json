@@ -1,0 +1,6 @@
+{
+  "versionCode": 1,
+  "versionName": "1.0",
+  "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-debug.apk",
+  "changelog": "Versi 1.0:\n• Kalibrasi meja biliar presisi 1:1.\n• Garis pandu 6 kantong & pantulan ban sekunder.\n• Table-bounded window cropping.\n• Dukungan In-App Auto Update langsung dari aplikasi."
+}

@@ -74,20 +74,14 @@ class OverlayService : Service() {
     private var btnMiniDrag: TextView? = null
     private var btnMiniToggleOnOff: TextView? = null
     private var btnMiniExpand: TextView? = null
-    private var btnGhost: TextView? = null
-    private var btnVisibility: TextView? = null
     private var btnCalibrate: TextView? = null
-    private var btnResetBound: TextView? = null
-    private var btnSixLines: TextView? = null
     private var btnSettings: TextView? = null
     private var panelSettings: View? = null
 
     // State Tracking
     private var isCanvasHidden = false
     private var isCalibrationActive = false
-    private var isGhostActive = false
-    private val ghostHandler = Handler(Looper.getMainLooper())
-    private val ghostRestoreRunnable = Runnable { restoreFromGhost() }
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -314,7 +308,6 @@ class OverlayService : Service() {
             btnCalibrate?.text = getString(R.string.control_save_bound)
             btnCalibrate?.setBackgroundResource(R.drawable.bg_control_btn_active)
             btnCalibrate?.setTextColor(ContextCompat.getColor(this, R.color.green_status))
-            btnResetBound?.visibility = View.VISIBLE
         } else {
             canvas.setCalibrating(false)
             syncHandlesVisibility()
@@ -322,7 +315,6 @@ class OverlayService : Service() {
             btnCalibrate?.text = getString(R.string.control_calibrate)
             btnCalibrate?.setBackgroundResource(R.drawable.bg_control_btn)
             btnCalibrate?.setTextColor(Color.WHITE)
-            btnResetBound?.visibility = View.GONE
 
             Toast.makeText(this, R.string.toast_calib_saved, Toast.LENGTH_SHORT).show()
         }
@@ -450,8 +442,6 @@ class OverlayService : Service() {
         var currentGripX = 0f
         var currentGripY = 0f
 
-        // Double-Tap Tracking (Quick Ghost 4s)
-        var lastTapTime = 0L
         var downTime = 0L
         var downRawX = 0f
         var downRawY = 0f
@@ -510,7 +500,7 @@ class OverlayService : Service() {
 
                     hasMovedSignificantly = false
                     isLongPressed = false
-                    ghostHandler.postDelayed(longPressRunnable, 450L)
+                    mainHandler.postDelayed(longPressRunnable, 450L)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -522,7 +512,7 @@ class OverlayService : Service() {
                     val totalMoveFromDown = hypot(event.rawX - downRawX, event.rawY - downRawY)
                     if (totalMoveFromDown > 8f * resources.displayMetrics.density) {
                         hasMovedSignificantly = true
-                        ghostHandler.removeCallbacks(longPressRunnable)
+                        mainHandler.removeCallbacks(longPressRunnable)
                     }
 
                     val speed = hypot(frameDx, frameDy)
@@ -570,23 +560,7 @@ class OverlayService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    ghostHandler.removeCallbacks(longPressRunnable)
-
-                    if (event.actionMasked == MotionEvent.ACTION_UP && !isLongPressed) {
-                        val tapDuration = System.currentTimeMillis() - downTime
-                        val totalMove = hypot(event.rawX - downRawX, event.rawY - downRawY)
-
-                        if (tapDuration < 220L && totalMove < (10f * resources.displayMetrics.density)) {
-                            val now = System.currentTimeMillis()
-                            if (now - lastTapTime < 320L) {
-                                toggleQuickGhost()
-                                lastTapTime = 0L
-                            } else {
-                                lastTapTime = now
-                            }
-                        }
-                    }
-
+                    mainHandler.removeCallbacks(longPressRunnable)
                     isLongPressed = false
                     persistHandlePositions()
                     true
@@ -632,12 +606,7 @@ class OverlayService : Service() {
         btnMiniExpand = controlView.findViewById(R.id.btnMiniExpand)
 
         val btnDrag = controlView.findViewById<TextView>(R.id.btnDragHandle)
-        btnGhost = controlView.findViewById(R.id.btnQuickGhost)
-        btnVisibility = controlView.findViewById(R.id.btnToggleVisibility)
-        val btnMode = controlView.findViewById<TextView>(R.id.btnCycleMode)
         btnCalibrate = controlView.findViewById(R.id.btnToggleCalibrate)
-        btnResetBound = controlView.findViewById(R.id.btnResetBound)
-        btnSixLines = controlView.findViewById(R.id.btnToggleSixLines)
         btnSettings = controlView.findViewById(R.id.btnToggleSettings)
         val btnMinimize = controlView.findViewById<TextView>(R.id.btnMinimize)
         val btnClose = controlView.findViewById<TextView>(R.id.btnCloseOverlay)
@@ -656,68 +625,12 @@ class OverlayService : Service() {
         // Smart Mini Bubble (Drag to move, Tap to expand, Long-press to toggle ON/OFF)
         btnMiniExpand?.let { setupSmartMiniBubble(it, controlView) }
 
-        // 2. Quick-Ghost (Auto-Hide 4s)
-        btnGhost?.setOnClickListener {
-            if (isCalibrationActive) {
-                setCalibrationMode(false)
-            }
-            toggleQuickGhost()
-        }
-
-        // 3. Hide / Show canvas overlay and handles manually
-        btnVisibility?.setOnClickListener {
-            if (isCalibrationActive) {
-                setCalibrationMode(false)
-            }
-            if (isGhostActive) {
-                restoreFromGhost()
-            }
-            toggleCanvasVisibility()
-        }
-
-        // 4. Cycle Mode
-        btnMode.setOnClickListener {
-            val canvas = canvasOverlayView ?: return@setOnClickListener
-            // Switching mode turns off 6-Line single-point target mode
-            if (canvas.showRadialGuides) {
-                canvas.setShowRadialGuides(false)
-                updateSixLinesButtonUI()
-            }
-            val nextMode = canvas.cycleRulerMode()
-
-            btnMode.text = when (nextMode) {
-                CanvasOverlayView.RulerMode.AUTO_REFLECT -> getString(R.string.control_mode_auto)
-                CanvasOverlayView.RulerMode.MANUAL_3_POINT -> getString(R.string.control_mode_manual)
-                CanvasOverlayView.RulerMode.EDGE_MARKER_ONLY -> getString(R.string.control_mode_edge)
-            }
-
-            syncHandlesVisibility()
-        }
-
-        // 5. Calibration Mode Toggle & Boundary Reset
+        // 2. Calibration Mode Toggle
         btnCalibrate?.setOnClickListener {
-            if (isGhostActive) {
-                restoreFromGhost()
-            }
             if (isCanvasHidden) {
                 toggleCanvasVisibility()
             }
             setCalibrationMode(!isCalibrationActive)
-        }
-
-        btnResetBound?.setOnClickListener {
-            canvasOverlayView?.resetToProportionalCenter()
-            applyTableBoundedWindow()
-            Toast.makeText(this, R.string.toast_calib_reset, Toast.LENGTH_SHORT).show()
-        }
-
-        // 6. Feature 1: Toggle 6-Pocket Radial Lines & Mirror Bank on Target Ball
-        updateSixLinesButtonUI()
-        btnSixLines?.setOnClickListener {
-            val canvas = canvasOverlayView ?: return@setOnClickListener
-            canvas.toggleRadialGuides()
-            updateSixLinesButtonUI()
-            syncHandlesVisibility()
         }
 
         // 7. Settings Sub-Panel (Thickness & Opacity Sliders)
@@ -971,19 +884,8 @@ class OverlayService : Service() {
         }
     }
 
-    private fun updateSixLinesButtonUI() {
-        val isActive = canvasOverlayView?.showRadialGuides ?: true
-        if (isActive) {
-            btnSixLines?.setBackgroundResource(R.drawable.bg_control_btn_active)
-            btnSixLines?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
-        } else {
-            btnSixLines?.setBackgroundResource(R.drawable.bg_control_btn)
-            btnSixLines?.setTextColor(Color.WHITE)
-        }
-    }
-
     /**
-     * Requirement 3: Minimize full toolbar into a draggable mini capsule with ON/OFF switch.
+     * Minimize full toolbar into a draggable mini capsule with ON/OFF switch.
      */
     private fun minimizeToolbar() {
         if (isCalibrationActive) {
@@ -1004,7 +906,6 @@ class OverlayService : Service() {
     private fun expandToolbar() {
         minimizedCapsule?.visibility = View.GONE
         fullToolbarContainer?.visibility = View.VISIBLE
-        updateVisibilityButtonUI()
         floatingControlView?.let {
             try {
                 windowManager.updateViewLayout(it, controlLayoutParams)
@@ -1026,18 +927,7 @@ class OverlayService : Service() {
             canvasOverlayView?.visibility = View.VISIBLE
         }
         syncHandlesVisibility()
-        updateVisibilityButtonUI()
         updateMiniOnOffButtonUI()
-    }
-
-    private fun updateVisibilityButtonUI() {
-        if (isCanvasHidden) {
-            btnVisibility?.text = getString(R.string.control_show)
-            btnVisibility?.setBackgroundResource(R.drawable.bg_control_btn_active)
-        } else {
-            btnVisibility?.text = getString(R.string.control_hide)
-            btnVisibility?.setBackgroundResource(R.drawable.bg_control_btn)
-        }
     }
 
     private fun updateMiniOnOffButtonUI() {
@@ -1054,40 +944,8 @@ class OverlayService : Service() {
         }
     }
 
-    private fun toggleQuickGhost() {
-        if (isGhostActive) {
-            restoreFromGhost()
-            return
-        }
-
-        isGhostActive = true
-
-        canvasOverlayView?.visibility = View.GONE
-        syncHandlesVisibility()
-
-        btnGhost?.text = getString(R.string.control_ghosting)
-        btnGhost?.setBackgroundResource(R.drawable.bg_control_btn_active)
-
-        ghostHandler.postDelayed(ghostRestoreRunnable, 4000)
-    }
-
-    private fun restoreFromGhost() {
-        isGhostActive = false
-        ghostHandler.removeCallbacks(ghostRestoreRunnable)
-
-        btnGhost?.text = getString(R.string.control_ghost)
-        btnGhost?.setBackgroundResource(R.drawable.bg_control_btn)
-
-        if (!isCanvasHidden) {
-            canvasOverlayView?.visibility = View.VISIBLE
-        }
-        syncHandlesVisibility()
-        updateVisibilityButtonUI()
-        updateMiniOnOffButtonUI()
-    }
-
     private fun syncHandlesVisibility() {
-        if (isCanvasHidden || isGhostActive || isCalibrationActive) {
+        if (isCanvasHidden || isCalibrationActive) {
             handleViewA?.visibility = View.GONE
             handleViewB?.visibility = View.GONE
             handleViewC?.visibility = View.GONE
@@ -1208,9 +1066,6 @@ class OverlayService : Service() {
             if (!isDragging) {
                 isLongPressTriggered = true
                 bubbleView.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                if (isGhostActive) {
-                    restoreFromGhost()
-                }
                 toggleCanvasVisibility()
             }
         }
@@ -1224,7 +1079,7 @@ class OverlayService : Service() {
                     downRawY = event.rawY
                     isDragging = false
                     isLongPressTriggered = false
-                    ghostHandler.postDelayed(longPressRunnable, 400L)
+                    mainHandler.postDelayed(longPressRunnable, 400L)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -1232,7 +1087,7 @@ class OverlayService : Service() {
                     val dy = event.rawY - downRawY
                     if (kotlin.math.hypot(dx, dy) > touchSlop) {
                         isDragging = true
-                        ghostHandler.removeCallbacks(longPressRunnable)
+                        mainHandler.removeCallbacks(longPressRunnable)
                         controlLayoutParams.x = initialX + dx.roundToInt()
                         controlLayoutParams.y = initialY + dy.roundToInt()
                         try {
@@ -1244,7 +1099,7 @@ class OverlayService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    ghostHandler.removeCallbacks(longPressRunnable)
+                    mainHandler.removeCallbacks(longPressRunnable)
                     if (!isDragging && !isLongPressTriggered) {
                         // Single Tap: Buka kembali toolbar penuh
                         expandToolbar()
@@ -1252,7 +1107,7 @@ class OverlayService : Service() {
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
-                    ghostHandler.removeCallbacks(longPressRunnable)
+                    mainHandler.removeCallbacks(longPressRunnable)
                     true
                 }
                 else -> false
@@ -1264,7 +1119,7 @@ class OverlayService : Service() {
         super.onDestroy()
         isServiceRunning = false
 
-        ghostHandler.removeCallbacksAndMessages(null)
+        mainHandler.removeCallbacksAndMessages(null)
 
         if (isCalibrationActive) {
             isCalibrationActive = false

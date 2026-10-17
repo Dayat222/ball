@@ -287,7 +287,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="10dp"
                         android:lineSpacingExtra="3dp"
-                        android:text="• [::] Drag Handle: Hold and move the floating toolbar anywhere.\n• [Ghost 4s]: Auto-hide overlay for 4 seconds for instant unobstructed execution.\n• [Handles A/B/C]: Offset finger grip pads preventing finger obstruction with tether lines.\n• [6-Line]: 1-Point Target Mode with 6 direct vertex rays and 10 mirror reflection rays (plain lines).\n• [Calib / Save Bound]: 8-handle calibration (auto-clamped in Landscape) &amp; [Reset Bound]. Border is clean-hidden when saved.\n• [⚙]: Open thickness, opacity, and line color picker sub-panel.\n• [− / +]: Minimize toolbar into a mini capsule with instant [ON] / [OFF] toggle.\n• [✕]: Dismiss the overlay service completely."
+                        android:text="• [::] Drag Handle: Tahan dan geser toolbar ke posisi mana pun di layar.\n• [Calib / Save Bound]: Buka 8 titik kalibrasi batas meja dan simpan posisi batas meja.\n• [⚙]: Atur ketebalan garis pandu, transparansi, ukuran ring bola, dan pilihan warna garis.\n• [− / +]: Minimalkan toolbar menjadi mini bubble (tekan untuk membuka kembali, tahan untuk On/Off).\n• [✕]: Tutup dan hentikan layanan overlay."
                         android:textColor="@color/text_secondary"
                         android:textSize="13sp" />
             </LinearLayout>

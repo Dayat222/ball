@@ -35,8 +35,9 @@
     <string name="control_six_lines">6-Line</string>
     <string name="control_settings">⚙</string>
     <string name="control_mode_auto">Auto-Reflect</string>
-    <string name="control_mode_manual">Manual 3-Pt</string>
+    <string name="control_mode_manual">Ghost 90°</string>
     <string name="control_mode_edge">Edge-Marker</string>
+    <string name="label_tangent_guide">Ghost Ball &amp; 90° Tangent</string>
     <string name="control_minimize">−</string>
     <string name="control_maximize">+</string>
     <string name="control_on">ON</string>

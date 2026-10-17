@@ -64,6 +64,10 @@ class CanvasOverlayView @JvmOverloads constructor(
     var ringRadiusDp: Float = 13.5f
         private set
 
+    // Feature 2: Ghost Ball & 90° Tangent Deflection Guide
+    var isTangentGuideEnabled: Boolean = true
+        private set
+
     // Window Offset for Table-Bounded Window Cropping
     private var windowOffsetX: Float = 0f
     private var windowOffsetY: Float = 0f
@@ -270,6 +274,46 @@ class CanvasOverlayView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
 
+    // Ghost Ball & 90° Tangent Deflection Guide Paints
+    private val ghostRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#00E5FF")
+        style = Paint.Style.STROKE
+        strokeWidth = 2.2f * density
+        pathEffect = DashPathEffect(floatArrayOf(6f * density, 4f * density), 0f)
+    }
+
+    private val ghostFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#2600E5FF")
+        style = Paint.Style.FILL
+    }
+
+    private val ghostCenterDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.FILL
+    }
+
+    private val tangentLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FFD600")
+        style = Paint.Style.STROKE
+        strokeWidth = 3f * density
+        strokeCap = Paint.Cap.ROUND
+        pathEffect = DashPathEffect(floatArrayOf(10f * density, 6f * density), 0f)
+    }
+
+    private val tangentReflectPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FFAB00")
+        style = Paint.Style.STROKE
+        strokeWidth = 2.2f * density
+        strokeCap = Paint.Cap.ROUND
+        pathEffect = DashPathEffect(floatArrayOf(8f * density, 5f * density), 0f)
+    }
+
+    private val tangentSymbolPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FFD600")
+        style = Paint.Style.STROKE
+        strokeWidth = 1.8f * density
+    }
+
     private val linePath = Path()
     private val textBounds = Rect()
     private val badgeRect = RectF()
@@ -306,6 +350,7 @@ class CanvasOverlayView @JvmOverloads constructor(
 
         showRadialGuides = prefsManager.getShowRadialGuides()
         ringRadiusDp = prefsManager.getRingRadius()
+        isTangentGuideEnabled = prefsManager.getShowTangentGuide()
     }
 
     /**
@@ -424,6 +469,16 @@ class CanvasOverlayView @JvmOverloads constructor(
         aimRingPaint.color = Color.argb(currentAlpha, 255, 255, 255)
         aimCenterDotPaint.color = Color.argb(currentAlpha, 255, 255, 255)
 
+        // Synchronize Ghost Ball and Tangent Deflection line paints
+        ghostRingPaint.color = Color.argb(currentAlpha, 0, 229, 255)
+        ghostRingPaint.strokeWidth = 2.2f * density
+        ghostFillPaint.color = Color.argb((currentAlpha * 0.18f).roundToInt(), 0, 229, 255)
+        tangentLinePaint.color = Color.argb(currentAlpha, 255, 214, 0)
+        tangentLinePaint.strokeWidth = strokePx
+        tangentReflectPaint.color = Color.argb((currentAlpha * 0.85f).roundToInt(), 255, 171, 0)
+        tangentReflectPaint.strokeWidth = (strokePx * 0.75f).coerceAtLeast(1.5f * density)
+        tangentSymbolPaint.color = Color.argb(currentAlpha, 255, 214, 0)
+
         invalidate()
     }
 
@@ -436,6 +491,17 @@ class CanvasOverlayView @JvmOverloads constructor(
     fun toggleRadialGuides(): Boolean {
         setShowRadialGuides(!showRadialGuides)
         return showRadialGuides
+    }
+
+    fun setTangentGuideEnabled(enabled: Boolean) {
+        isTangentGuideEnabled = enabled
+        prefsManager.saveShowTangentGuide(enabled)
+        invalidate()
+    }
+
+    fun toggleTangentGuide(): Boolean {
+        setTangentGuideEnabled(!isTangentGuideEnabled)
+        return isTangentGuideEnabled
     }
 
     fun setRingRadius(radius: Float) {
@@ -522,13 +588,15 @@ class CanvasOverlayView @JvmOverloads constructor(
 
         if (!isCalibrating) {
             if (showRadialGuides) {
-                // Requirement 2: Mode 1-Titik Fokus (Single-Point Target Mode)
-                // Hide connecting line A-B and reflection rays.
-                // Only render Point B's stem tether (from grip pad to Point B)
+                // Mode 1: Radial Guides Mode (Single Target with Optional Cue Ball Ghost Assist)
                 if (hasGripB) {
                     canvas.drawLine(gripB.x, gripB.y, pointB.x, pointB.y, stemLinePaint)
                 }
-                // Render Point B's white center dot + 6 Direct rays + 6 Mirror Bank rays
+                if (isTangentGuideEnabled && hasGripA) {
+                    canvas.drawLine(gripA.x, gripA.y, pointA.x, pointA.y, stemLinePaint)
+                    canvas.drawCircle(pointA.x, pointA.y, 4f * density, aimDotPaint)
+                }
+                // Render Point B center dot + 6 Direct rays + 10 Bank rays + Dynamic Ghost Ball & 90° Tangent Line
                 drawTargetAndRadialGuides(canvas)
             } else {
                 // Normal modes (Auto-Reflect, Manual 3-Pt, Edge-Marker)
@@ -784,6 +852,115 @@ class CanvasOverlayView @JvmOverloads constructor(
                 drawRadialRay(canvas, bx, by, mirrorLeftX, t + cornerJawDist, startDist, bankEndDist, bankLinePaint)
                 drawRadialRay(canvas, bx, by, mirrorLeftX, b - cornerJawDist, startDist, bankEndDist, bankLinePaint)
             }
+
+            // 3. Dynamic Ghost Ball & 90° Tangent Line for Active Pocket (when Cue Ball A is positioned)
+            if (isTangentGuideEnabled && hasGripA) {
+                val ax = pointA.x
+                val ay = pointA.y
+                val ballDiameter = 2f * ringRadiusDp * density
+
+                var bestPocketX = 0f
+                var bestPocketY = 0f
+                var maxCosCut = -1f
+
+                // Evaluate 6 pockets without array allocations (P0 to P5)
+                val p0x = l + cornerJawDist; val p0y = t + cornerJawDist
+                var dx = p0x - bx; var dy = p0y - by
+                var dist = hypot(dx, dy)
+                if (dist > 1f) {
+                    val utx = dx / dist; val uty = dy / dist
+                    val gx = bx - ballDiameter * utx; val gy = by - ballDiameter * uty
+                    val cux = gx - ax; val cuy = gy - ay
+                    val cdist = hypot(cux, cuy)
+                    if (cdist > 1f) {
+                        val cosCut = (cux / cdist) * utx + (cuy / cdist) * uty
+                        if (cosCut > maxCosCut) { maxCosCut = cosCut; bestPocketX = p0x; bestPocketY = p0y }
+                    }
+                }
+
+                val p1x = cx; val p1y = t
+                dx = p1x - bx; dy = p1y - by
+                dist = hypot(dx, dy)
+                if (dist > 1f) {
+                    val utx = dx / dist; val uty = dy / dist
+                    val gx = bx - ballDiameter * utx; val gy = by - ballDiameter * uty
+                    val cux = gx - ax; val cuy = gy - ay
+                    val cdist = hypot(cux, cuy)
+                    if (cdist > 1f) {
+                        val cosCut = (cux / cdist) * utx + (cuy / cdist) * uty
+                        if (cosCut > maxCosCut) { maxCosCut = cosCut; bestPocketX = p1x; bestPocketY = p1y }
+                    }
+                }
+
+                val p2x = r - cornerJawDist; val p2y = t + cornerJawDist
+                dx = p2x - bx; dy = p2y - by
+                dist = hypot(dx, dy)
+                if (dist > 1f) {
+                    val utx = dx / dist; val uty = dy / dist
+                    val gx = bx - ballDiameter * utx; val gy = by - ballDiameter * uty
+                    val cux = gx - ax; val cuy = gy - ay
+                    val cdist = hypot(cux, cuy)
+                    if (cdist > 1f) {
+                        val cosCut = (cux / cdist) * utx + (cuy / cdist) * uty
+                        if (cosCut > maxCosCut) { maxCosCut = cosCut; bestPocketX = p2x; bestPocketY = p2y }
+                    }
+                }
+
+                val p3x = l + cornerJawDist; val p3y = b - cornerJawDist
+                dx = p3x - bx; dy = p3y - by
+                dist = hypot(dx, dy)
+                if (dist > 1f) {
+                    val utx = dx / dist; val uty = dy / dist
+                    val gx = bx - ballDiameter * utx; val gy = by - ballDiameter * uty
+                    val cux = gx - ax; val cuy = gy - ay
+                    val cdist = hypot(cux, cuy)
+                    if (cdist > 1f) {
+                        val cosCut = (cux / cdist) * utx + (cuy / cdist) * uty
+                        if (cosCut > maxCosCut) { maxCosCut = cosCut; bestPocketX = p3x; bestPocketY = p3y }
+                    }
+                }
+
+                val p4x = cx; val p4y = b
+                dx = p4x - bx; dy = p4y - by
+                dist = hypot(dx, dy)
+                if (dist > 1f) {
+                    val utx = dx / dist; val uty = dy / dist
+                    val gx = bx - ballDiameter * utx; val gy = by - ballDiameter * uty
+                    val cux = gx - ax; val cuy = gy - ay
+                    val cdist = hypot(cux, cuy)
+                    if (cdist > 1f) {
+                        val cosCut = (cux / cdist) * utx + (cuy / cdist) * uty
+                        if (cosCut > maxCosCut) { maxCosCut = cosCut; bestPocketX = p4x; bestPocketY = p4y }
+                    }
+                }
+
+                val p5x = r - cornerJawDist; val p5y = b - cornerJawDist
+                dx = p5x - bx; dy = p5y - by
+                dist = hypot(dx, dy)
+                if (dist > 1f) {
+                    val utx = dx / dist; val uty = dy / dist
+                    val gx = bx - ballDiameter * utx; val gy = by - ballDiameter * uty
+                    val cux = gx - ax; val cuy = gy - ay
+                    val cdist = hypot(cux, cuy)
+                    if (cdist > 1f) {
+                        val cosCut = (cux / cdist) * utx + (cuy / cdist) * uty
+                        if (cosCut > maxCosCut) { maxCosCut = cosCut; bestPocketX = p5x; bestPocketY = p5y }
+                    }
+                }
+
+                if (maxCosCut > 0.05f) { // Cut angle < 87°
+                    drawGhostBallAndTangentLine(
+                        canvas = canvas,
+                        cueX = ax,
+                        cueY = ay,
+                        targetBallX = bx,
+                        targetBallY = by,
+                        aimTargetX = bestPocketX,
+                        aimTargetY = bestPocketY,
+                        drawCueAimRay = true
+                    )
+                }
+            }
         }
     }
 
@@ -906,22 +1083,224 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     private fun drawManualThreePoint(canvas: Canvas) {
-        // Line 1: A -> B
-        linePath.reset()
-        linePath.moveTo(pointA.x, pointA.y)
-        linePath.lineTo(pointB.x, pointB.y)
-        canvas.drawPath(linePath, primaryLinePaint)
+        if (isTangentGuideEnabled) {
+            drawGhostBallAndTangentLine(
+                canvas = canvas,
+                cueX = pointA.x,
+                cueY = pointA.y,
+                targetBallX = pointB.x,
+                targetBallY = pointB.y,
+                aimTargetX = pointC.x,
+                aimTargetY = pointC.y,
+                drawCueAimRay = true
+            )
+        } else {
+            // Line 1: A -> B
+            linePath.reset()
+            linePath.moveTo(pointA.x, pointA.y)
+            linePath.lineTo(pointB.x, pointB.y)
+            canvas.drawPath(linePath, primaryLinePaint)
 
-        // Line 2: B -> C
+            // Line 2: B -> C
+            linePath.reset()
+            linePath.moveTo(pointB.x, pointB.y)
+            linePath.lineTo(pointC.x, pointC.y)
+            canvas.drawPath(linePath, reflectedLinePaint)
+
+            // Draw Angle at pivot Point B
+            val angle = GeometryUtils.computeAngleBetweenLines(pointA, pointB, pointC)
+            val angleText = String.format(Locale.US, "∠ = %.1f°", angle)
+            drawTextBadge(canvas, angleText, pointB.x + 14f * density, pointB.y - 14f * density)
+        }
+    }
+
+    /**
+     * Physics Engine: Ghost Ball & 90° Tangent Line (Stun Shot Deflection).
+     * Calculates the exact contact position (Ghost Ball) of Cue Ball (A) against Object Ball (B)
+     * heading towards target (tx, ty), computes the 90° tangent deflection ray of Cue Ball,
+     * and traces cushion bounce reflections.
+     * ZERO ALLOCATION: Uses primitive floats and reusable class-level objects.
+     */
+    private fun drawGhostBallAndTangentLine(
+        canvas: Canvas,
+        cueX: Float,
+        cueY: Float,
+        targetBallX: Float,
+        targetBallY: Float,
+        aimTargetX: Float,
+        aimTargetY: Float,
+        drawCueAimRay: Boolean = true
+    ) {
+        val radiusPx = ringRadiusDp * density
+        val ballDiameter = 2f * radiusPx
+
+        // 1. Vector B -> Target (tx, ty)
+        val toTargetX = aimTargetX - targetBallX
+        val toTargetY = aimTargetY - targetBallY
+        val distToTarget = hypot(toTargetX, toTargetY)
+        if (distToTarget < 1f) return
+
+        val uTargetX = toTargetX / distToTarget
+        val uTargetY = toTargetY / distToTarget
+
+        // 2. Ghost Ball Center: G = B - (2 * R) * uTarget
+        val gx = targetBallX - (ballDiameter * uTargetX)
+        val gy = targetBallY - (ballDiameter * uTargetY)
+
+        // 3. Vector A -> G (Incoming cue ball direction)
+        val toGx = gx - cueX
+        val toGy = gy - cueY
+        val distToG = hypot(toGx, toGy)
+        if (distToG < 1f) return
+
+        val uInX = toGx / distToG
+        val uInY = toGy / distToG
+
+        // 4. Cut Angle Calculation: dot(uIn, uTarget)
+        val dot = (uInX * uTargetX + uInY * uTargetY).coerceIn(-1f, 1f)
+        val cutAngleRad = kotlin.math.acos(dot)
+        val cutAngleDeg = Math.toDegrees(cutAngleRad.toDouble()).toFloat()
+
+        // 5. Draw Incoming Cue Aim Ray (A -> G)
+        if (drawCueAimRay) {
+            linePath.reset()
+            linePath.moveTo(cueX, cueY)
+            linePath.lineTo(gx, gy)
+            canvas.drawPath(linePath, primaryLinePaint)
+        }
+
+        // 6. Draw Object Ball Target Ray (B -> Target)
         linePath.reset()
-        linePath.moveTo(pointB.x, pointB.y)
-        linePath.lineTo(pointC.x, pointC.y)
+        linePath.moveTo(targetBallX, targetBallY)
+        linePath.lineTo(aimTargetX, aimTargetY)
         canvas.drawPath(linePath, reflectedLinePaint)
 
-        // Draw Angle at pivot Point B
-        val angle = GeometryUtils.computeAngleBetweenLines(pointA, pointB, pointC)
-        val angleText = String.format(Locale.US, "∠ = %.1f°", angle)
-        drawTextBadge(canvas, angleText, pointB.x + 14f * density, pointB.y - 14f * density)
+        // 7. Draw Ghost Ball Reticle at G
+        canvas.drawCircle(gx, gy, radiusPx, ghostFillPaint)
+        canvas.drawCircle(gx, gy, radiusPx, ghostRingPaint)
+        canvas.drawCircle(gx, gy, 2f * density, ghostCenterDotPaint)
+
+        // If cut angle > 88°, shot is geometrically blocked from direct pot
+        if (cutAngleDeg > 88f) {
+            val impossibleText = String.format(Locale.US, "Blind Cut: %.1f°", cutAngleDeg)
+            drawTextBadge(canvas, impossibleText, gx + 14f * density, gy - 14f * density)
+            return
+        }
+
+        // 8. 90° Tangent Line Vector (Natural Stun Shot Deflection)
+        // Perpendiculars to uTarget: (-uTargetY, uTargetX) and (uTargetY, -uTargetX)
+        val p1x = -uTargetY
+        val p1y = uTargetX
+        val p2x = uTargetY
+        val p2y = -uTargetX
+
+        val p1Dot = p1x * uInX + p1y * uInY
+        val uTangentX = if (p1Dot >= 0f) p1x else p2x
+        val uTangentY = if (p1Dot >= 0f) p1y else p2y
+
+        // If cut angle < 1.2°, full straight-in hit: cue ball stops (Stop Shot)
+        if (cutAngleDeg < 1.2f) {
+            canvas.drawCircle(gx, gy, radiusPx * 0.5f, ghostRingPaint)
+            val stopText = "1/1 Full [Stop Shot]"
+            drawTextBadge(canvas, stopText, gx + 14f * density, gy - 14f * density)
+            return
+        }
+
+        // 9. Tangent Ray Extent & Cushion Reflection (Zero-Allocation Ray-Box collision)
+        val tangentLen = 160f * density
+        updateInnerInsetBox()
+        val boxL = innerInsetBox.left
+        val boxR = innerInsetBox.right
+        val boxT = innerInsetBox.top
+        val boxB = innerInsetBox.bottom
+
+        var hitT = tangentLen
+        var hitSideVertical = false
+
+        if (uTangentX > 1e-4f) {
+            val t = (boxR - gx) / uTangentX
+            if (t in 1f..hitT) {
+                val y = gy + t * uTangentY
+                if (y in boxT..boxB) {
+                    hitT = t
+                    hitSideVertical = true
+                }
+            }
+        } else if (uTangentX < -1e-4f) {
+            val t = (boxL - gx) / uTangentX
+            if (t in 1f..hitT) {
+                val y = gy + t * uTangentY
+                if (y in boxT..boxB) {
+                    hitT = t
+                    hitSideVertical = true
+                }
+            }
+        }
+
+        if (uTangentY > 1e-4f) {
+            val t = (boxB - gy) / uTangentY
+            if (t in 1f..hitT) {
+                val x = gx + t * uTangentX
+                if (x in boxL..boxR) {
+                    hitT = t
+                    hitSideVertical = false
+                }
+            }
+        } else if (uTangentY < -1e-4f) {
+            val t = (boxT - gy) / uTangentY
+            if (t in 1f..hitT) {
+                val x = gx + t * uTangentX
+                if (x in boxL..boxR) {
+                    hitT = t
+                    hitSideVertical = false
+                }
+            }
+        }
+
+        if (hitT < tangentLen) {
+            val hx = gx + hitT * uTangentX
+            val hy = gy + hitT * uTangentY
+            canvas.drawLine(gx, gy, hx, hy, tangentLinePaint)
+
+            // Reflected vector from rail
+            val refUx = if (hitSideVertical) -uTangentX else uTangentX
+            val refUy = if (hitSideVertical) uTangentY else -uTangentY
+            val remDist = tangentLen - hitT
+            val refEndX = hx + refUx * remDist
+            val refEndY = hy + refUy * remDist
+            canvas.drawLine(hx, hy, refEndX, refEndY, tangentReflectPaint)
+            canvas.drawCircle(hx, hy, 3.5f * density, tangentReflectPaint)
+        } else {
+            val endX = gx + tangentLen * uTangentX
+            val endY = gy + tangentLen * uTangentY
+            canvas.drawLine(gx, gy, endX, endY, tangentLinePaint)
+        }
+
+        // 10. Draw 90° Right-Angle Symbol at Impact point G
+        val symbolArm = 9f * density
+        val pTargetX = gx + uTargetX * symbolArm
+        val pTargetY = gy + uTargetY * symbolArm
+        val pCornerX = pTargetX + uTangentX * symbolArm
+        val pCornerY = pTargetY + uTangentY * symbolArm
+        val pTangentArmX = gx + uTangentX * symbolArm
+        val pTangentArmY = gy + uTangentY * symbolArm
+
+        linePath.reset()
+        linePath.moveTo(pTargetX, pTargetY)
+        linePath.lineTo(pCornerX, pCornerY)
+        linePath.lineTo(pTangentArmX, pTangentArmY)
+        canvas.drawPath(linePath, tangentSymbolPaint)
+
+        // 11. Physics Badge: Cut Angle + Ball Fraction (Full, 3/4, 1/2, 1/4, Thin)
+        val ballFraction = when {
+            cutAngleDeg <= 6f -> "1/1 Full"
+            cutAngleDeg <= 22f -> "3/4 Ball"
+            cutAngleDeg <= 38f -> "1/2 Ball"
+            cutAngleDeg <= 58f -> "1/4 Ball"
+            else -> "Thin Cut"
+        }
+        val badgeText = String.format(Locale.US, "Cut: %.1f° [%s] 90° Stun", cutAngleDeg, ballFraction)
+        drawTextBadge(canvas, badgeText, gx + 14f * density, gy - 14f * density)
     }
 
     private fun drawEdgeMarkerOnly(canvas: Canvas) {

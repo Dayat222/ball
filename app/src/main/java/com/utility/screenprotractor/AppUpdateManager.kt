@@ -326,7 +326,7 @@ object AppUpdateManager {
                 instanceFollowRedirects = true
                 connectTimeout = 15000
                 readTimeout = 15000
-                setRequestProperty("User-Agent", "ScreenAngleRuler-Updater/1.0")
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
             }
             conn.connect()
 
@@ -376,18 +376,26 @@ object AppUpdateManager {
                     context = activity,
                     updateInfo = updateInfo,
                     onProgress = { percent ->
-                        progressDialog.setMessage(activity.getString(R.string.update_downloading, percent))
+                        if (!activity.isFinishing && !activity.isDestroyed && progressDialog.isShowing) {
+                            progressDialog.setMessage(activity.getString(R.string.update_downloading, percent))
+                        }
                     },
                     onComplete = {
-                        progressDialog.dismiss()
+                        if (!activity.isFinishing && !activity.isDestroyed && progressDialog.isShowing) {
+                            progressDialog.dismiss()
+                        }
                     },
                     onError = { err ->
-                        progressDialog.dismiss()
-                        Toast.makeText(
-                            activity,
-                            "${activity.getString(R.string.update_download_failed)}: ${err.message}",
-                            Toast.LENGTH_LONG
-                        ).show()
+                        if (!activity.isFinishing && !activity.isDestroyed && progressDialog.isShowing) {
+                            progressDialog.dismiss()
+                        }
+                        if (!activity.isFinishing && !activity.isDestroyed) {
+                            Toast.makeText(
+                                activity,
+                                "${activity.getString(R.string.update_download_failed)}: ${err.message}",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
                     }
                 )
             }

@@ -12,8 +12,8 @@ android {
         applicationId = "com.utility.screenprotractor"
         minSdk = 26
         targetSdk = 34
-        versionCode = 7
-        versionName = "1.6"
+        versionCode = 8
+        versionName = "1.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -76,11 +76,6 @@ dependencies {
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-
-    <!-- Queries: Required on Android 11+ to detect and launch 8 Ball Pool -->
-    <queries>
-        <package android:name="com.miniclip.eightballpool" />
-    </queries>
 
     <application
         android:allowBackup="false"
@@ -457,7 +452,7 @@ object AppUpdateManager {
                 instanceFollowRedirects = true
                 connectTimeout = 15000
                 readTimeout = 15000
-                setRequestProperty("User-Agent", "ScreenAngleRuler-Updater/1.0")
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
             }
             conn.connect()
 
@@ -507,18 +502,26 @@ object AppUpdateManager {
                     context = activity,
                     updateInfo = updateInfo,
                     onProgress = { percent ->
-                        progressDialog.setMessage(activity.getString(R.string.update_downloading, percent))
+                        if (!activity.isFinishing && !activity.isDestroyed && progressDialog.isShowing) {
+                            progressDialog.setMessage(activity.getString(R.string.update_downloading, percent))
+                        }
                     },
                     onComplete = {
-                        progressDialog.dismiss()
+                        if (!activity.isFinishing && !activity.isDestroyed && progressDialog.isShowing) {
+                            progressDialog.dismiss()
+                        }
                     },
                     onError = { err ->
-                        progressDialog.dismiss()
-                        Toast.makeText(
-                            activity,
-                            "${activity.getString(R.string.update_download_failed)}: ${err.message}",
-                            Toast.LENGTH_LONG
-                        ).show()
+                        if (!activity.isFinishing && !activity.isDestroyed && progressDialog.isShowing) {
+                            progressDialog.dismiss()
+                        }
+                        if (!activity.isFinishing && !activity.isDestroyed) {
+                            Toast.makeText(
+                                activity,
+                                "${activity.getString(R.string.update_download_failed)}: ${err.message}",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
                     }
                 )
             }
@@ -1934,7 +1937,6 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.utility.screenprotractor.databinding.ActivityMainBinding
 
 /**
@@ -1981,7 +1983,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnStartOverlay.setOnClickListener {
             if (hasOverlayPermission()) {
                 startOverlayService()
-                launch8BallPoolOrRemind()
+                finish()
             } else {
                 Toast.makeText(
                     this,
@@ -2089,63 +2091,6 @@ class MainActivity : AppCompatActivity() {
     private fun startOverlayService() {
         val serviceIntent = Intent(this, OverlayService::class.java)
         ContextCompat.startForegroundService(this, serviceIntent)
-    }
-
-    /**
-     * Requirement: Otomatis membuka game 8 Ball Pool jika terpasang di perangkat.
-     * Jika belum terpasang, tampilkan peringatan dialog dan toast.
-     */
-    private fun launch8BallPoolOrRemind() {
-        val gamePackage = getString(R.string.game_package_8ball)
-        val launchIntent = try {
-            packageManager.getLaunchIntentForPackage(gamePackage)
-        } catch (e: Exception) {
-            null
-        }
-
-        if (launchIntent != null) {
-            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            try {
-                startActivity(launchIntent)
-                finish()
-            } catch (e: Exception) {
-                e.printStackTrace()
-                Toast.makeText(this, "Gagal membuka game: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        } else {
-            updateUIState()
-            Toast.makeText(
-                this,
-                R.string.toast_game_not_installed,
-                Toast.LENGTH_LONG
-            ).show()
-
-            MaterialAlertDialogBuilder(this)
-                .setTitle(R.string.game_not_installed_title)
-                .setMessage(R.string.game_not_installed_message)
-                .setIcon(android.R.drawable.ic_dialog_alert)
-                .setPositiveButton(R.string.btn_open_play_store) { _, _ ->
-                    try {
-                        val playStoreIntent = Intent(
-                            Intent.ACTION_VIEW,
-                            Uri.parse("market://details?id=$gamePackage")
-                        ).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        startActivity(playStoreIntent)
-                    } catch (e: Exception) {
-                        val webIntent = Intent(
-                            Intent.ACTION_VIEW,
-                            Uri.parse("https://play.google.com/store/apps/details?id=$gamePackage")
-                        ).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        startActivity(webIntent)
-                    }
-                }
-                .setNegativeButton(R.string.btn_dialog_close, null)
-                .show()
-        }
     }
 
     private fun updateUIState() {
@@ -4035,7 +3980,7 @@ class PrefsManager(context: Context) {
                         android:layout_height="wrap_content"
                         android:layout_marginTop="10dp"
                         android:lineSpacingExtra="3dp"
-                        android:text="• [::] Drag Handle: Tahan dan geser toolbar ke posisi mana pun di layar.\n• [Calib / Save Bound]: Buka 8 titik kalibrasi batas meja dan simpan posisi batas meja.\n• [⚙]: Atur ketebalan garis pandu, transparansi, ukuran ring bola, dan pilihan warna garis.\n• [− / +]: Minimalkan toolbar menjadi mini bubble (tekan untuk membuka kembali, tahan untuk On/Off).\n• [✕]: Tutup dan hentikan layanan overlay."
+                        android:text="• [::] Drag Handle: Tahan dan geser toolbar ke posisi mana pun di layar.\n• [Calib / Save Bound]: Buka 8 titik kalibrasi batas area target dan simpan posisi batas area target.\n• [⚙]: Atur ketebalan garis pandu, transparansi, ukuran ring target, dan pilihan warna garis.\n• [− / +]: Minimalkan toolbar menjadi mini bubble (tekan untuk membuka kembali, tahan untuk On/Off).\n• [✕]: Tutup dan hentikan layanan overlay."
                         android:textColor="@color/text_secondary"
                         android:textSize="13sp" />
             </LinearLayout>
@@ -4520,14 +4465,6 @@ class PrefsManager(context: Context) {
     <string name="update_downloading">Mengunduh pembaruan: %1$d%%</string>
     <string name="update_download_failed">Gagal mengunduh pembaruan</string>
     <string name="update_check_failed">Gagal memeriksa pembaruan: periksa koneksi internet</string>
-
-    <!-- 8 Ball Pool Game Launch -->
-    <string name="game_package_8ball">com.miniclip.eightballpool</string>
-    <string name="game_not_installed_title">8 Ball Pool Belum Terpasang</string>
-    <string name="game_not_installed_message">Game 8 Ball Pool belum terpasang di perangkat ini. Silakan unduh dan pasang game terlebih dahulu.</string>
-    <string name="btn_open_play_store">Buka Play Store</string>
-    <string name="btn_dialog_close">Tutup</string>
-    <string name="toast_game_not_installed">Peringatan: Game 8 Ball Pool belum terpasang di perangkat ini!</string>
 </resources>
 
 ==> app/src/main/res/values/themes.xml <==

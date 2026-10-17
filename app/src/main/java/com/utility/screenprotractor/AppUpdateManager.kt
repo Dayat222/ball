@@ -119,7 +119,8 @@ object AppUpdateManager {
 
     private fun fetchFromVersionJson(currentVersionCode: Long): UpdateInfo? {
         return try {
-            val conn = openConnectionWithRedirects(VERSION_JSON_URL)
+            val cacheBusterUrl = "$VERSION_JSON_URL?t=${System.currentTimeMillis()}"
+            val conn = openConnectionWithRedirects(cacheBusterUrl)
             if (conn.responseCode != HttpURLConnection.HTTP_OK) {
                 conn.disconnect()
                 return null

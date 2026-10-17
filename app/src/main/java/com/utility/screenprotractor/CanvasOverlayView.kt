@@ -589,57 +589,41 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     /**
-     * 12-Jaw Gate & Pro-Side Clearance Algorithm:
-     * Calculates the dynamically optimal pocket entry target between jaws J1(j1x, j1y) and J2(j2x, j2y)
-     * so that the aiming line never cuts into the cushion rail when the ball approaches the cushion.
+     * Precision Lateral Vertex Ray (Top & Bottom Center Gate Clearance).
+     * Accounts for approach tilt angle (kemiringan tembakan) across all angles.
+     * In pool table physics, the throat drop center is recessed into the outer rail by depth D (~1.95% table height).
+     * The physical entry point along the rail line is: xRail = cx + (D / (dy + D)) * (bx - cx),
+     * clamped to the safe physical mouth aperture limit so rays never clip or penetrate the outer rail.
      * Zero-allocation primitive Float calculations.
      */
-    /**
-     * 12-Jaw Gate & Pro-Side Clearance Algorithm:
-     * Calculates the dynamically optimal pocket entry target between jaws J1(j1x, j1y) and J2(j2x, j2y)
-     * so that the aiming line never cuts into the cushion rail when the ball approaches the cushion.
-     * Zero-allocation primitive Float calculations.
-     */
-    private fun drawOptimalVertexRay(
+    private fun drawLateralVertexRay(
         canvas: Canvas,
         bx: Float,
         by: Float,
-        j1x: Float,
-        j1y: Float,
-        j2x: Float,
-        j2y: Float,
-        inwardNormalX: Float,
-        inwardNormalY: Float,
-        maxNormalInset: Float,
+        cx: Float,
+        railY: Float,
+        isTopGate: Boolean,
         startDist: Float,
         endDist: Float,
         paint: Paint
     ) {
-        val midX = (j1x + j2x) * 0.5f
-        val midY = (j1y + j2y) * 0.5f
+        val tableH = (boundaryBox.bottom - boundaryBox.top).coerceAtLeast(100f)
+        val throatDepth = (tableH * 0.0195f).coerceIn(4f * density, 9f * density)
+        val maxApertureOffset = 10.5f * density
 
-        val gateLen = hypot(j2x - j1x, j2y - j1y).coerceAtLeast(1f)
-        val d1 = hypot(bx - j1x, by - j1y)
-        val d2 = hypot(bx - j2x, by - j2y)
+        val dy = if (isTopGate) (by - railY).coerceAtLeast(1f) else (railY - by).coerceAtLeast(1f)
 
-        val s = ((d1 - d2) / gateLen).coerceIn(-1f, 1f)
-        val absS = abs(s)
+        val rawShift = (throatDepth / (dy + throatDepth)) * (bx - cx)
+        val clampedShift = rawShift.coerceIn(-maxApertureOffset, maxApertureOffset)
+        val targetX = cx + clampedShift
+        val targetY = railY
 
-        val proSideBias = 0.22f * s
-        val gateShiftX = proSideBias * (j1x - j2x)
-        val gateShiftY = proSideBias * (j1y - j2y)
-
-        val normalShift = (absS * absS) * maxNormalInset
-
-        val targetX = midX + gateShiftX + (inwardNormalX * normalShift)
-        val targetY = midY + gateShiftY + (inwardNormalY * normalShift)
-
-        val dx = targetX - bx
-        val dy = targetY - by
-        val dist = hypot(dx, dy)
+        val rayDx = targetX - bx
+        val rayDy = targetY - by
+        val dist = hypot(rayDx, rayDy)
         if (dist > 1f) {
-            val ux = dx / dist
-            val uy = dy / dist
+            val ux = rayDx / dist
+            val uy = rayDy / dist
             canvas.drawLine(
                 bx + ux * startDist,
                 by + uy * startDist,
@@ -679,67 +663,26 @@ class CanvasOverlayView @JvmOverloads constructor(
             val b = boundaryBox.bottom
             val cx = boundaryBox.centerX()
 
-            // 1. 12-Jaw Gate & Pro-Side Clearance Algorithm (6 Direct Pocket Rays)
-            // Ensures guide lines never clip or penetrate the cushion when ball is near rails
             val cornerJawDist = 14f * density
-            val sideJawDist = 14f * density
-            val maxNormalCorner = 6f * density
-            val maxNormalSide = 9f * density
-            val diagNorm = 0.7071f
 
+            // 1. 6 Direct Vertex Rays (4 Corner Gates + 2 Precision Lateral Gates with Tilt Modeling)
             // Top-Left (Corner)
-            drawOptimalVertexRay(
-                canvas, bx, by,
-                l + cornerJawDist, t,
-                l, t + cornerJawDist,
-                diagNorm, diagNorm, maxNormalCorner,
-                startDist, directEndDist, sixLinePaint
-            )
+            drawRadialRay(canvas, bx, by, l, t, startDist, directEndDist, sixLinePaint)
 
-            // Top-Center (Side)
-            drawOptimalVertexRay(
-                canvas, bx, by,
-                cx - sideJawDist, t,
-                cx + sideJawDist, t,
-                0f, 1f, maxNormalSide,
-                startDist, directEndDist, sixLinePaint
-            )
+            // Top-Center (Precision Lateral Gate with Dynamic Tilt Angle Modeling)
+            drawLateralVertexRay(canvas, bx, by, cx, t, isTopGate = true, startDist, directEndDist, sixLinePaint)
 
             // Top-Right (Corner)
-            drawOptimalVertexRay(
-                canvas, bx, by,
-                r - cornerJawDist, t,
-                r, t + cornerJawDist,
-                -diagNorm, diagNorm, maxNormalCorner,
-                startDist, directEndDist, sixLinePaint
-            )
+            drawRadialRay(canvas, bx, by, r, t, startDist, directEndDist, sixLinePaint)
 
             // Bottom-Left (Corner)
-            drawOptimalVertexRay(
-                canvas, bx, by,
-                l + cornerJawDist, b,
-                l, b - cornerJawDist,
-                diagNorm, -diagNorm, maxNormalCorner,
-                startDist, directEndDist, sixLinePaint
-            )
+            drawRadialRay(canvas, bx, by, l, b, startDist, directEndDist, sixLinePaint)
 
-            // Bottom-Center (Side)
-            drawOptimalVertexRay(
-                canvas, bx, by,
-                cx - sideJawDist, b,
-                cx + sideJawDist, b,
-                0f, -1f, maxNormalSide,
-                startDist, directEndDist, sixLinePaint
-            )
+            // Bottom-Center (Precision Lateral Gate with Dynamic Tilt Angle Modeling)
+            drawLateralVertexRay(canvas, bx, by, cx, b, isTopGate = false, startDist, directEndDist, sixLinePaint)
 
             // Bottom-Right (Corner)
-            drawOptimalVertexRay(
-                canvas, bx, by,
-                r - cornerJawDist, b,
-                r, b - cornerJawDist,
-                -diagNorm, -diagNorm, maxNormalCorner,
-                startDist, directEndDist, sixLinePaint
-            )
+            drawRadialRay(canvas, bx, by, r, b, startDist, directEndDist, sixLinePaint)
 
             // 2. 10 Mirror Bank Rays (Pantulan Dinding Rel)
             // Collision plane accounts for physical cushion nose + ball radius

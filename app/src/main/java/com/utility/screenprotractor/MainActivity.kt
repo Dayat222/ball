@@ -12,6 +12,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.utility.screenprotractor.databinding.ActivityMainBinding
 
 /**
@@ -58,8 +59,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnStartOverlay.setOnClickListener {
             if (hasOverlayPermission()) {
                 startOverlayService()
-                // Finish activity to keep screen clear as per PRD spec
-                finish()
+                launch8BallPoolOrRemind()
             } else {
                 Toast.makeText(
                     this,
@@ -167,6 +167,63 @@ class MainActivity : AppCompatActivity() {
     private fun startOverlayService() {
         val serviceIntent = Intent(this, OverlayService::class.java)
         ContextCompat.startForegroundService(this, serviceIntent)
+    }
+
+    /**
+     * Requirement: Otomatis membuka game 8 Ball Pool jika terpasang di perangkat.
+     * Jika belum terpasang, tampilkan peringatan dialog dan toast.
+     */
+    private fun launch8BallPoolOrRemind() {
+        val gamePackage = getString(R.string.game_package_8ball)
+        val launchIntent = try {
+            packageManager.getLaunchIntentForPackage(gamePackage)
+        } catch (e: Exception) {
+            null
+        }
+
+        if (launchIntent != null) {
+            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            try {
+                startActivity(launchIntent)
+                finish()
+            } catch (e: Exception) {
+                e.printStackTrace()
+                Toast.makeText(this, "Gagal membuka game: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            updateUIState()
+            Toast.makeText(
+                this,
+                R.string.toast_game_not_installed,
+                Toast.LENGTH_LONG
+            ).show()
+
+            MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.game_not_installed_title)
+                .setMessage(R.string.game_not_installed_message)
+                .setIcon(android.R.drawable.ic_dialog_alert)
+                .setPositiveButton(R.string.btn_open_play_store) { _, _ ->
+                    try {
+                        val playStoreIntent = Intent(
+                            Intent.ACTION_VIEW,
+                            Uri.parse("market://details?id=$gamePackage")
+                        ).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        startActivity(playStoreIntent)
+                    } catch (e: Exception) {
+                        val webIntent = Intent(
+                            Intent.ACTION_VIEW,
+                            Uri.parse("https://play.google.com/store/apps/details?id=$gamePackage")
+                        ).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        startActivity(webIntent)
+                    }
+                }
+                .setNegativeButton(R.string.btn_dialog_close, null)
+                .show()
+        }
     }
 
     private fun updateUIState() {

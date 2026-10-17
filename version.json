@@ -1,6 +1,6 @@
 {
-  "versionCode": 6,
-  "versionName": "1.5",
+  "versionCode": 7,
+  "versionName": "1.6",
   "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-debug.apk",
-  "changelog": "Versi 1.5:\n• Penyederhanaan toolbar mengambang (floating toolbar) menjadi lebih ringkas dan bersih.\n• Toolbar kini hanya berisi 4 tombol utama: Calib (Kalibrasi batas meja), Setting (Pengaturan garis, ukuran, dan warna), Minimize (Kecilkan ke mini bubble), dan Close (Tutup overlay).\n• Menghilangkan menu/tombol yang tidak diperlukan agar pandangan permainan lebih leluasa."
+  "changelog": "Versi 1.6:\n• Otomatis membuka game 8 Ball Pool saat tombol 'Start Ruler Overlay' diklik jika game sudah terpasang.\n• Memberikan dialog peringatan langsung jika game 8 Ball Pool belum terpasang di perangkat dengan tombol cepat menuju Play Store."
 }

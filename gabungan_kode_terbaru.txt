@@ -12,8 +12,8 @@ android {
         applicationId = "com.utility.screenprotractor"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -1169,6 +1169,59 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     /**
+     * Precision Corner Vertex Ray (4 Corner Gates: Top-Left, Top-Right, Bottom-Left, Bottom-Right).
+     * Accounts for physical cushion mouth aperture and prevents rays from clipping or cutting
+     * into cushion rails when approaching from along the cushions.
+     * Zero-allocation primitive Float calculations.
+     */
+    private fun drawCornerVertexRay(
+        canvas: Canvas,
+        bx: Float,
+        by: Float,
+        cornerX: Float,
+        cornerY: Float,
+        isLeft: Boolean,
+        isTop: Boolean,
+        startDist: Float,
+        endDist: Float,
+        paint: Paint
+    ) {
+        val signX = if (isLeft) 1f else -1f
+        val signY = if (isTop) 1f else -1f
+
+        val cornerMouthInset = 12f * density
+        var targetX = cornerX + (signX * cornerMouthInset)
+        var targetY = cornerY + (signY * cornerMouthInset)
+
+        // Side Rail Clearance: prevent ray from cutting into side cushions (left or right)
+        val distToSideRail = if (isLeft) (bx - cornerX) else (cornerX - bx)
+        if (distToSideRail < 35f * density) {
+            targetX = if (isLeft) kotlin.math.max(targetX, bx) else kotlin.math.min(targetX, bx)
+        }
+
+        // End Rail Clearance: prevent ray from cutting into end cushions (top or bottom)
+        val distToEndRail = if (isTop) (by - cornerY) else (cornerY - by)
+        if (distToEndRail < 35f * density) {
+            targetY = if (isTop) kotlin.math.max(targetY, by) else kotlin.math.min(targetY, by)
+        }
+
+        val rayDx = targetX - bx
+        val rayDy = targetY - by
+        val rayDist = hypot(rayDx, rayDy)
+        if (rayDist > 1f) {
+            val ux = rayDx / rayDist
+            val uy = rayDy / rayDist
+            canvas.drawLine(
+                bx + ux * startDist,
+                by + uy * startDist,
+                bx + ux * endDist,
+                by + uy * endDist,
+                paint
+            )
+        }
+    }
+
+    /**
      * Zero-Allocation Target Mode: 6 Direct Rays with 12-Jaw Gate Clearance + 10 Cushion Bank Rays.
      * Direct primitive calculations per frame without allocating any Array or PointF objects.
      */
@@ -1199,24 +1252,24 @@ class CanvasOverlayView @JvmOverloads constructor(
 
             val cornerJawDist = 14f * density
 
-            // 1. 6 Direct Vertex Rays (4 Corner Gates + 2 Precision Lateral Gates with Tilt Modeling)
+            // 1. 6 Direct Vertex Rays (4 Corner Gates with Rail Clearance + 2 Precision Lateral Gates with Tilt Modeling)
             // Top-Left (Corner)
-            drawRadialRay(canvas, bx, by, l, t, startDist, directEndDist, sixLinePaint)
+            drawCornerVertexRay(canvas, bx, by, l, t, isLeft = true, isTop = true, startDist, directEndDist, sixLinePaint)
 
-            // Top-Center (Precision Lateral Gate with Dynamic Tilt Angle Modeling)
+            // Top-Center (Precision Lateral Gate with Dynamic Tilt Angle Modeling - UNTOUCHED)
             drawLateralVertexRay(canvas, bx, by, cx, t, isTopGate = true, startDist, directEndDist, sixLinePaint)
 
             // Top-Right (Corner)
-            drawRadialRay(canvas, bx, by, r, t, startDist, directEndDist, sixLinePaint)
+            drawCornerVertexRay(canvas, bx, by, r, t, isLeft = false, isTop = true, startDist, directEndDist, sixLinePaint)
 
             // Bottom-Left (Corner)
-            drawRadialRay(canvas, bx, by, l, b, startDist, directEndDist, sixLinePaint)
+            drawCornerVertexRay(canvas, bx, by, l, b, isLeft = true, isTop = false, startDist, directEndDist, sixLinePaint)
 
-            // Bottom-Center (Precision Lateral Gate with Dynamic Tilt Angle Modeling)
+            // Bottom-Center (Precision Lateral Gate with Dynamic Tilt Angle Modeling - UNTOUCHED)
             drawLateralVertexRay(canvas, bx, by, cx, b, isTopGate = false, startDist, directEndDist, sixLinePaint)
 
             // Bottom-Right (Corner)
-            drawRadialRay(canvas, bx, by, r, b, startDist, directEndDist, sixLinePaint)
+            drawCornerVertexRay(canvas, bx, by, r, b, isLeft = false, isTop = false, startDist, directEndDist, sixLinePaint)
 
             // 2. 10 Mirror Bank Rays (Pantulan Dinding Rel)
             // Collision plane accounts for physical cushion nose + ball radius

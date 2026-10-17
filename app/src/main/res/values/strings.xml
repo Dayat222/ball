@@ -68,12 +68,4 @@
     <string name="update_downloading">Mengunduh pembaruan: %1$d%%</string>
     <string name="update_download_failed">Gagal mengunduh pembaruan</string>
     <string name="update_check_failed">Gagal memeriksa pembaruan: periksa koneksi internet</string>
-
-    <!-- 8 Ball Pool Game Launch -->
-    <string name="game_package_8ball">com.miniclip.eightballpool</string>
-    <string name="game_not_installed_title">8 Ball Pool Belum Terpasang</string>
-    <string name="game_not_installed_message">Game 8 Ball Pool belum terpasang di perangkat ini. Silakan unduh dan pasang game terlebih dahulu.</string>
-    <string name="btn_open_play_store">Buka Play Store</string>
-    <string name="btn_dialog_close">Tutup</string>
-    <string name="toast_game_not_installed">Peringatan: Game 8 Ball Pool belum terpasang di perangkat ini!</string>
 </resources>

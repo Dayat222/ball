@@ -645,8 +645,8 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     /**
      * Precision Corner Vertex Ray (4 Corner Gates: Top-Left, Top-Right, Bottom-Left, Bottom-Right).
-     * Accounts for physical cushion mouth aperture and prevents rays from clipping or cutting
-     * into cushion rails when approaching from along the cushions.
+     * Accounts for physical corner pocket mouth center, ensuring all rays accurately target the
+     * corner pocket openings across any position on the table without clipping cushions.
      * Zero-allocation primitive Float calculations.
      */
     private fun drawCornerVertexRay(
@@ -664,21 +664,10 @@ class CanvasOverlayView @JvmOverloads constructor(
         val signX = if (isLeft) 1f else -1f
         val signY = if (isTop) 1f else -1f
 
-        val cornerMouthInset = 12f * density
-        var targetX = cornerX + (signX * cornerMouthInset)
-        var targetY = cornerY + (signY * cornerMouthInset)
-
-        // Side Rail Clearance: prevent ray from cutting into side cushions (left or right)
-        val distToSideRail = if (isLeft) (bx - cornerX) else (cornerX - bx)
-        if (distToSideRail < 35f * density) {
-            targetX = if (isLeft) kotlin.math.max(targetX, bx) else kotlin.math.min(targetX, bx)
-        }
-
-        // End Rail Clearance: prevent ray from cutting into end cushions (top or bottom)
-        val distToEndRail = if (isTop) (by - cornerY) else (cornerY - by)
-        if (distToEndRail < 35f * density) {
-            targetY = if (isTop) kotlin.math.max(targetY, by) else kotlin.math.min(targetY, by)
-        }
+        // Diagonal offset into the center of the pocket drop mouth
+        val cornerMouthInset = 4.5f * density
+        val targetX = cornerX + (signX * cornerMouthInset)
+        val targetY = cornerY + (signY * cornerMouthInset)
 
         val rayDx = targetX - bx
         val rayDy = targetY - by

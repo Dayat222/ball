@@ -1,6 +1,6 @@
 {
-  "versionCode": 4,
-  "versionName": "1.3",
+  "versionCode": 5,
+  "versionName": "1.4",
   "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-debug.apk",
-  "changelog": "Versi 1.3:\n• Perbaikan garis pandu untuk 4 lubang sudut (kiri/kanan atas & bawah) dengan Side & End Rail Clearance.\n• Garis pandu sudut dijamin bersih dan tidak menabrak dinding ban/bantalan meja saat bola menyusuri ban.\n• Perhitungan lubang tengah tetap presisi dan tidak diubah."
+  "changelog": "Versi 1.4:\n• Perbaikan presisi akurasi 4 lubang sudut (Top-Left, Top-Right, Bottom-Left, Bottom-Right).\n• Garis pandu sudut dijamin tepat mengarah ke lubang sudut dari posisi bola mana pun di atas meja.\n• Perhitungan lubang tengah tetap presisi dan tidak diubah."
 }

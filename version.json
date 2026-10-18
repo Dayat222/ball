@@ -1,6 +1,6 @@
 {
-  "versionCode": 8,
-  "versionName": "1.7",
+  "versionCode": 9,
+  "versionName": "1.8",
   "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-debug.apk",
-  "changelog": "Versi 1.7:\n• Pembersihan jejak package dan perizinan kueri aplikasi agar 100% netral dan aman.\n• Pengoptimalan kestabilan dialog unduhan pembaruan dan User-Agent standar."
+  "changelog": "Versi 1.8:\n• Pembaruan presisi sudut arah garis pandu untuk 4 lubang samping (sudut kiri & kanan, atas & bawah).\n• Titik pusat arah disesuaikan tepat ke titik tengah mulut kantong (offset horizontal 9.0dp & vertikal 11.2dp) agar tembakan sudut selalu akurat masuk lubang."
 }

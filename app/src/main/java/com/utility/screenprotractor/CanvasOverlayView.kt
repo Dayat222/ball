@@ -664,10 +664,12 @@ class CanvasOverlayView @JvmOverloads constructor(
         val signX = if (isLeft) 1f else -1f
         val signY = if (isTop) 1f else -1f
 
-        // Diagonal offset into the center of the pocket drop mouth
-        val cornerMouthInset = 4.5f * density
-        val targetX = cornerX + (signX * cornerMouthInset)
-        val targetY = cornerY + (signY * cornerMouthInset)
+        // Precision corner pocket target center (titik pusat arah 4 lubang sudut)
+        // Offset horizontal (9.0dp) dan vertikal (11.2dp) tepat mengarah ke titik pusat mulut lubang kantong
+        val cornerMouthInsetX = 9.0f * density
+        val cornerMouthInsetY = 11.2f * density
+        val targetX = cornerX + (signX * cornerMouthInsetX)
+        val targetY = cornerY + (signY * cornerMouthInsetY)
 
         val rayDx = targetX - bx
         val rayDy = targetY - by
@@ -791,12 +793,15 @@ class CanvasOverlayView @JvmOverloads constructor(
         val b = boundaryBox.bottom
         val cx = boundaryBox.centerX()
 
-        drawVertexGuideRing(canvas, l, t)   // Top-Left
-        drawVertexGuideRing(canvas, cx, t)  // Top-Center
-        drawVertexGuideRing(canvas, r, t)   // Top-Right
-        drawVertexGuideRing(canvas, l, b)   // Bottom-Left
-        drawVertexGuideRing(canvas, cx, b)  // Bottom-Center
-        drawVertexGuideRing(canvas, r, b)   // Bottom-Right
+        val cornerMouthInsetX = 9.0f * density
+        val cornerMouthInsetY = 11.2f * density
+
+        drawVertexGuideRing(canvas, l + cornerMouthInsetX, t + cornerMouthInsetY)   // Top-Left
+        drawVertexGuideRing(canvas, cx, t)                                         // Top-Center
+        drawVertexGuideRing(canvas, r - cornerMouthInsetX, t + cornerMouthInsetY)   // Top-Right
+        drawVertexGuideRing(canvas, l + cornerMouthInsetX, b - cornerMouthInsetY)   // Bottom-Left
+        drawVertexGuideRing(canvas, cx, b)                                         // Bottom-Center
+        drawVertexGuideRing(canvas, r - cornerMouthInsetX, b - cornerMouthInsetY)   // Bottom-Right
 
         val label = "Calibration: Drag 8 handles to align target bounds"
         textPaint.getTextBounds(label, 0, label.length, textBounds)

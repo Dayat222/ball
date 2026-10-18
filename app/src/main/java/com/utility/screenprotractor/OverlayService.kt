@@ -625,6 +625,59 @@ class OverlayService : Service() {
         // Smart Mini Bubble (Drag to move, Tap to expand, Long-press to toggle ON/OFF)
         btnMiniExpand?.let { setupSmartMiniBubble(it, controlView) }
 
+        // Guideline Length (Short / Full Mode)
+        val btnToggleLineLength = controlView.findViewById<TextView>(R.id.btnToggleLineLength)
+        val btnSettingLineShort = controlView.findViewById<TextView>(R.id.btnSettingLineShort)
+        val btnSettingLineFull = controlView.findViewById<TextView>(R.id.btnSettingLineFull)
+
+        fun updateLineLengthUI(isFull: Boolean) {
+            if (isFull) {
+                btnToggleLineLength?.text = getString(R.string.control_line_full)
+                btnToggleLineLength?.setBackgroundResource(R.drawable.bg_control_btn_active)
+                btnToggleLineLength?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+
+                btnSettingLineShort?.setBackgroundResource(R.drawable.bg_control_btn)
+                btnSettingLineShort?.setTextColor(Color.WHITE)
+                btnSettingLineFull?.setBackgroundResource(R.drawable.bg_control_btn_active)
+                btnSettingLineFull?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+            } else {
+                btnToggleLineLength?.text = getString(R.string.control_line_short)
+                btnToggleLineLength?.setBackgroundResource(R.drawable.bg_control_btn)
+                btnToggleLineLength?.setTextColor(Color.WHITE)
+
+                btnSettingLineShort?.setBackgroundResource(R.drawable.bg_control_btn_active)
+                btnSettingLineShort?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+                btnSettingLineFull?.setBackgroundResource(R.drawable.bg_control_btn)
+                btnSettingLineFull?.setTextColor(Color.WHITE)
+            }
+        }
+
+        val initialIsFull = prefsManager.isFullLengthGuides()
+        canvasOverlayView?.setFullLengthGuides(initialIsFull)
+        updateLineLengthUI(initialIsFull)
+
+        btnToggleLineLength?.setOnClickListener {
+            val isNowFull = canvasOverlayView?.toggleFullLengthGuides() ?: false
+            updateLineLengthUI(isNowFull)
+            Toast.makeText(
+                this,
+                if (isNowFull) getString(R.string.toast_line_full) else getString(R.string.toast_line_short),
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+
+        btnSettingLineShort?.setOnClickListener {
+            canvasOverlayView?.setFullLengthGuides(false)
+            updateLineLengthUI(false)
+            Toast.makeText(this, getString(R.string.toast_line_short), Toast.LENGTH_SHORT).show()
+        }
+
+        btnSettingLineFull?.setOnClickListener {
+            canvasOverlayView?.setFullLengthGuides(true)
+            updateLineLengthUI(true)
+            Toast.makeText(this, getString(R.string.toast_line_full), Toast.LENGTH_SHORT).show()
+        }
+
         // 2. Calibration Mode Toggle
         btnCalibrate?.setOnClickListener {
             if (isCanvasHidden) {

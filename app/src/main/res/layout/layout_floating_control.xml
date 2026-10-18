@@ -34,6 +34,22 @@
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
+            <!-- Guideline Length Toggle Button (Short / Full) -->
+            <TextView
+                android:id="@+id/btnToggleLineLength"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/bg_control_btn"
+                android:gravity="center"
+                android:minWidth="46dp"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:text="@string/control_line_short"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
             <!-- Calibration Mode Toggle Button -->
             <TextView
                 android:id="@+id/btnToggleCalibrate"
@@ -168,6 +184,50 @@
                 android:progress="14"
                 android:progressTint="@color/cyan_accent"
                 android:thumbTint="@color/cyan_accent" />
+
+            <!-- Guideline Length Selector (Short vs Full) -->
+            <TextView
+                android:id="@+id/tvLineLengthTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/label_guideline_length"
+                android:textColor="@color/cyan_accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/btnSettingLineShort"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/bg_control_btn_active"
+                    android:gravity="center"
+                    android:text="@string/control_line_short"
+                    android:textColor="@color/cyan_accent"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/btnSettingLineFull"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="4dp"
+                    android:background="@drawable/bg_control_btn"
+                    android:gravity="center"
+                    android:text="@string/control_line_full"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
 
             <!-- Line Color Section -->
             <TextView

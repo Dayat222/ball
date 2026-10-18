@@ -41,6 +41,8 @@
     <string name="control_maximize">+</string>
     <string name="control_on">ON</string>
     <string name="control_off">OFF</string>
+    <string name="control_line_short">Short</string>
+    <string name="control_line_full">Full</string>
     <string name="control_close">✕</string>
 
     <!-- Settings Panel -->
@@ -50,6 +52,9 @@
     <string name="label_line_color">Line Color</string>
     <string name="label_hue">Spectrum Hue: %1$d°</string>
     <string name="label_hue_white">Color: Pure White</string>
+    <string name="label_guideline_length">Guideline Length</string>
+    <string name="toast_line_short">Guideline: Short Mode (85 dp)</string>
+    <string name="toast_line_full">Guideline: Full Length Mode (To Pockets)</string>
 
     <!-- Calibration Info -->
     <string name="calib_instructions">Drag corner handles to align boundary box with target area.</string>

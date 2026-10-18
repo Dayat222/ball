@@ -61,6 +61,9 @@ class CanvasOverlayView @JvmOverloads constructor(
     var showRadialGuides: Boolean = true
         private set
 
+    var isFullLengthGuides: Boolean = false
+        private set
+
     var ringRadiusDp: Float = 13.5f
         private set
 
@@ -305,6 +308,7 @@ class CanvasOverlayView @JvmOverloads constructor(
         updateLineStyle(currentStrokeWidth, currentAlpha)
 
         showRadialGuides = prefsManager.getShowRadialGuides()
+        isFullLengthGuides = prefsManager.isFullLengthGuides()
         ringRadiusDp = prefsManager.getRingRadius()
     }
 
@@ -436,6 +440,17 @@ class CanvasOverlayView @JvmOverloads constructor(
     fun toggleRadialGuides(): Boolean {
         setShowRadialGuides(!showRadialGuides)
         return showRadialGuides
+    }
+
+    fun setFullLengthGuides(isFull: Boolean) {
+        isFullLengthGuides = isFull
+        prefsManager.saveFullLengthGuides(isFull)
+        invalidate()
+    }
+
+    fun toggleFullLengthGuides(): Boolean {
+        setFullLengthGuides(!isFullLengthGuides)
+        return isFullLengthGuides
     }
 
     fun setRingRadius(radius: Float) {
@@ -633,13 +648,16 @@ class CanvasOverlayView @JvmOverloads constructor(
         if (rayDist > 1f) {
             val ux = rayDx / rayDist
             val uy = rayDy / rayDist
-            canvas.drawLine(
-                bx + ux * startDist,
-                by + uy * startDist,
-                bx + ux * endDist,
-                by + uy * endDist,
-                paint
-            )
+            val actualEnd = if (isFullLengthGuides) rayDist else endDist.coerceAtMost(rayDist)
+            if (actualEnd > startDist) {
+                canvas.drawLine(
+                    bx + ux * startDist,
+                    by + uy * startDist,
+                    bx + ux * actualEnd,
+                    by + uy * actualEnd,
+                    paint
+                )
+            }
         }
     }
 
@@ -677,13 +695,16 @@ class CanvasOverlayView @JvmOverloads constructor(
         if (rayDist > 1f) {
             val ux = rayDx / rayDist
             val uy = rayDy / rayDist
-            canvas.drawLine(
-                bx + ux * startDist,
-                by + uy * startDist,
-                bx + ux * endDist,
-                by + uy * endDist,
-                paint
-            )
+            val actualEnd = if (isFullLengthGuides) rayDist else endDist.coerceAtMost(rayDist)
+            if (actualEnd > startDist) {
+                canvas.drawLine(
+                    bx + ux * startDist,
+                    by + uy * startDist,
+                    bx + ux * actualEnd,
+                    by + uy * actualEnd,
+                    paint
+                )
+            }
         }
     }
 
@@ -708,7 +729,7 @@ class CanvasOverlayView @JvmOverloads constructor(
         if (showRadialGuides) {
             val startDist = ringRadius + (3f * density)
             val directEndDist = 85f * density
-            val bankEndDist = 64f * density
+            val bankEndDist = if (isFullLengthGuides) 110f * density else 64f * density
 
             val l = boundaryBox.left
             val r = boundaryBox.right

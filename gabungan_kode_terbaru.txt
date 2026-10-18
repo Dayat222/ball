@@ -12,8 +12,8 @@ android {
         applicationId = "com.utility.screenprotractor"
         minSdk = 26
         targetSdk = 34
-        versionCode = 9
-        versionName = "1.8"
+        versionCode = 10
+        versionName = "1.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -335,7 +335,12 @@ object AppUpdateManager {
                     destFile.delete()
                 }
 
-                val conn = openConnectionWithRedirects(updateInfo.downloadUrl)
+                val busterUrl = if (updateInfo.downloadUrl.contains("?")) {
+                    "${updateInfo.downloadUrl}&t=${System.currentTimeMillis()}"
+                } else {
+                    "${updateInfo.downloadUrl}?t=${System.currentTimeMillis()}"
+                }
+                val conn = openConnectionWithRedirects(busterUrl)
                 if (conn.responseCode != HttpURLConnection.HTTP_OK) {
                     throw IllegalStateException("Server merespons kode status: ${conn.responseCode}")
                 }
@@ -448,9 +453,12 @@ object AppUpdateManager {
         while (redirects < 6) {
             val conn = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
                 instanceFollowRedirects = true
+                useCaches = false
                 connectTimeout = 15000
                 readTimeout = 15000
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
+                setRequestProperty("Cache-Control", "no-cache")
+                setRequestProperty("Pragma", "no-cache")
             }
             conn.connect()
 
@@ -589,6 +597,9 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     // Feature 1: Radial Lines & Target Ring Radius
     var showRadialGuides: Boolean = true
+        private set
+
+    var isFullLengthGuides: Boolean = false
         private set
 
     var ringRadiusDp: Float = 13.5f
@@ -835,6 +846,7 @@ class CanvasOverlayView @JvmOverloads constructor(
         updateLineStyle(currentStrokeWidth, currentAlpha)
 
         showRadialGuides = prefsManager.getShowRadialGuides()
+        isFullLengthGuides = prefsManager.isFullLengthGuides()
         ringRadiusDp = prefsManager.getRingRadius()
     }
 
@@ -966,6 +978,17 @@ class CanvasOverlayView @JvmOverloads constructor(
     fun toggleRadialGuides(): Boolean {
         setShowRadialGuides(!showRadialGuides)
         return showRadialGuides
+    }
+
+    fun setFullLengthGuides(isFull: Boolean) {
+        isFullLengthGuides = isFull
+        prefsManager.saveFullLengthGuides(isFull)
+        invalidate()
+    }
+
+    fun toggleFullLengthGuides(): Boolean {
+        setFullLengthGuides(!isFullLengthGuides)
+        return isFullLengthGuides
     }
 
     fun setRingRadius(radius: Float) {
@@ -1163,13 +1186,16 @@ class CanvasOverlayView @JvmOverloads constructor(
         if (rayDist > 1f) {
             val ux = rayDx / rayDist
             val uy = rayDy / rayDist
-            canvas.drawLine(
-                bx + ux * startDist,
-                by + uy * startDist,
-                bx + ux * endDist,
-                by + uy * endDist,
-                paint
-            )
+            val actualEnd = if (isFullLengthGuides) rayDist else endDist.coerceAtMost(rayDist)
+            if (actualEnd > startDist) {
+                canvas.drawLine(
+                    bx + ux * startDist,
+                    by + uy * startDist,
+                    bx + ux * actualEnd,
+                    by + uy * actualEnd,
+                    paint
+                )
+            }
         }
     }
 
@@ -1207,13 +1233,16 @@ class CanvasOverlayView @JvmOverloads constructor(
         if (rayDist > 1f) {
             val ux = rayDx / rayDist
             val uy = rayDy / rayDist
-            canvas.drawLine(
-                bx + ux * startDist,
-                by + uy * startDist,
-                bx + ux * endDist,
-                by + uy * endDist,
-                paint
-            )
+            val actualEnd = if (isFullLengthGuides) rayDist else endDist.coerceAtMost(rayDist)
+            if (actualEnd > startDist) {
+                canvas.drawLine(
+                    bx + ux * startDist,
+                    by + uy * startDist,
+                    bx + ux * actualEnd,
+                    by + uy * actualEnd,
+                    paint
+                )
+            }
         }
     }
 
@@ -1238,7 +1267,7 @@ class CanvasOverlayView @JvmOverloads constructor(
         if (showRadialGuides) {
             val startDist = ringRadius + (3f * density)
             val directEndDist = 85f * density
-            val bankEndDist = 64f * density
+            val bankEndDist = if (isFullLengthGuides) 110f * density else 64f * density
 
             val l = boundaryBox.left
             val r = boundaryBox.right
@@ -2764,6 +2793,59 @@ class OverlayService : Service() {
         // Smart Mini Bubble (Drag to move, Tap to expand, Long-press to toggle ON/OFF)
         btnMiniExpand?.let { setupSmartMiniBubble(it, controlView) }
 
+        // Guideline Length (Short / Full Mode)
+        val btnToggleLineLength = controlView.findViewById<TextView>(R.id.btnToggleLineLength)
+        val btnSettingLineShort = controlView.findViewById<TextView>(R.id.btnSettingLineShort)
+        val btnSettingLineFull = controlView.findViewById<TextView>(R.id.btnSettingLineFull)
+
+        fun updateLineLengthUI(isFull: Boolean) {
+            if (isFull) {
+                btnToggleLineLength?.text = getString(R.string.control_line_full)
+                btnToggleLineLength?.setBackgroundResource(R.drawable.bg_control_btn_active)
+                btnToggleLineLength?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+
+                btnSettingLineShort?.setBackgroundResource(R.drawable.bg_control_btn)
+                btnSettingLineShort?.setTextColor(Color.WHITE)
+                btnSettingLineFull?.setBackgroundResource(R.drawable.bg_control_btn_active)
+                btnSettingLineFull?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+            } else {
+                btnToggleLineLength?.text = getString(R.string.control_line_short)
+                btnToggleLineLength?.setBackgroundResource(R.drawable.bg_control_btn)
+                btnToggleLineLength?.setTextColor(Color.WHITE)
+
+                btnSettingLineShort?.setBackgroundResource(R.drawable.bg_control_btn_active)
+                btnSettingLineShort?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+                btnSettingLineFull?.setBackgroundResource(R.drawable.bg_control_btn)
+                btnSettingLineFull?.setTextColor(Color.WHITE)
+            }
+        }
+
+        val initialIsFull = prefsManager.isFullLengthGuides()
+        canvasOverlayView?.setFullLengthGuides(initialIsFull)
+        updateLineLengthUI(initialIsFull)
+
+        btnToggleLineLength?.setOnClickListener {
+            val isNowFull = canvasOverlayView?.toggleFullLengthGuides() ?: false
+            updateLineLengthUI(isNowFull)
+            Toast.makeText(
+                this,
+                if (isNowFull) getString(R.string.toast_line_full) else getString(R.string.toast_line_short),
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+
+        btnSettingLineShort?.setOnClickListener {
+            canvasOverlayView?.setFullLengthGuides(false)
+            updateLineLengthUI(false)
+            Toast.makeText(this, getString(R.string.toast_line_short), Toast.LENGTH_SHORT).show()
+        }
+
+        btnSettingLineFull?.setOnClickListener {
+            canvasOverlayView?.setFullLengthGuides(true)
+            updateLineLengthUI(true)
+            Toast.makeText(this, getString(R.string.toast_line_full), Toast.LENGTH_SHORT).show()
+        }
+
         // 2. Calibration Mode Toggle
         btnCalibrate?.setOnClickListener {
             if (isCanvasHidden) {
@@ -3532,6 +3614,17 @@ class PrefsManager(context: Context) {
         return prefs.getFloat(KEY_BALL_RADIUS, 13.5f)
     }
 
+    /**
+     * Save and retrieve full length guideline toggle (panjang garis sampai ke 6 lubang).
+     */
+    fun saveFullLengthGuides(isFull: Boolean) {
+        prefs.edit().putBoolean(KEY_FULL_LENGTH_GUIDES, isFull).apply()
+    }
+
+    fun isFullLengthGuides(): Boolean {
+        return prefs.getBoolean(KEY_FULL_LENGTH_GUIDES, false)
+    }
+
     companion object {
         private const val PREFS_NAME = "screen_protractor_prefs"
         private const val DEFAULT_MARGIN_RATIO = 0.08f
@@ -3562,6 +3655,7 @@ class PrefsManager(context: Context) {
         private const val KEY_BANK_LINE_COLOR = "secondary_ray_color"
 
         private const val KEY_SHOW_SIX_LINES = "show_radial_guides"
+        private const val KEY_FULL_LENGTH_GUIDES = "full_length_guides"
         private const val KEY_BALL_RADIUS = "target_ring_radius"
     }
 }
@@ -4011,6 +4105,22 @@ class PrefsManager(context: Context) {
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
+            <!-- Guideline Length Toggle Button (Short / Full) -->
+            <TextView
+                android:id="@+id/btnToggleLineLength"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/bg_control_btn"
+                android:gravity="center"
+                android:minWidth="46dp"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:text="@string/control_line_short"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
             <!-- Calibration Mode Toggle Button -->
             <TextView
                 android:id="@+id/btnToggleCalibrate"
@@ -4145,6 +4255,50 @@ class PrefsManager(context: Context) {
                 android:progress="14"
                 android:progressTint="@color/cyan_accent"
                 android:thumbTint="@color/cyan_accent" />
+
+            <!-- Guideline Length Selector (Short vs Full) -->
+            <TextView
+                android:id="@+id/tvLineLengthTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/label_guideline_length"
+                android:textColor="@color/cyan_accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/btnSettingLineShort"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/bg_control_btn_active"
+                    android:gravity="center"
+                    android:text="@string/control_line_short"
+                    android:textColor="@color/cyan_accent"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/btnSettingLineFull"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="4dp"
+                    android:background="@drawable/bg_control_btn"
+                    android:gravity="center"
+                    android:text="@string/control_line_full"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
 
             <!-- Line Color Section -->
             <TextView
@@ -4419,6 +4573,8 @@ class PrefsManager(context: Context) {
     <string name="control_maximize">+</string>
     <string name="control_on">ON</string>
     <string name="control_off">OFF</string>
+    <string name="control_line_short">Short</string>
+    <string name="control_line_full">Full</string>
     <string name="control_close">✕</string>
 
     <!-- Settings Panel -->
@@ -4428,6 +4584,9 @@ class PrefsManager(context: Context) {
     <string name="label_line_color">Line Color</string>
     <string name="label_hue">Spectrum Hue: %1$d°</string>
     <string name="label_hue_white">Color: Pure White</string>
+    <string name="label_guideline_length">Guideline Length</string>
+    <string name="toast_line_short">Guideline: Short Mode (85 dp)</string>
+    <string name="toast_line_full">Guideline: Full Length Mode (To Pockets)</string>
 
     <!-- Calibration Info -->
     <string name="calib_instructions">Drag corner handles to align boundary box with target area.</string>

@@ -12,8 +12,8 @@ android {
         applicationId = "com.utility.screenprotractor"
         minSdk = 26
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.7"
+        versionCode = 9
+        versionName = "1.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -64,7 +64,6 @@ dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
-
 ==> app/src/main/AndroidManifest.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -122,7 +121,6 @@ dependencies {
     </application>
 
 </manifest>
-
 ==> app/src/main/java/com/utility/screenprotractor/AppUpdateManager.kt <==
 package com.utility.screenprotractor
 
@@ -529,7 +527,6 @@ object AppUpdateManager {
             .show()
     }
 }
-
 ==> app/src/main/java/com/utility/screenprotractor/CanvasOverlayView.kt <==
 package com.utility.screenprotractor
 
@@ -1197,10 +1194,12 @@ class CanvasOverlayView @JvmOverloads constructor(
         val signX = if (isLeft) 1f else -1f
         val signY = if (isTop) 1f else -1f
 
-        // Diagonal offset into the center of the pocket drop mouth
-        val cornerMouthInset = 4.5f * density
-        val targetX = cornerX + (signX * cornerMouthInset)
-        val targetY = cornerY + (signY * cornerMouthInset)
+        // Precision corner pocket target center (titik pusat arah 4 lubang sudut)
+        // Offset horizontal (9.0dp) dan vertikal (11.2dp) tepat mengarah ke titik pusat mulut lubang kantong
+        val cornerMouthInsetX = 9.0f * density
+        val cornerMouthInsetY = 11.2f * density
+        val targetX = cornerX + (signX * cornerMouthInsetX)
+        val targetY = cornerY + (signY * cornerMouthInsetY)
 
         val rayDx = targetX - bx
         val rayDy = targetY - by
@@ -1324,12 +1323,15 @@ class CanvasOverlayView @JvmOverloads constructor(
         val b = boundaryBox.bottom
         val cx = boundaryBox.centerX()
 
-        drawVertexGuideRing(canvas, l, t)   // Top-Left
-        drawVertexGuideRing(canvas, cx, t)  // Top-Center
-        drawVertexGuideRing(canvas, r, t)   // Top-Right
-        drawVertexGuideRing(canvas, l, b)   // Bottom-Left
-        drawVertexGuideRing(canvas, cx, b)  // Bottom-Center
-        drawVertexGuideRing(canvas, r, b)   // Bottom-Right
+        val cornerMouthInsetX = 9.0f * density
+        val cornerMouthInsetY = 11.2f * density
+
+        drawVertexGuideRing(canvas, l + cornerMouthInsetX, t + cornerMouthInsetY)   // Top-Left
+        drawVertexGuideRing(canvas, cx, t)                                         // Top-Center
+        drawVertexGuideRing(canvas, r - cornerMouthInsetX, t + cornerMouthInsetY)   // Top-Right
+        drawVertexGuideRing(canvas, l + cornerMouthInsetX, b - cornerMouthInsetY)   // Bottom-Left
+        drawVertexGuideRing(canvas, cx, b)                                         // Bottom-Center
+        drawVertexGuideRing(canvas, r - cornerMouthInsetX, b - cornerMouthInsetY)   // Bottom-Right
 
         val label = "Calibration: Drag 8 handles to align target bounds"
         textPaint.getTextBounds(label, 0, label.length, textBounds)
@@ -1627,7 +1629,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         }
     }
 }
-
 ==> app/src/main/java/com/utility/screenprotractor/GeometryUtils.kt <==
 package com.utility.screenprotractor
 
@@ -1855,7 +1856,6 @@ object GeometryUtils {
         return diff
     }
 }
-
 ==> app/src/main/java/com/utility/screenprotractor/HandleView.kt <==
 package com.utility.screenprotractor
 
@@ -1921,7 +1921,6 @@ class HandleView(
         canvas.drawLine(cx, cy - armLength, cx, cy + armLength, plusPaint)
     }
 }
-
 ==> app/src/main/java/com/utility/screenprotractor/MainActivity.kt <==
 package com.utility.screenprotractor
 
@@ -2137,7 +2136,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 }
-
 ==> app/src/main/java/com/utility/screenprotractor/OverlayService.kt <==
 package com.utility.screenprotractor
 
@@ -3326,7 +3324,6 @@ class OverlayService : Service() {
             private set
     }
 }
-
 ==> app/src/main/java/com/utility/screenprotractor/PrefsManager.kt <==
 package com.utility.screenprotractor
 
@@ -3568,7 +3565,6 @@ class PrefsManager(context: Context) {
         private const val KEY_BALL_RADIUS = "target_ring_radius"
     }
 }
-
 ==> app/src/main/res/drawable/bg_btn_off.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
@@ -3576,7 +3572,6 @@ class PrefsManager(context: Context) {
     <solid android:color="#C62828" />
     <corners android:radius="8dp" />
 </shape>
-
 ==> app/src/main/res/drawable/bg_btn_on.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
@@ -3584,7 +3579,6 @@ class PrefsManager(context: Context) {
     <solid android:color="#2E7D32" />
     <corners android:radius="8dp" />
 </shape>
-
 ==> app/src/main/res/drawable/bg_card.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
@@ -3595,7 +3589,6 @@ class PrefsManager(context: Context) {
         android:color="@color/surface_card_border" />
     <corners android:radius="16dp" />
 </shape>
-
 ==> app/src/main/res/drawable/bg_control_bar.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
@@ -3606,7 +3599,6 @@ class PrefsManager(context: Context) {
         android:color="@color/overlay_control_border" />
     <corners android:radius="12dp" />
 </shape>
-
 ==> app/src/main/res/drawable/bg_control_btn.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
@@ -3614,7 +3606,6 @@ class PrefsManager(context: Context) {
     <solid android:color="#26FFFFFF" />
     <corners android:radius="8dp" />
 </shape>
-
 ==> app/src/main/res/drawable/bg_control_btn_active.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
@@ -3625,7 +3616,6 @@ class PrefsManager(context: Context) {
         android:color="#00E5FF" />
     <corners android:radius="8dp" />
 </shape>
-
 ==> app/src/main/res/drawable/bg_minimized_bubble.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
@@ -3635,7 +3625,6 @@ class PrefsManager(context: Context) {
         android:width="1.5dp"
         android:color="#00E5FF" />
 </shape>
-
 ==> app/src/main/res/drawable/ic_launcher_background.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
@@ -3647,7 +3636,6 @@ class PrefsManager(context: Context) {
         android:fillColor="#1E1E1E"
         android:pathData="M0,0h108v108h-108z"/>
 </vector>
-
 ==> app/src/main/res/drawable/ic_launcher_foreground.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
@@ -3678,7 +3666,6 @@ class PrefsManager(context: Context) {
         android:fillColor="#FFFFFF"
         android:pathData="M54,68m-3,0a3,3 0 1,0 6,0a3,3 0 1,0 -6,0"/>
 </vector>
-
 ==> app/src/main/res/drawable/ic_notification.xml <==
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
@@ -3689,7 +3676,6 @@ class PrefsManager(context: Context) {
       android:fillColor="#00E5FF"
       android:pathData="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12C20,13.1 19.8,14.1 19.4,15L15,10.6V8H13V9.6L10.4,7H8.8L12,10.2V12H13.8L17,15.2C15.8,16.9 14,18 12,18A6,6 0 0,1 6,12A8,8 0 0,1 12,4Z"/>
 </vector>
-
 ==> app/src/main/res/layout/activity_main.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
@@ -3988,7 +3974,6 @@ class PrefsManager(context: Context) {
 
     </LinearLayout>
 </ScrollView>
-
 ==> app/src/main/res/layout/layout_floating_control.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -4347,21 +4332,18 @@ class PrefsManager(context: Context) {
     </LinearLayout>
 
 </FrameLayout>
-
 ==> app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@drawable/ic_launcher_background" />
     <foreground android:drawable="@drawable/ic_launcher_foreground" />
 </adaptive-icon>
-
 ==> app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@drawable/ic_launcher_background" />
     <foreground android:drawable="@drawable/ic_launcher_foreground" />
 </adaptive-icon>
-
 ==> app/src/main/res/values/colors.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
@@ -4393,7 +4375,6 @@ class PrefsManager(context: Context) {
     <color name="text_secondary">#B0BEC5</color>
     <color name="text_hint">#78909C</color>
 </resources>
-
 ==> app/src/main/res/values/strings.xml <==
 <resources>
     <string name="app_name">Screen Angle Ruler</string>
@@ -4466,7 +4447,6 @@ class PrefsManager(context: Context) {
     <string name="update_download_failed">Gagal mengunduh pembaruan</string>
     <string name="update_check_failed">Gagal memeriksa pembaruan: periksa koneksi internet</string>
 </resources>
-
 ==> app/src/main/res/values/themes.xml <==
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
@@ -4489,7 +4469,6 @@ class PrefsManager(context: Context) {
         <item name="colorOnSurface">@color/text_primary</item>
     </style>
 </resources>
-
 ==> app/src/main/res/xml/file_paths.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">

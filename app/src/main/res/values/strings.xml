@@ -52,9 +52,9 @@
     <string name="label_line_color">Line Color</string>
     <string name="label_hue">Spectrum Hue: %1$d°</string>
     <string name="label_hue_white">Color: Pure White</string>
-    <string name="label_guideline_length">Guideline Length</string>
-    <string name="toast_line_short">Guideline: Short Mode (85 dp)</string>
-    <string name="toast_line_full">Guideline: Full Length Mode (To Pockets)</string>
+    <string name="label_guideline_length">Ray Length</string>
+    <string name="toast_line_short">Ray: Short Mode (85 dp)</string>
+    <string name="toast_line_full">Ray: Full Length Mode (To Vertex)</string>
 
     <!-- Calibration Info -->
     <string name="calib_instructions">Drag corner handles to align boundary box with target area.</string>

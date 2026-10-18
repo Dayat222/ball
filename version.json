@@ -1,6 +1,6 @@
 {
-  "versionCode": 10,
-  "versionName": "1.9",
+  "versionCode": 11,
+  "versionName": "2.0",
   "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-debug.apk",
-  "changelog": "Versi 1.9:\n• Fitur Baru: Pengaturan Panjang Garis Pandu (Short / Full).\n• Pengguna dapat memilih mode Short (garis pendek 85dp) atau Full (garis memanjang penuh langsung ke 6 lubang sasaran).\n• Pengaturan dapat diubah secara instan lewat tombol [Short]/[Full] di toolbar mengambang maupun panel pengaturan."
+  "changelog": "Versi 2.0:\n• Penyesuaian teks label dan notifikasi: Ray Length, Ray: Short Mode (85 dp), dan Ray: Full Length Mode (To Vertex).\n• Pengoptimalan kestabilan unduhan pembaruan OTA."
 }

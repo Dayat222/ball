@@ -205,6 +205,17 @@ class PrefsManager(context: Context) {
         return prefs.getFloat(KEY_BALL_RADIUS, 13.5f)
     }
 
+    /**
+     * Save and retrieve full length guideline toggle (panjang garis sampai ke 6 lubang).
+     */
+    fun saveFullLengthGuides(isFull: Boolean) {
+        prefs.edit().putBoolean(KEY_FULL_LENGTH_GUIDES, isFull).apply()
+    }
+
+    fun isFullLengthGuides(): Boolean {
+        return prefs.getBoolean(KEY_FULL_LENGTH_GUIDES, false)
+    }
+
     companion object {
         private const val PREFS_NAME = "screen_protractor_prefs"
         private const val DEFAULT_MARGIN_RATIO = 0.08f
@@ -235,6 +246,7 @@ class PrefsManager(context: Context) {
         private const val KEY_BANK_LINE_COLOR = "secondary_ray_color"
 
         private const val KEY_SHOW_SIX_LINES = "show_radial_guides"
+        private const val KEY_FULL_LENGTH_GUIDES = "full_length_guides"
         private const val KEY_BALL_RADIUS = "target_ring_radius"
     }
 }

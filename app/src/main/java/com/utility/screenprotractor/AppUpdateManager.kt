@@ -211,7 +211,12 @@ object AppUpdateManager {
                     destFile.delete()
                 }
 
-                val conn = openConnectionWithRedirects(updateInfo.downloadUrl)
+                val busterUrl = if (updateInfo.downloadUrl.contains("?")) {
+                    "${updateInfo.downloadUrl}&t=${System.currentTimeMillis()}"
+                } else {
+                    "${updateInfo.downloadUrl}?t=${System.currentTimeMillis()}"
+                }
+                val conn = openConnectionWithRedirects(busterUrl)
                 if (conn.responseCode != HttpURLConnection.HTTP_OK) {
                     throw IllegalStateException("Server merespons kode status: ${conn.responseCode}")
                 }
@@ -324,9 +329,12 @@ object AppUpdateManager {
         while (redirects < 6) {
             val conn = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
                 instanceFollowRedirects = true
+                useCaches = false
                 connectTimeout = 15000
                 readTimeout = 15000
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
+                setRequestProperty("Cache-Control", "no-cache")
+                setRequestProperty("Pragma", "no-cache")
             }
             conn.connect()
 

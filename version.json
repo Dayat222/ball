@@ -1,6 +1,6 @@
 {
-  "versionCode": 9,
-  "versionName": "1.8",
+  "versionCode": 10,
+  "versionName": "1.9",
   "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-debug.apk",
-  "changelog": "Versi 1.8:\n• Pembaruan presisi sudut arah garis pandu untuk 4 lubang samping (sudut kiri & kanan, atas & bawah).\n• Titik pusat arah disesuaikan tepat ke titik tengah mulut kantong (offset horizontal 9.0dp & vertikal 11.2dp) agar tembakan sudut selalu akurat masuk lubang."
+  "changelog": "Versi 1.9:\n• Fitur Baru: Pengaturan Panjang Garis Pandu (Short / Full).\n• Pengguna dapat memilih mode Short (garis pendek 85dp) atau Full (garis memanjang penuh langsung ke 6 lubang sasaran).\n• Pengaturan dapat diubah secara instan lewat tombol [Short]/[Full] di toolbar mengambang maupun panel pengaturan."
 }

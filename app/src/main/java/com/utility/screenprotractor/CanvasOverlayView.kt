@@ -890,34 +890,36 @@ class CanvasOverlayView @JvmOverloads constructor(
                 val bounceT = t + ballR
                 val bounceB = b - ballR
 
-                val cornerMouthInsetX = 9.0f * density
-                val cornerMouthInsetY = 11.2f * density
+                // Precision Pocket Destination Targets for Cushion Bank Reflections:
+                // Corner pockets: Target the exact corner vertex (l, r, t, b) so the reflected ray
+                // enters symmetrically into the throat of the pocket without clipping rail knuckles.
+                val pocketTL_X = l
+                val pocketTL_Y = t
 
-                val pocketTL_X = l + cornerMouthInsetX
-                val pocketTL_Y = t + cornerMouthInsetY
+                val pocketTR_X = r
+                val pocketTR_Y = t
 
-                val pocketTR_X = r - cornerMouthInsetX
-                val pocketTR_Y = t + cornerMouthInsetY
+                val pocketBL_X = l
+                val pocketBL_Y = b
 
-                val pocketBL_X = l + cornerMouthInsetX
-                val pocketBL_Y = b - cornerMouthInsetY
+                val pocketBR_X = r
+                val pocketBR_Y = b
 
-                val pocketBR_X = r - cornerMouthInsetX
-                val pocketBR_Y = b - cornerMouthInsetY
-
+                // Middle pockets: Centered horizontally at cx, extending slightly into the pocket mouth opening
                 val pocketTC_X = cx
-                val pocketTC_Y = t
+                val pocketTC_Y = t - (2f * density)
 
                 val pocketBC_X = cx
-                val pocketBC_Y = b
+                val pocketBC_Y = b + (2f * density)
 
                 val shortBankLength = 85f * density
 
                 // Cushion min/max along rails (excluding corner mouth drop areas)
-                val railH_Min = l + cornerMouthInsetX
-                val railH_Max = r - cornerMouthInsetX
-                val railV_Min = t + cornerMouthInsetY
-                val railV_Max = b - cornerMouthInsetY
+                val cornerClearance = 8f * density
+                val railH_Min = l + cornerClearance
+                val railH_Max = r - cornerClearance
+                val railV_Min = t + cornerClearance
+                val railV_Max = b - cornerClearance
 
                 // Top Cushion (3 rays: bounce off top rail toward bottom pockets)
                 // Enabled whenever ball is on table above bottom pockets (even when touching top rail)
@@ -1021,7 +1023,7 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     private fun updateInnerInsetBox() {
-        val cushionBounceInset = (5f * density) + (ringRadiusDp * density)
+        val cushionBounceInset = ringRadiusDp * density
         innerInsetBox.set(
             boundaryBox.left + cushionBounceInset,
             boundaryBox.top + cushionBounceInset,

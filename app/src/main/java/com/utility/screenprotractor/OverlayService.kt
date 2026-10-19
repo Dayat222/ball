@@ -678,6 +678,33 @@ class OverlayService : Service() {
             Toast.makeText(this, getString(R.string.toast_line_full), Toast.LENGTH_SHORT).show()
         }
 
+        // Bank / Reflection Guides Toggle Button (Bank ON / OFF)
+        val btnToggleBankGuides = controlView.findViewById<TextView>(R.id.btnToggleBankGuides)
+
+        fun updateBankGuidesUI(isBankOn: Boolean) {
+            if (isBankOn) {
+                btnToggleBankGuides?.setBackgroundResource(R.drawable.bg_control_btn_active)
+                btnToggleBankGuides?.setTextColor(ContextCompat.getColor(this, R.color.yellow_accent))
+            } else {
+                btnToggleBankGuides?.setBackgroundResource(R.drawable.bg_control_btn)
+                btnToggleBankGuides?.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+            }
+        }
+
+        val initialBankOn = prefsManager.getShowBankGuides()
+        canvasOverlayView?.setShowBankGuides(initialBankOn)
+        updateBankGuidesUI(initialBankOn)
+
+        btnToggleBankGuides?.setOnClickListener {
+            val isNowBankOn = canvasOverlayView?.toggleBankGuides() ?: true
+            updateBankGuidesUI(isNowBankOn)
+            Toast.makeText(
+                this,
+                if (isNowBankOn) getString(R.string.toast_bank_on) else getString(R.string.toast_bank_off),
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+
         // 2. Calibration Mode Toggle
         btnCalibrate?.setOnClickListener {
             if (isCanvasHidden) {
@@ -794,6 +821,27 @@ class OverlayService : Service() {
 
         var selectedColor = prefsManager.getLineColor()
 
+        // 9. Bank Ray Color Swatches (Amber, Yellow, White, Cyan, Green, Red)
+        val btnBankColorAmber = controlView.findViewById<View>(R.id.btnBankColorAmber)
+        val btnBankColorYellow = controlView.findViewById<View>(R.id.btnBankColorYellow)
+        val btnBankColorWhite = controlView.findViewById<View>(R.id.btnBankColorWhite)
+        val btnBankColorCyan = controlView.findViewById<View>(R.id.btnBankColorCyan)
+        val btnBankColorGreen = controlView.findViewById<View>(R.id.btnBankColorGreen)
+        val btnBankColorRed = controlView.findViewById<View>(R.id.btnBankColorRed)
+        val viewBankColorPreview = controlView.findViewById<View>(R.id.viewBankColorPreview)
+
+        val bankPresetButtons = listOf(
+            btnBankColorAmber to Color.parseColor("#FFAB00"),
+            btnBankColorYellow to Color.parseColor("#FFD600"),
+            btnBankColorWhite to Color.WHITE,
+            btnBankColorCyan to Color.parseColor("#00E5FF"),
+            btnBankColorGreen to Color.parseColor("#00E676"),
+            btnBankColorRed to Color.parseColor("#FF1744")
+        )
+
+        var selectedBankColor = prefsManager.getBankLineColor()
+        var isEditingBankColor = false
+
         // Rainbow gradient for seekHue track
         val rainbowColors = intArrayOf(
             Color.RED,
@@ -815,6 +863,13 @@ class OverlayService : Service() {
             setStroke((2f * density).roundToInt(), Color.WHITE)
         }
         viewColorPreview.background = previewDrawable
+
+        val bankPreviewDrawable = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(selectedBankColor)
+            setStroke((2f * density).roundToInt(), Color.WHITE)
+        }
+        viewBankColorPreview?.background = bankPreviewDrawable
 
         fun createSwatchDrawable(color: Int, isSelected: Boolean): GradientDrawable {
             return GradientDrawable().apply {
@@ -848,13 +903,53 @@ class OverlayService : Service() {
             }
         }
 
+        fun updateBankColorUI(color: Int) {
+            selectedBankColor = color
+            for ((view, pColor) in bankPresetButtons) {
+                val isSelected = (color == pColor)
+                view?.background = createSwatchDrawable(pColor, isSelected)
+            }
+            bankPreviewDrawable.setColor(color)
+
+            if (color == Color.WHITE) {
+                tvHue.text = getString(R.string.label_hue_white)
+            } else {
+                val hsv = FloatArray(3)
+                Color.colorToHSV(color, hsv)
+                val hue = hsv[0].roundToInt().coerceIn(0, 360)
+                tvHue.text = getString(R.string.label_hue, hue)
+                seekHue.progress = hue
+            }
+        }
+
         updateColorUI(selectedColor)
+        updateBankColorUI(selectedBankColor)
+
+        viewColorPreview.setOnClickListener {
+            isEditingBankColor = false
+            updateColorUI(selectedColor)
+        }
+
+        viewBankColorPreview?.setOnClickListener {
+            isEditingBankColor = true
+            updateBankColorUI(selectedBankColor)
+        }
 
         for ((view, color) in presetButtons) {
             view.setOnClickListener {
+                isEditingBankColor = false
                 updateColorUI(color)
                 canvasOverlayView?.updateLineColor(color)
                 prefsManager.saveLineColor(color)
+            }
+        }
+
+        for ((view, color) in bankPresetButtons) {
+            view?.setOnClickListener {
+                isEditingBankColor = true
+                updateBankColorUI(color)
+                canvasOverlayView?.updateBankLineColor(color)
+                prefsManager.saveBankLineColor(color)
             }
         }
 
@@ -863,18 +958,34 @@ class OverlayService : Service() {
                 if (fromUser) {
                     val hue = progress.toFloat()
                     val color = Color.HSVToColor(floatArrayOf(hue, 1f, 1f))
-                    selectedColor = color
                     tvHue.text = getString(R.string.label_hue, progress)
-                    canvasOverlayView?.updateLineColor(color)
-                    updateAllHandlesColor(color)
-                    previewDrawable.setColor(color)
+                    if (isEditingBankColor) {
+                        selectedBankColor = color
+                        canvasOverlayView?.updateBankLineColor(color)
+                        bankPreviewDrawable.setColor(color)
+                        for ((view, pColor) in bankPresetButtons) {
+                            view?.background = createSwatchDrawable(pColor, color == pColor)
+                        }
+                    } else {
+                        selectedColor = color
+                        canvasOverlayView?.updateLineColor(color)
+                        updateAllHandlesColor(color)
+                        previewDrawable.setColor(color)
+                        for ((view, pColor) in presetButtons) {
+                            view.background = createSwatchDrawable(pColor, color == pColor)
+                        }
+                    }
                 }
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
 
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                prefsManager.saveLineColor(selectedColor)
+                if (isEditingBankColor) {
+                    prefsManager.saveBankLineColor(selectedBankColor)
+                } else {
+                    prefsManager.saveLineColor(selectedColor)
+                }
             }
         })
 

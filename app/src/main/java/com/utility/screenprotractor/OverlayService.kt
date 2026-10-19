@@ -608,7 +608,6 @@ class OverlayService : Service() {
         val btnDrag = controlView.findViewById<TextView>(R.id.btnDragHandle)
         btnCalibrate = controlView.findViewById(R.id.btnToggleCalibrate)
         btnSettings = controlView.findViewById(R.id.btnToggleSettings)
-        val btnMinimize = controlView.findViewById<TextView>(R.id.btnMinimize)
         val btnClose = controlView.findViewById<TextView>(R.id.btnCloseOverlay)
 
         panelSettings = controlView.findViewById(R.id.panelSettings)
@@ -1042,10 +1041,6 @@ class OverlayService : Service() {
             })
         }
 
-        // 9. Collapsible Floating Control (Minimize Toolbar)
-        btnMinimize.setOnClickListener {
-            minimizeToolbar()
-        }
 
         // 10. Close Overlay
         btnClose.setOnClickListener {
@@ -1200,26 +1195,43 @@ class OverlayService : Service() {
         var initialY = 0
         var initialTouchX = 0f
         var initialTouchY = 0f
+        var isDragging = false
+        val touchSlop = 8f * resources.displayMetrics.density
 
         dragHandle.setOnTouchListener { _, event ->
-            when (event.action) {
+            when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     initialX = controlLayoutParams.x
                     initialY = controlLayoutParams.y
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
+                    isDragging = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - initialTouchX).toInt()
-                    val dy = (event.rawY - initialTouchY).toInt()
-                    controlLayoutParams.x = initialX + dx
-                    controlLayoutParams.y = initialY + dy
-                    try {
-                        windowManager.updateViewLayout(entireView, controlLayoutParams)
-                    } catch (e: Exception) {
-                        e.printStackTrace()
+                    val dx = event.rawX - initialTouchX
+                    val dy = event.rawY - initialTouchY
+                    if (kotlin.math.hypot(dx, dy) > touchSlop) {
+                        isDragging = true
+                        controlLayoutParams.x = initialX + dx.roundToInt()
+                        controlLayoutParams.y = initialY + dy.roundToInt()
+                        try {
+                            windowManager.updateViewLayout(entireView, controlLayoutParams)
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
                     }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (!isDragging) {
+                        // Single Tap: Tutup (minimize) toolbar
+                        minimizeToolbar()
+                    }
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    isDragging = false
                     true
                 }
                 else -> false

@@ -94,18 +94,6 @@
                 android:textSize="14sp"
                 android:textStyle="bold" />
 
-            <!-- Minimize Button -->
-            <TextView
-                android:id="@+id/btnMinimize"
-                android:layout_width="30dp"
-                android:layout_height="32dp"
-                android:layout_marginStart="4dp"
-                android:background="@drawable/bg_control_btn"
-                android:gravity="center"
-                android:text="@string/control_minimize"
-                android:textColor="@color/text_secondary"
-                android:textSize="14sp"
-                android:textStyle="bold" />
 
             <!-- Close / Stop Button -->
             <TextView
@@ -488,7 +476,7 @@
             android:textStyle="bold"
             android:visibility="gone" />
 
-        <!-- Mini Expand Button [+] -->
+        <!-- Mini Drag / Expand Button [::] -->
         <TextView
             android:id="@+id/btnMiniExpand"
             android:layout_width="28dp"
@@ -496,7 +484,7 @@
             android:layout_marginStart="0dp"
             android:background="@drawable/bg_minimized_bubble"
             android:gravity="center"
-            android:text="@string/control_maximize"
+            android:text="@string/control_drag_handle"
             android:textColor="@color/cyan_accent"
             android:textSize="15sp"
             android:textStyle="bold"

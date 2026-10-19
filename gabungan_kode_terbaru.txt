@@ -4812,7 +4812,9 @@ class PrefsManager(context: Context) {
                     android:textStyle="bold" />
             </LinearLayout>
 
-        </ScrollView>
+        </LinearLayout>
+
+    </ScrollView>
 
     </LinearLayout>
 

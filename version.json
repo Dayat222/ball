@@ -1,6 +1,6 @@
 {
-  "versionCode": 13,
-  "versionName": "2.2",
+  "versionCode": 14,
+  "versionName": "2.3",
   "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-debug.apk",
-  "changelog": "Versi 2.2:\n• Perbaikan garis pantul (Bank Rays): Garis pantul kini tetap muncul dengan presisi tinggi saat bola sasaran berada dekat atau menempel pada bantalan dinding rel.\n• Pengoptimalan titik kontak pantul rel dan garis pantulan menuju lubang kantong."
+  "changelog": "Versi 2.3:\n• Menu Pengaturan kini dapat di-scroll (bergulir): seluruh item pengaturan (Thickness, Opacity, Ball Size, Ray Length, Line Color, Bank Color, Spectrum Hue, dan Cek Update) kini dapat diakses penuh dengan mudah tanpa terpotong batas layar."
 }

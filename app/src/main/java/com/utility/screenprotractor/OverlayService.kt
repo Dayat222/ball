@@ -731,6 +731,17 @@ class OverlayService : Service() {
                 panel.visibility = View.GONE
                 btnSettings?.setBackgroundResource(R.drawable.bg_control_btn)
             } else {
+                // Dynamically adjust scrollable panel height to fit screen safely
+                val density = resources.displayMetrics.density
+                val screenH = kotlin.math.min(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+                val currentY = controlLayoutParams.y
+                val toolbarH = (44f * density).roundToInt()
+                val marginBot = (16f * density).roundToInt()
+                val availableSpace = screenH - currentY - toolbarH - marginBot
+                val targetHeight = availableSpace.coerceIn((170f * density).roundToInt(), (235f * density).roundToInt())
+                panel.layoutParams = panel.layoutParams.apply {
+                    height = targetHeight
+                }
                 panel.visibility = View.VISIBLE
                 btnSettings?.setBackgroundResource(R.drawable.bg_control_btn_active)
             }

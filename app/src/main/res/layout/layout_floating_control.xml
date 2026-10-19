@@ -50,6 +50,22 @@
                 android:textSize="12sp"
                 android:textStyle="bold" />
 
+            <!-- Bank / Reflection Rays Toggle Button (Bank ON / OFF) -->
+            <TextView
+                android:id="@+id/btnToggleBankGuides"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/bg_control_btn_active"
+                android:gravity="center"
+                android:minWidth="44dp"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:text="@string/control_bank"
+                android:textColor="@color/yellow_accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
             <!-- Calibration Mode Toggle Button -->
             <TextView
                 android:id="@+id/btnToggleCalibrate"
@@ -288,6 +304,71 @@
                 <!-- Current Color Preview Indicator -->
                 <View
                     android:id="@+id/viewColorPreview"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginStart="4dp" />
+
+            </LinearLayout>
+
+            <!-- Bank Ray Color Section -->
+            <TextView
+                android:id="@+id/tvBankColorTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="@string/label_bank_line_color"
+                android:textColor="@color/yellow_accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <!-- Row: Bank Ray Circular Preset Swatches and Color Preview -->
+            <LinearLayout
+                android:id="@+id/rowBankPresetColors"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <View
+                    android:id="@+id/btnBankColorAmber"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="8dp" />
+
+                <View
+                    android:id="@+id/btnBankColorYellow"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="8dp" />
+
+                <View
+                    android:id="@+id/btnBankColorWhite"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="8dp" />
+
+                <View
+                    android:id="@+id/btnBankColorCyan"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="8dp" />
+
+                <View
+                    android:id="@+id/btnBankColorGreen"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="8dp" />
+
+                <View
+                    android:id="@+id/btnBankColorRed"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_marginEnd="8dp" />
+
+                <!-- Current Bank Color Preview Indicator -->
+                <View
+                    android:id="@+id/viewBankColorPreview"
                     android:layout_width="26dp"
                     android:layout_height="26dp"
                     android:layout_marginStart="4dp" />

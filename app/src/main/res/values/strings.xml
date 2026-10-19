@@ -43,6 +43,7 @@
     <string name="control_off">OFF</string>
     <string name="control_line_short">Short</string>
     <string name="control_line_full">Full</string>
+    <string name="control_bank">Bank</string>
     <string name="control_close">✕</string>
 
     <!-- Settings Panel -->
@@ -50,11 +51,14 @@
     <string name="label_opacity">Opacity: %1$d%%</string>
     <string name="label_ball_size">Target Ring Size: %1$.1f dp</string>
     <string name="label_line_color">Line Color</string>
+    <string name="label_bank_line_color">Bank Ray Color</string>
     <string name="label_hue">Spectrum Hue: %1$d°</string>
     <string name="label_hue_white">Color: Pure White</string>
     <string name="label_guideline_length">Ray Length</string>
     <string name="toast_line_short">Ray: Short Mode (85 dp)</string>
     <string name="toast_line_full">Ray: Full Length Mode (To Vertex)</string>
+    <string name="toast_bank_on">Bank Rays: ON</string>
+    <string name="toast_bank_off">Bank Rays: OFF</string>
 
     <!-- Calibration Info -->
     <string name="calib_instructions">Drag corner handles to align boundary box with target area.</string>

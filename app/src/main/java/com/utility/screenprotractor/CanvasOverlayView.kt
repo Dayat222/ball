@@ -61,6 +61,9 @@ class CanvasOverlayView @JvmOverloads constructor(
     var showRadialGuides: Boolean = true
         private set
 
+    var showBankGuides: Boolean = true
+        private set
+
     var isFullLengthGuides: Boolean = false
         private set
 
@@ -153,13 +156,16 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
     private val pocketLinePaint get() = sixLinePaint
 
-    // Paint: 6 Mirror Bank Rays from Target Ball (bankLinePaint)
+    // Paint: 6 Mirror Bank Rays from Target Ball (bankLinePaint) - Dashed styling
     private val bankLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#FFAB00")
         style = Paint.Style.STROKE
         strokeWidth = 3.5f * density
         strokeCap = Paint.Cap.ROUND
+        pathEffect = DashPathEffect(floatArrayOf(10f * density, 7f * density), 0f)
     }
+
+    private val bankRayPath = Path()
 
     private val bankDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#FFAB00")
@@ -308,6 +314,7 @@ class CanvasOverlayView @JvmOverloads constructor(
         updateLineStyle(currentStrokeWidth, currentAlpha)
 
         showRadialGuides = prefsManager.getShowRadialGuides()
+        showBankGuides = prefsManager.getShowBankGuides()
         isFullLengthGuides = prefsManager.isFullLengthGuides()
         ringRadiusDp = prefsManager.getRingRadius()
     }
@@ -416,6 +423,7 @@ class CanvasOverlayView @JvmOverloads constructor(
 
         bankLinePaint.color = bankArgb
         bankDotPaint.color = bankArgb
+        bankLinePaint.pathEffect = DashPathEffect(floatArrayOf(10f * density, 7f * density), 0f)
 
         // Synchronize stem/tether line and center aim dot alpha
         val stemAlpha = (currentAlpha * 0.7f).roundToInt().coerceIn(20, 255)
@@ -440,6 +448,17 @@ class CanvasOverlayView @JvmOverloads constructor(
     fun toggleRadialGuides(): Boolean {
         setShowRadialGuides(!showRadialGuides)
         return showRadialGuides
+    }
+
+    fun setShowBankGuides(show: Boolean) {
+        showBankGuides = show
+        prefsManager.saveShowBankGuides(show)
+        invalidate()
+    }
+
+    fun toggleBankGuides(): Boolean {
+        setShowBankGuides(!showBankGuides)
+        return showBankGuides
     }
 
     fun setFullLengthGuides(isFull: Boolean) {
@@ -709,6 +728,92 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     /**
+     * Precision Bank / Cushion Reflection Ray.
+     * Computes exact geometric reflection off cushion plane (horizontal or vertical)
+     * towards destination pocket, drawing:
+     * - In Short Mode: dashed ray (85dp) from ball toward cushion bounce point.
+     * - In Full Mode: full dashed ray from ball to cushion bounce point, contact dot marker,
+     *   and full dashed reflected ray from cushion bounce point into destination pocket mouth!
+     * Rendered via bankRayPath + DashPathEffect for hardware-accelerated dashed styling.
+     */
+    private fun drawBankRayToPocket(
+        canvas: Canvas,
+        bx: Float,
+        by: Float,
+        pocketX: Float,
+        pocketY: Float,
+        cushionIsHorizontal: Boolean,
+        cushionCoord: Float,
+        cushionMin: Float,
+        cushionMax: Float,
+        startDist: Float,
+        shortRayLength: Float
+    ) {
+        val hitX: Float
+        val hitY: Float
+        if (cushionIsHorizontal) {
+            val mirrorY = 2f * cushionCoord - pocketY
+            val dy = mirrorY - by
+            if (abs(dy) < 0.001f) return
+            val t = (cushionCoord - by) / dy
+            if (t <= 0f) return
+            hitX = bx + t * (pocketX - bx)
+            hitY = cushionCoord
+            if (hitX < cushionMin || hitX > cushionMax) return
+        } else {
+            val mirrorX = 2f * cushionCoord - pocketX
+            val dx = mirrorX - bx
+            if (abs(dx) < 0.001f) return
+            val t = (cushionCoord - bx) / dx
+            if (t <= 0f) return
+            hitX = cushionCoord
+            hitY = by + t * (pocketY - by)
+            if (hitY < cushionMin || hitY > cushionMax) return
+        }
+
+        val dx1 = hitX - bx
+        val dy1 = hitY - by
+        val dist1 = hypot(dx1, dy1)
+        if (dist1 <= startDist) return
+
+        val ux1 = dx1 / dist1
+        val uy1 = dy1 / dist1
+
+        if (isFullLengthGuides) {
+            // Full Mode:
+            // 1. Dashed incoming ray from ball to cushion hit point
+            bankRayPath.reset()
+            bankRayPath.moveTo(bx + ux1 * startDist, by + uy1 * startDist)
+            bankRayPath.lineTo(hitX, hitY)
+            canvas.drawPath(bankRayPath, bankLinePaint)
+
+            // 2. Small cushion contact dot marker
+            canvas.drawCircle(hitX, hitY, 3f * density, bankDotPaint)
+
+            // 3. Dashed reflected ray from cushion hit point to target pocket
+            val dx2 = pocketX - hitX
+            val dy2 = pocketY - hitY
+            val dist2 = hypot(dx2, dy2)
+            if (dist2 > 1f) {
+                bankRayPath.reset()
+                bankRayPath.moveTo(hitX, hitY)
+                bankRayPath.lineTo(pocketX, pocketY)
+                canvas.drawPath(bankRayPath, bankLinePaint)
+            }
+        } else {
+            // Short Mode:
+            // Dashed short ray from startDist toward cushion hit point
+            val actualEnd = shortRayLength.coerceAtMost(dist1)
+            if (actualEnd > startDist) {
+                bankRayPath.reset()
+                bankRayPath.moveTo(bx + ux1 * startDist, by + uy1 * startDist)
+                bankRayPath.lineTo(bx + ux1 * actualEnd, by + uy1 * actualEnd)
+                canvas.drawPath(bankRayPath, bankLinePaint)
+            }
+        }
+    }
+
+    /**
      * Zero-Allocation Target Mode: 6 Direct Rays with 12-Jaw Gate Clearance + 10 Cushion Bank Rays.
      * Direct primitive calculations per frame without allocating any Array or PointF objects.
      */
@@ -729,15 +834,12 @@ class CanvasOverlayView @JvmOverloads constructor(
         if (showRadialGuides) {
             val startDist = ringRadius + (3f * density)
             val directEndDist = 85f * density
-            val bankEndDist = if (isFullLengthGuides) 110f * density else 64f * density
 
             val l = boundaryBox.left
             val r = boundaryBox.right
             val t = boundaryBox.top
             val b = boundaryBox.bottom
             val cx = boundaryBox.centerX()
-
-            val cornerJawDist = 14f * density
 
             // 1. 6 Direct Vertex Rays (4 Corner Gates with Rail Clearance + 2 Precision Lateral Gates with Tilt Modeling)
             // Top-Left (Corner)
@@ -758,48 +860,63 @@ class CanvasOverlayView @JvmOverloads constructor(
             // Bottom-Right (Corner)
             drawCornerVertexRay(canvas, bx, by, r, b, isLeft = false, isTop = false, startDist, directEndDist, sixLinePaint)
 
-            // 2. 10 Mirror Bank Rays (Pantulan Dinding Rel)
-            // Collision plane accounts for physical cushion nose + ball radius
-            val cushionBounceInset = (5f * density) + (ringRadiusDp * density)
-            val bounceL = l + cushionBounceInset
-            val bounceR = r - cushionBounceInset
-            val bounceT = t + cushionBounceInset
-            val bounceB = b - cushionBounceInset
+            // 2. 10 Mirror Bank Rays (Pantulan Dinding Rel) - Toggleable via showBankGuides
+            if (showBankGuides) {
+                val cushionBounceInset = (5f * density) + (ringRadiusDp * density)
+                val bounceL = l + cushionBounceInset
+                val bounceR = r - cushionBounceInset
+                val bounceT = t + cushionBounceInset
+                val bounceB = b - cushionBounceInset
 
-            val sideJawInset = 6f * density
-            val mirrorTopCornerY = 2f * bounceT - b
-            val mirrorTopCenterY = 2f * bounceT - (b - sideJawInset)
-            val mirrorBottomCornerY = 2f * bounceB - t
-            val mirrorBottomCenterY = 2f * bounceB - (t + sideJawInset)
-            val mirrorRightX = 2f * bounceR - l
-            val mirrorLeftX = 2f * bounceL - r
+                val cornerMouthInsetX = 9.0f * density
+                val cornerMouthInsetY = 11.2f * density
 
-            val minClearance = 3f * density
+                val pocketTL_X = l + cornerMouthInsetX
+                val pocketTL_Y = t + cornerMouthInsetY
 
-            // Top Bound (3 rays: bounce off top rail toward bottom pockets)
-            if (by > bounceT + minClearance) {
-                drawRadialRay(canvas, bx, by, l + cornerJawDist, mirrorTopCornerY, startDist, bankEndDist, bankLinePaint)
-                drawRadialRay(canvas, bx, by, cx, mirrorTopCenterY, startDist, bankEndDist, bankLinePaint)
-                drawRadialRay(canvas, bx, by, r - cornerJawDist, mirrorTopCornerY, startDist, bankEndDist, bankLinePaint)
-            }
+                val pocketTR_X = r - cornerMouthInsetX
+                val pocketTR_Y = t + cornerMouthInsetY
 
-            // Bottom Bound (3 rays: bounce off bottom rail toward top pockets)
-            if (by < bounceB - minClearance) {
-                drawRadialRay(canvas, bx, by, l + cornerJawDist, mirrorBottomCornerY, startDist, bankEndDist, bankLinePaint)
-                drawRadialRay(canvas, bx, by, cx, mirrorBottomCenterY, startDist, bankEndDist, bankLinePaint)
-                drawRadialRay(canvas, bx, by, r - cornerJawDist, mirrorBottomCornerY, startDist, bankEndDist, bankLinePaint)
-            }
+                val pocketBL_X = l + cornerMouthInsetX
+                val pocketBL_Y = b - cornerMouthInsetY
 
-            // Right Bound (2 rays: bounce off right rail toward left pockets)
-            if (bx < bounceR - minClearance) {
-                drawRadialRay(canvas, bx, by, mirrorRightX, t + cornerJawDist, startDist, bankEndDist, bankLinePaint)
-                drawRadialRay(canvas, bx, by, mirrorRightX, b - cornerJawDist, startDist, bankEndDist, bankLinePaint)
-            }
+                val pocketBR_X = r - cornerMouthInsetX
+                val pocketBR_Y = b - cornerMouthInsetY
 
-            // Left Bound (2 rays: bounce off left rail toward right pockets)
-            if (bx > bounceL + minClearance) {
-                drawRadialRay(canvas, bx, by, mirrorLeftX, t + cornerJawDist, startDist, bankEndDist, bankLinePaint)
-                drawRadialRay(canvas, bx, by, mirrorLeftX, b - cornerJawDist, startDist, bankEndDist, bankLinePaint)
+                val pocketTC_X = cx
+                val pocketTC_Y = t
+
+                val pocketBC_X = cx
+                val pocketBC_Y = b
+
+                val minClearance = 3f * density
+                val shortBankLength = 85f * density
+
+                // Top Cushion (3 rays: bounce off top rail toward bottom pockets)
+                if (by > bounceT + minClearance) {
+                    drawBankRayToPocket(canvas, bx, by, pocketBL_X, pocketBL_Y, true, bounceT, bounceL, bounceR, startDist, shortBankLength)
+                    drawBankRayToPocket(canvas, bx, by, pocketBC_X, pocketBC_Y, true, bounceT, bounceL, bounceR, startDist, shortBankLength)
+                    drawBankRayToPocket(canvas, bx, by, pocketBR_X, pocketBR_Y, true, bounceT, bounceL, bounceR, startDist, shortBankLength)
+                }
+
+                // Bottom Cushion (3 rays: bounce off bottom rail toward top pockets)
+                if (by < bounceB - minClearance) {
+                    drawBankRayToPocket(canvas, bx, by, pocketTL_X, pocketTL_Y, true, bounceB, bounceL, bounceR, startDist, shortBankLength)
+                    drawBankRayToPocket(canvas, bx, by, pocketTC_X, pocketTC_Y, true, bounceB, bounceL, bounceR, startDist, shortBankLength)
+                    drawBankRayToPocket(canvas, bx, by, pocketTR_X, pocketTR_Y, true, bounceB, bounceL, bounceR, startDist, shortBankLength)
+                }
+
+                // Right Cushion (2 rays: bounce off right rail toward left pockets)
+                if (bx < bounceR - minClearance) {
+                    drawBankRayToPocket(canvas, bx, by, pocketTL_X, pocketTL_Y, false, bounceR, bounceT, bounceB, startDist, shortBankLength)
+                    drawBankRayToPocket(canvas, bx, by, pocketBL_X, pocketBL_Y, false, bounceR, bounceT, bounceB, startDist, shortBankLength)
+                }
+
+                // Left Cushion (2 rays: bounce off left rail toward right pockets)
+                if (bx > bounceL + minClearance) {
+                    drawBankRayToPocket(canvas, bx, by, pocketTR_X, pocketTR_Y, false, bounceL, bounceT, bounceB, startDist, shortBankLength)
+                    drawBankRayToPocket(canvas, bx, by, pocketBR_X, pocketBR_Y, false, bounceL, bounceT, bounceB, startDist, shortBankLength)
+                }
             }
         }
     }

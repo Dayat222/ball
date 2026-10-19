@@ -216,6 +216,17 @@ class PrefsManager(context: Context) {
         return prefs.getBoolean(KEY_FULL_LENGTH_GUIDES, false)
     }
 
+    /**
+     * Save and retrieve bank/reflection rays visibility toggle.
+     */
+    fun saveShowBankGuides(show: Boolean) {
+        prefs.edit().putBoolean(KEY_SHOW_BANK_GUIDES, show).apply()
+    }
+
+    fun getShowBankGuides(): Boolean {
+        return prefs.getBoolean(KEY_SHOW_BANK_GUIDES, true)
+    }
+
     companion object {
         private const val PREFS_NAME = "screen_protractor_prefs"
         private const val DEFAULT_MARGIN_RATIO = 0.08f
@@ -246,6 +257,7 @@ class PrefsManager(context: Context) {
         private const val KEY_BANK_LINE_COLOR = "secondary_ray_color"
 
         private const val KEY_SHOW_SIX_LINES = "show_radial_guides"
+        private const val KEY_SHOW_BANK_GUIDES = "show_bank_guides"
         private const val KEY_FULL_LENGTH_GUIDES = "full_length_guides"
         private const val KEY_BALL_RADIUS = "target_ring_radius"
     }

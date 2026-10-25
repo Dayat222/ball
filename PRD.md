@@ -1,131 +1,131 @@
-# Product Requirements Document (PRD): Screen Angle & Geometry Ruler Overlay
+# Product Requirements Document (PRD): Screen Angle Ruler Overlay
 
-## 1. Project Overview
-- **App Name:** Screen Angle Ruler
-- **Package Name:** `com.utility.screenprotractor`
-- **Platform:** Android (Min SDK 26 / Android 8.0+, Target SDK 34 / Android 14)
-- **Language & Build System:** Kotlin, Gradle (Kotlin DSL `build.gradle.kts`), Android SDK Standar (Tanpa library pihak ketiga yang berat).
-- **CI/CD Build:** GitHub Actions (Otomatis kompilasi & menghasilkan artifact `app-debug.apk` setiap kali ada `git push`).
-- **Core Objective:** Aplikasi utilitas penggaris layar transparan (*screen overlay*) yang berjalan di atas layar untuk memvisualisasikan garis lurus dan sudut pantulan vektor 2D ($\theta_i = \theta_r$) secara manual dan presisi, dilengkapi arsitektur *non-intrusive* (tidak mencampuri aplikasi di bawahnya) dan mode *quick-hide*.
+**Status dokumen:** diselaraskan dengan implementasi **v2.6** (versionCode 17).
+Bagian yang sudah tidak berlaku ditandai di §8.
 
----
+## 1. Ringkasan Produk
 
-## 2. User Flow (Alur Pengguna)
-1. Pengguna membuka aplikasi utama (`MainActivity`).
-2. Aplikasi memeriksa izin `SYSTEM_ALERT_WINDOW` (Display over other apps). Jika belum diberikan, tampilkan tombol untuk membuka pengaturan izin sistem.
-3. Pengguna menekan tombol **"Start Ruler Overlay"** di `MainActivity`, yang akan menjalankan `OverlayService` dan menutup `MainActivity`.
-4. Di layar muncul dua komponen terpisah:
-   - **Floating Control Bar:** Panel kecil bertema gelap yang bisa digeser ke sudut layar mana pun.
-   - **Canvas Overlay:** Lapisan transparan tempat menggambar garis bantu dan batas pantulan (*boundary box*).
-5. Pengguna mengatur batas kotak pantulan (*Boundary Box*) satu kali (tersimpan otomatis di `SharedPreferences`), lalu menggeser titik **Point A** dan **Point B** untuk melihat sudut pantulan.
-6. Saat ingin berinteraksi penuh dengan aplikasi di bawahnya, pengguna menekan tombol **`[Lock]`** (tembus sentuhan) atau **`[Hide]`** (menyembunyikan kanvas sepenuhnya dari layar sementara waktu).
+- **Nama aplikasi:** Screen Angle Ruler
+- **Package:** `com.utility.screenprotractor`
+- **Platform:** Android, minSdk 26, targetSdk 34
+- **Bahasa & build:** Kotlin, Gradle Kotlin DSL, Android SDK standar tanpa library berat
+- **Tujuan inti:** overlay transparan untuk memvisualisasikan arah tembakan bola pada meja
+  biliar: ring seukuran bola, 6 garis langsung ke mulut lubang, dan 10 garis pantul bantalan
+  yang dihitung secara geometris.
+- **Prinsip arsitektur:** *non-intrusive*. Overlay tidak menyerap sentuhan, tidak membaca layar,
+  tidak memakai AccessibilityService maupun MediaProjection.
 
----
+## 2. Alur Pengguna
 
-## 3. Core Functional Requirements (Fitur Utama)
+1. Pengguna membuka `MainActivity`, aplikasi mengecek izin `SYSTEM_ALERT_WINDOW`.
+2. Tombol **Start Ruler Overlay** menjalankan `OverlayService` sebagai foreground service lalu
+   menutup activity.
+3. Muncul tiga komponen: kanvas overlay (dipotong seukuran meja), satu handle target `+`, dan
+   toolbar mengambang.
+4. Pengguna melakukan kalibrasi sekali: tombol **Calib** membuat kanvas memenuhi layar, menarik
+   8 handle batas (4 sudut + 4 tengah sisi), lalu **Save Bound**. Batas disimpan otomatis.
+5. Selama bermain, pengguna menggeser handle target. Ring dan seluruh ray dihitung ulang secara
+   real-time; sentuhan lain menembus ke game di bawahnya.
+6. Toolbar bisa diciutkan menjadi kapsul mini dengan tombol ON/OFF untuk layar bersih total.
 
-### Fitur 1: Sistem Multi-Window di `OverlayService`
-Gunakan **dua** instance `View` yang terpisah di dalam `WindowManager` menggunakan tipe `TYPE_APPLICATION_OVERLAY`:
-1. **`CanvasOverlayView` (`MATCH_PARENT` x `MATCH_PARENT`):**
-   - Berfungsi khusus merender grafik garis, titik kontrol (*handle*), dan kotak batas pantulan.
-   - Memiliki 3 status interaksi:
-     - **EDIT MODE:** Menerima input sentuhan jari untuk menggeser titik koordinat (`FLAG_NOT_FOCUSABLE`).
-     - **LOCK MODE (Pass-Through):** Menambahkan flag `FLAG_NOT_TOUCHABLE` sehingga seluruh sentuhan jari menembus langsung ke aplikasi di bawahnya. Lingkaran *handle* disembunyikan, menyisakan garis tipis.
-     - **HIDDEN MODE (Clear Touch):** Mengubah visibilitas `CanvasOverlayView` menjadi `View.GONE` sehingga tidak ada lapisan overlay sama sekali di atas layar utama.
-2. **`FloatingControlView` (`WRAP_CONTENT` x `WRAP_CONTENT`):**
-   - Panel tombol kontrol yang selalu aktif menerima klik (`FLAG_NOT_FOCUSABLE`) dan bisa di-*drag* ke posisi mana saja di layar.
+## 3. Kebutuhan Fungsional
 
-### Fitur 2: Geometri Garis & Pantulan (`CanvasOverlayView` & `GeometryUtils`)
-Sediakan 2 mode perhitungan garis yang dapat diganti melalui tombol di panel kontrol:
-- **Mode 1: Auto-Reflection ($\theta_i = \theta_r$)**
-  - Menampilkan persegi panjang batas area pantul (*Boundary Box*) yang ke-4 sisinya dapat dikalibrasi oleh pengguna. Posisi batas ini wajib disimpan ke `SharedPreferences` agar tidak perlu diatur ulang saat aplikasi dibuka kembali.
-  - Pengguna menggeser **Point A (Titik Awal)** dan **Point B (Titik Arah)**.
-  - Sistem menghitung titik perpotongan (*ray-box intersection*) antara sinar dari Point A yang melewati Point B terhadap sisi *Boundary Box*.
-  - Dari titik potong tersebut, gambar garis pantulan kedua secara otomatis dengan membalik vektor arah:
-    - Pantulan pada sisi Horizontal (Atas/Bawah): $(dx', dy') = (dx, -dy)$
-    - Pantulan pada sisi Vertikal (Kiri/Kanan): $(dx', dy') = (-dx, dy)$
-- **Mode 2: Manual 3-Point Line**
-  - Pengguna menggeser 3 titik secara bebas: **Point A (Start)**, **Point B (Pivot/Mid)**, dan **Point C (End)**.
+### 3.1 Manajemen multi-window (`OverlayService`)
 
-### Fitur 3: Safe-Operation & Non-Intrusive Architecture
-Untuk menjaga keamanan privasi, performa, dan mencegah konflik deteksi *obscured touch* pada Android 12+:
-1. **Strict Permission & Offline Policy:**
-   - Aplikasi harus 100% *offline* (**DILARANG** menambahkan `android.permission.INTERNET`).
-   - Hanya gunakan izin `SYSTEM_ALERT_WINDOW`, `FOREGROUND_SERVICE`, dan `FOREGROUND_SERVICE_SPECIAL_USE` (untuk Android 14).
-   - **DILARANG** menggunakan `AccessibilityService`, `MediaProjection`, atau `QUERY_ALL_PACKAGES`.
-2. **Edge-Marker Mode (Titik Patokan Pinggir):**
-   - Tambahkan opsi pada tombol mode di mana saat garis dikunci (*Lock*), aplikasi menyembunyikan garis melintang di tengah layar dan hanya menampilkan indikator titik kecil (`16dp`) tepat di titik pantul pada sisi *Boundary Box*.
-3. **Neutral Identity:**
-   - Seluruh penamaan variabel, komentar kode, nama paket (`com.utility.screenprotractor`), dan string UI harus menggunakan terminologi penggaris geometri/desain layar umum.
+- `CanvasOverlayView`: `MATCH_PARENT` saat kalibrasi, dipotong seukuran boundary box + `18dp`
+  saat bermain. Selalu `FLAG_NOT_TOUCHABLE` + `FLAG_NOT_FOCUSABLE`; touch diaktifkan hanya saat
+  kalibrasi. Alpha window `0.78`.
+- `HandleView` target: window `42dp` terpisah, selalu menerima sentuhan, digeser dengan offset
+  anti-jari `48dp` horizontal dan `36dp` vertikal.
+- `FloatingControlView`: toolbar `WRAP_CONTENT` yang bisa di-drag, atau kapsul mini setelah
+  minimize.
 
-### Fitur 4: Desain Floating Control Panel (Compact Dark UI)
-Buat UI panel kontrol secara terprogram (atau XML sederhana) dengan latar belakang `#CC1E1E1E` (Dark Gray transparan), sudut membulat `12dp`, ukuran ringkas, berisi tombol-tombol berikut:
-- **`[Drag Handle (::)]`**: Area untuk menggeser posisi panel kontrol.
-- **`[Edit / Lock]`**: Mengubah antara mode geser titik dan mode tembus sentuhan.
-- **`[Hide / Show]`**: Menyembunyikan/menampilkan `CanvasOverlayView` (`View.GONE` vs `View.VISIBLE`).
-- **`[Mode]`**: Siklus mode: *Auto-Reflect* -> *Manual 3-Point* -> *Edge-Marker Only*.
-- **`[Calibrate]`**: Mengaktifkan/menonaktifkan mode geser sisi *Boundary Box*.
-- **`[X]`**: Menghentikan `OverlayService` dan menutup overlay.
+### 3.2 Geometri & render (`CanvasOverlayView`)
 
----
+- Ruang koordinat: landscape (`max(w,h) × min(w,h)`); kanvas yang dipotong dikompensasi dengan
+  translasi `(-winX, -winY)`.
+- **6 direct ray** dari titik target ke 6 mulut lubang:
+  - 4 sudut memakai inset `9.0dp` horizontal dan `11.2dp` vertikal ke pusat mulut lubang.
+  - 2 lubang tengah memakai kompensasi kemiringan (`tiltRatio`) dengan pergeseran maksimum
+    `6–9dp`.
+- **10 bank ray**: titik tujuan lubang dicerminkan terhadap bidang bantalan, titik pantul dicari
+  secara analitik, lalu digambar garis datang + garis pantul. Bantalan dimodelkan pada
+  `boundary box ± radius bola`. Ray tetap tampil ketika bola menempel bantalan.
+- Panjang ray: **Short** (`85dp`) atau **Full** (sampai lubang/vertex, plus titik kontak bantalan).
+- Mode render tunggal: *single-point target*. Garis A–B dan mode Auto-Reflect / Manual 3-Point /
+  Edge-Marker sudah dihapus.
 
-## 4. Visual & Canvas Specifications
-- **Primary Line (Garis Utama A -> B):** Warna `#00E5FF` (Cyan), `strokeWidth = 3.5f`, menggunakan `DashPathEffect(floatArrayOf(15f, 10f), 0f)`.
-- **Reflected Line (Garis Pantul B -> C):** Warna `#FFD600` (Kuning), `strokeWidth = 3.5f`, menggunakan `DashPathEffect(floatArrayOf(15f, 10f), 0f)`.
-- **Boundary Box:** Warna `#80FFFFFF` (Putih semi-transparan), `strokeWidth = 2f`.
-- **Touch Handles (Titik Geser A, B, C):**
-  - Lingkaran luar radius `45f` dengan warna `#4000E5FF` (sebagai area sentuh jari).
-  - Garis *crosshair* tipis di bagian tengah dan titik pusat radius `5f` berwarna `#FFFFFF` agar penempatan titik sangat presisi.
+### 3.3 Kalibrasi & persistensi (`PrefsManager`)
 
----
+- 8 handle kalibrasi: 4 sudut + 4 tengah sisi, dengan clamp otomatis dan validasi agar kotak tidak
+  terbalik/kolaps.
+- `calib_version` disimpan; kalibrasi dari versi lama otomatis direset.
+- Default boundary mengikuti proporsi meja 2:1 (`x: 19.1%`, `y: 22.8%` sampai `92.1%`).
+- Disimpan di `SharedPreferences` `screen_protractor_prefs`: boundary box, posisi target,
+  ketebalan, opacity, warna garis, warna bank ray, radius ring, status Bank, dan mode panjang ray.
 
-## 5. GitHub Actions CI/CD Specification (Wajib Dibuat)
-Agar proyek ini dapat di-build menjadi file `.apk` langsung di GitHub tanpa Android Studio lokal, buat file workflow `.github/workflows/build-apk.yml` serta seluruh file *Gradle Wrapper* yang dibutuhkan:
+### 3.4 Toolbar & pengaturan
 
-1. **Konfigurasi Workflow (`.github/workflows/build-apk.yml`):**
-   - Trigger: `on: [push, workflow_dispatch]`
-   - Runner: `ubuntu-latest`
-   - Steps:
-     1. Checkout repository (`actions/checkout@v4`).
-     2. Setup JDK 17 (`actions/setup-java@v4` dengan distribusi `temurin` dan cache `gradle`).
-     3. Setup Android SDK (`android-actions/setup-android@v3`).
-     4. Buat/gunakan Gradle Wrapper atau gunakan `gradle/actions/setup-gradle@v3` untuk menjalankan perintah `gradle assembleDebug` (sehingga tetap berjalan lancar meskipun file binary `gradle-wrapper.jar` belum ada di repo).
-     5. Upload hasil APK menggunakan `actions/upload-artifact@v4` dengan nama `ScreenAngleRuler-Debug-APK` dari path `app/build/outputs/apk/debug/app-debug.apk`.
+- Toolbar utama: drag handle, `Short/Full`, `Bank`, `Calib`, `⚙`, `✕`.
+- Panel `⚙`: slider ketebalan (`0.5–15dp`), opacity, ukuran ring (`8–30dp`), 6 swatch warna garis
+  + hue 360°, 6 swatch warna bank ray + hue 360°, dan tombol cek update.
+- Kapsul mini: drag, tombol `ON/OFF`, tombol expand.
 
----
+### 3.5 Pembaruan dalam aplikasi (`AppUpdateManager`)
 
-## 6. Expected Directory Structure
-Pastikan seluruh file berikut dibuat secara lengkap tanpa *placeholder* yang terpotong:
+- Sumber utama: `https://raw.githubusercontent.com/Dayat222/ball/main/version.json` dengan
+  cache-buster.
+- Fallback: asset `version.json` pada GitHub Release `latest` melalui API.
+- Perbandingan memakai `versionCode` manifes; tag `latest` tidak pernah dianggap nomor versi.
+- Unduhan mengikuti redirect (maks. 6), progres persentase, lalu instalasi via `FileProvider`
+  dan `REQUEST_INSTALL_PACKAGES`.
 
-```text
-.
-├── .github/
-│   └── workflows/
-│       └── build-apk.yml
-├── app/
-│   ├── build.gradle.kts
-│   └── src/main/
-│       ├── AndroidManifest.xml
-│       ├── java/com/utility/screenprotractor/
-│       │   ├── MainActivity.kt
-│       │   ├── OverlayService.kt
-│       │   ├── CanvasOverlayView.kt
-│       │   ├── GeometryUtils.kt
-│       │   └── PrefsManager.kt
-│       └── res/
-│           └── values/
-│               └── strings.xml
-├── build.gradle.kts
-├── settings.gradle.kts
-└── gradle.properties
-```
+## 4. Izin
 
----
+| Izin | Alasan |
+|---|---|
+| `SYSTEM_ALERT_WINDOW` | Menampilkan overlay |
+| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE` | Foreground service di Android 14+ |
+| `INTERNET` | Cek update dan unduh APK |
+| `REQUEST_INSTALL_PACKAGES` | Memulai installer APK hasil unduhan |
 
-## 7. Instructions for AI Agent (Antigravity Execution Plan)
-Kerjakan proyek ini hingga tuntas dengan langkah berurutan:
-1. **Step 1 (Build System & CI/CD):** Buat `settings.gradle.kts`, `build.gradle.kts` (root & app), `gradle.properties`, dan `.github/workflows/build-apk.yml`. Pastikan menggunakan `gradle/actions/setup-gradle@v3` di GitHub Actions agar build tidak gagal meskipun `gradle-wrapper.jar` tidak di-commit.
-2. **Step 2 (Manifest & Resources):** Buat `AndroidManifest.xml` (dengan permission `SYSTEM_ALERT_WINDOW`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`) dan `strings.xml`.
-3. **Step 3 (Math & Storage Engine):** Buat `PrefsManager.kt` untuk menyimpan koordinat kalibrasi *Boundary Box* dan `GeometryUtils.kt` untuk perhitungan *ray-box intersection* serta vektor pantulan 2D.
-4. **Step 4 (Views & Service):** Buat `CanvasOverlayView.kt` dan `OverlayService.kt` lengkap dengan panel kontrol mengambang bertema gelap yang bisa di-*drag*.
-5. **Step 5 (Entry Activity):** Buat `MainActivity.kt` dengan tampilan gelap minimalis untuk manajemen izin dan tombol Start/Stop.
+**Dilarang:** `AccessibilityService`, `MediaProjection`, `QUERY_ALL_PACKAGES`, analytics, dan SDK
+pihak ketiga.
+
+## 5. Spesifikasi Visual
+
+- Latar toolbar `#CC1E1E1E`, sudut `12dp`.
+- Ray lubang: warna utama (default `#00E5FF`), `strokeWidth` mengikuti slider, `Cap.ROUND`.
+- Bank ray: warna sekunder (default `#FFAB00`), dashed `10dp/7dp`, dengan titik kontak `3.5dp`
+  pada mode Full.
+- Ring target: bayangan hitam `2.8dp` + cincin putih `1.4dp`; titik pusat ganda `2.5dp`/`1.5dp`.
+- Tether handle: putih dashed `6dp/6dp`, `1.5dp`, alpha 70% dari alpha garis.
+
+## 6. Build & CI/CD
+
+- Workflow: `.github/workflows/build-apk.yml`, trigger semua push dan `workflow_dispatch`.
+- Runner `ubuntu-latest`, JDK 17, Gradle 8.4 via `gradle/actions/setup-gradle`.
+- Build `assembleDebug`; artifact `ScreenAngleRuler-Debug-APK`.
+- Push ke `main` juga merefresh release tag `latest` berisi `app-debug.apk` **dan** `version.json`.
+- Debug dan release ditandatangani dengan `app/release.keystore` agar update tidak bentrok
+  signature. Keystore dan password ada di repo: repo harus diperlakukan sebagai rahasia.
+
+## 7. Kriteria Rilis
+
+1. `versionCode` di `app/build.gradle.kts` dan `version.json` harus sama dan **lebih besar** dari
+   versi terpasang.
+2. `changelog` di `version.json` diperbarui.
+3. CI hijau dan asset release `latest` berisi APK + `version.json`.
+4. APK baru bisa dipasang di atas APK lama tanpa uninstall.
+
+## 8. Perubahan dari spesifikasi awal
+
+| Item spesifikasi lama | Status v2.6 |
+|---|---|
+| Mode Auto-Reflect (A→B→dinding), Manual 3-Point, Edge-Marker | Dihapus; tidak dapat diakses sejak v2.4 |
+| Handle A dan C | Dihapus |
+| Quick-Ghost 4 detik | Dihapus |
+| Tombol Lock/Edit manual | Diganti: kanvas selalu pass-through, touch hanya saat kalibrasi |
+| Kebijakan 100% offline tanpa `INTERNET` | Tidak berlaku sejak updater OTA ditambahkan; lihat §4 |
+| Tombol Reset Bound di toolbar | Diganti tombol `Calib` (8 handle) + reset dari `MainActivity` |
+| Rotasi layar memakai koordinat portrait | Semua geometri memakai ruang landscape |

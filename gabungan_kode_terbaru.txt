@@ -12,8 +12,8 @@ android {
         applicationId = "com.utility.screenprotractor"
         minSdk = 26
         targetSdk = 34
-        versionCode = 16
-        versionName = "2.5"
+        versionCode = 17
+        versionName = "2.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -64,6 +64,7 @@ dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
+
 
 ==> app/src/main/AndroidManifest.xml <==
 <?xml version="1.0" encoding="utf-8"?>
@@ -122,6 +123,7 @@ dependencies {
     </application>
 
 </manifest>
+
 
 ==> app/src/main/java/com/utility/screenprotractor/AppUpdateManager.kt <==
 package com.utility.screenprotractor
@@ -247,71 +249,89 @@ object AppUpdateManager {
         return try {
             val cacheBusterUrl = "$VERSION_JSON_URL?t=${System.currentTimeMillis()}"
             val conn = openConnectionWithRedirects(cacheBusterUrl)
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+            try {
+                if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
+                parseVersionJson(
+                    conn.inputStream.bufferedReader().use { it.readText() },
+                    currentVersionCode
+                )
+            } finally {
                 conn.disconnect()
-                return null
             }
-            val jsonText = conn.inputStream.bufferedReader().use { it.readText() }
-            conn.disconnect()
-
-            val json = JSONObject(jsonText)
-            val remoteCode = json.optLong("versionCode", 1L)
-            val remoteName = json.optString("versionName", "1.0")
-            val downloadUrl = json.optString("downloadUrl", "")
-            val changelog = json.optString("changelog", "Pembaruan kestabilan dan perbaikan fitur.")
-
-            UpdateInfo(
-                remoteVersionCode = remoteCode,
-                remoteVersionName = remoteName,
-                downloadUrl = downloadUrl,
-                changelog = changelog,
-                isUpdateAvailable = remoteCode > currentVersionCode
-            )
         } catch (e: Exception) {
             null
         }
     }
 
+    /**
+     * Fallback channel: reads the version.json published as an asset on the latest GitHub release.
+     *
+     * Why: the release tag is a floating "latest" tag, so the tag name carries no version number.
+     * Guessing `currentVersionCode + 1` from it caused a permanent false "update available" prompt
+     * whenever raw.githubusercontent.com was unreachable. The manifest asset is the only reliable
+     * versionCode source in that case; if it is missing we report no update instead of guessing.
+     */
     private fun fetchFromGitHubReleases(currentVersionCode: Long): UpdateInfo? {
         return try {
             val conn = openConnectionWithRedirects(GITHUB_LATEST_RELEASE_API)
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+            val releaseJsonText = try {
+                if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
+                conn.inputStream.bufferedReader().use { it.readText() }
+            } finally {
                 conn.disconnect()
-                return null
             }
-            val jsonText = conn.inputStream.bufferedReader().use { it.readText() }
-            conn.disconnect()
 
-            val json = JSONObject(jsonText)
-            val tagName = json.optString("tag_name", "v1.0")
-            val body = json.optString("body", "Pembaruan otomatis terbaru.")
-
+            val json = JSONObject(releaseJsonText)
             var apkUrl = ""
+            var manifestUrl = ""
             val assets = json.optJSONArray("assets")
             if (assets != null) {
                 for (i in 0 until assets.length()) {
                     val asset = assets.getJSONObject(i)
                     val name = asset.optString("name", "")
-                    if (name.endsWith(".apk", ignoreCase = true)) {
-                        apkUrl = asset.optString("browser_download_url", "")
-                        break
+                    val url = asset.optString("browser_download_url", "")
+                    when {
+                        name.equals("version.json", ignoreCase = true) -> manifestUrl = url
+                        apkUrl.isEmpty() && name.endsWith(".apk", ignoreCase = true) -> apkUrl = url
                     }
                 }
             }
 
-            if (apkUrl.isEmpty()) {
-                apkUrl = "https://github.com/Dayat222/ball/releases/download/latest/app-debug.apk"
+            if (manifestUrl.isEmpty() || apkUrl.isEmpty()) return null
+
+            val manifestConn = openConnectionWithRedirects("$manifestUrl?t=${System.currentTimeMillis()}")
+            val manifestText = try {
+                if (manifestConn.responseCode != HttpURLConnection.HTTP_OK) return null
+                manifestConn.inputStream.bufferedReader().use { it.readText() }
+            } finally {
+                manifestConn.disconnect()
             }
 
-            // Estimate remote version code from tag if format is v1.2 or similar
-            val tagNumber = tagName.removePrefix("v").replace(".", "").toLongOrNull() ?: (currentVersionCode + 1)
+            parseVersionJson(manifestText, currentVersionCode)?.let { info ->
+                if (info.downloadUrl.isEmpty()) info.copy(downloadUrl = apkUrl) else info
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Parses the OTA manifest. Its versionCode is the single source of truth for comparisons,
+     * so an up-to-date install is never prompted to install the same build again.
+     */
+    private fun parseVersionJson(jsonText: String, currentVersionCode: Long): UpdateInfo? {
+        return try {
+            val json = JSONObject(jsonText)
+            val remoteCode = json.optLong("versionCode", currentVersionCode)
+            val remoteName = json.optString("versionName", "")
+            if (remoteName.isEmpty()) return null
 
             UpdateInfo(
-                remoteVersionCode = tagNumber,
-                remoteVersionName = tagName,
-                downloadUrl = apkUrl,
-                changelog = body,
-                isUpdateAvailable = true
+                remoteVersionCode = remoteCode,
+                remoteVersionName = remoteName,
+                downloadUrl = json.optString("downloadUrl", ""),
+                changelog = json.optString("changelog", "Pembaruan kestabilan dan perbaikan fitur."),
+                isUpdateAvailable = remoteCode > currentVersionCode
             )
         } catch (e: Exception) {
             null
@@ -538,6 +558,7 @@ object AppUpdateManager {
     }
 }
 
+
 ==> app/src/main/java/com/utility/screenprotractor/CanvasOverlayView.kt <==
 package com.utility.screenprotractor
 
@@ -558,17 +579,15 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
 /**
- * High-performance full-screen transparent canvas rendering:
- * 1. Primary & Reflected geometry lines.
- * 2. 6-Pocket Radial Short Lines from target ball (Point B).
- * 3. Connecting stem/tether lines from offset finger grips to actual aim coordinates.
+ * High-performance transparent canvas rendering:
+ * 1. 6-pocket direct vertex rays from the target ball (Point B).
+ * 2. 10 cushion bank rays with pocket-quality reflection paths.
+ * 3. Connecting stem/tether line from the offset finger grip to the real aim coordinate.
  * 4. Interactive 8-handle boundary box calibration (auto-clamped for Landscape & Portrait,
  *    and completely hidden when not calibrating for clean view).
  */
@@ -578,12 +597,6 @@ class CanvasOverlayView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
-    enum class RulerMode {
-        AUTO_REFLECT,
-        MANUAL_3_POINT,
-        EDGE_MARKER_ONLY
-    }
-
     private enum class DragTarget {
         NONE,
         CORNER_TOP_LEFT, CORNER_TOP_RIGHT, CORNER_BOTTOM_LEFT, CORNER_BOTTOM_RIGHT,
@@ -592,16 +605,11 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     private val prefsManager = PrefsManager(context)
 
-    // Current Mode & Calibration
-    var currentMode: RulerMode = RulerMode.AUTO_REFLECT
-        private set
+    // Calibration
     var isCalibrating: Boolean = false
         private set
 
-    // Feature 1: Radial Lines & Target Ring Radius
-    var showRadialGuides: Boolean = true
-        private set
-
+    // Target Ring Radius & Bank Ray Toggle
     var showBankGuides: Boolean = true
         private set
 
@@ -644,21 +652,11 @@ class CanvasOverlayView @JvmOverloads constructor(
         return PointF(landW, landH)
     }
 
-    // Actual Aim Coordinates (where rays originate and reflect)
-    var pointA = PointF()
-        private set
+    // Actual aim coordinate of the target ball and its offset finger grip
     var pointB = PointF()
         private set
-    var pointC = PointF()
-        private set
-
-    // Finger Grip Coordinates (HandleView touch pad positions)
-    private var gripA = PointF()
     private var gripB = PointF()
-    private var gripC = PointF()
-    private var hasGripA = false
     private var hasGripB = false
-    private var hasGripC = false
 
     var boundaryBox = RectF()
         private set
@@ -669,24 +667,7 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     // Density scaled dimensions
     private val density = resources.displayMetrics.density
-    private val edgeMarkerRadius = 8f * density
     private val edgeHandleRadius = 14f * density
-
-    // Paint: Primary Line (Point A -> Point B / Hit Point)
-    private val primaryLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#00E5FF")
-        style = Paint.Style.STROKE
-        strokeWidth = 3.5f * density
-        pathEffect = DashPathEffect(floatArrayOf(15f * density, 10f * density), 0f)
-    }
-
-    // Paint: Reflected Line (Hit Point -> Reflected End / Point B -> C)
-    private val reflectedLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#00E5FF")
-        style = Paint.Style.STROKE
-        strokeWidth = 3.5f * density
-        pathEffect = DashPathEffect(floatArrayOf(15f * density, 10f * density), 0f)
-    }
 
     // Paint: 6-Pocket Radial Short Lines from Target Ball (sixLinePaint)
     private val sixLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -695,7 +676,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         strokeWidth = 3.5f * density
         strokeCap = Paint.Cap.ROUND
     }
-    private val pocketLinePaint get() = sixLinePaint
 
     // Paint: 6 Mirror Bank Rays from Target Ball (bankLinePaint) - Dashed styling
     private val bankLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -713,6 +693,8 @@ class CanvasOverlayView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
 
+    var onCanvasSizeChanged: ((w: Int, h: Int) -> Unit)? = null
+
     // Active line styling state
     var currentLineColor: Int = PrefsManager.DEFAULT_LINE_COLOR
         private set
@@ -729,11 +711,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         style = Paint.Style.STROKE
         strokeWidth = 1.5f * density
         pathEffect = DashPathEffect(floatArrayOf(6f * density, 6f * density), 0f)
-    }
-
-    private val aimDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        style = Paint.Style.FILL
     }
 
     // Paints: High-Contrast Hollow Bullseye & Ball-Fit Ring for Point B
@@ -797,19 +774,7 @@ class CanvasOverlayView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
 
-    // Paint: Edge-Marker Dot (Mode 3)
-    private val edgeMarkerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#FFD600")
-        style = Paint.Style.FILL
-    }
-
-    private val edgeMarkerStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        style = Paint.Style.STROKE
-        strokeWidth = 2f * density
-    }
-
-    // Paint: Text Badges (Labels & Angle Info)
+    // Paint: Calibration label text
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textSize = 13f * density
@@ -820,31 +785,14 @@ class CanvasOverlayView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
 
-    private val linePath = Path()
     private val textBounds = Rect()
-    private val badgeRect = RectF()
-    private val innerInsetBox = RectF()
-
-    var onCanvasSizeChanged: ((w: Int, h: Int) -> Unit)? = null
-
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        super.onSizeChanged(w, h, oldw, oldh)
-    }
 
     init {
         val landSize = getLandscapeScreenSize()
         boundaryBox = prefsManager.getBoundaryBox(landSize.x, landSize.y)
         clampBoundaryBox(landSize.x, landSize.y)
 
-        val (savedA, savedB, savedC) = prefsManager.getPoints(landSize.x, landSize.y)
-        pointA = savedA
-        pointB = savedB
-        pointC = savedC
-
-        val savedModeOrdinal = prefsManager.getMode()
-        if (savedModeOrdinal in RulerMode.values().indices) {
-            currentMode = RulerMode.values()[savedModeOrdinal]
-        }
+        pointB = prefsManager.getTargetPoint(landSize.x, landSize.y)
 
         currentLineColor = prefsManager.getLineColor()
         currentBankLineColor = prefsManager.getSecondaryRayColor()
@@ -854,7 +802,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         updateBankLineColor(currentBankLineColor)
         updateLineStyle(currentStrokeWidth, currentAlpha)
 
-        showRadialGuides = prefsManager.getShowRadialGuides()
         showBankGuides = prefsManager.getShowBankGuides()
         isFullLengthGuides = prefsManager.isFullLengthGuides()
         ringRadiusDp = prefsManager.getRingRadius()
@@ -902,7 +849,7 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     /**
-     * Requirement 2: Dynamically adjust line color across primary, reflected, and 6-pocket lines,
+     * Requirement 2: Dynamically adjust line color of the pocket rays,
      * preserving currently active opacity alpha.
      */
     fun updateLineColor(color: Int) {
@@ -912,8 +859,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         val b = Color.blue(color)
         val argb = Color.argb(currentAlpha, r, g, b)
 
-        primaryLinePaint.color = argb
-        reflectedLinePaint.color = argb
         sixLinePaint.color = argb
 
         invalidate()
@@ -943,8 +888,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         currentStrokeWidth = strokeWidth
         val strokePx = strokeWidth * density
 
-        primaryLinePaint.strokeWidth = strokePx
-        reflectedLinePaint.strokeWidth = strokePx
         sixLinePaint.strokeWidth = strokePx
         bankLinePaint.strokeWidth = strokePx
 
@@ -953,8 +896,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         val b = Color.blue(currentLineColor)
         val argb = Color.argb(currentAlpha, r, g, b)
 
-        primaryLinePaint.color = argb
-        reflectedLinePaint.color = argb
         sixLinePaint.color = argb
 
         val br = Color.red(currentBankLineColor)
@@ -966,10 +907,9 @@ class CanvasOverlayView @JvmOverloads constructor(
         bankDotPaint.color = bankArgb
         bankLinePaint.pathEffect = DashPathEffect(floatArrayOf(10f * density, 7f * density), 0f)
 
-        // Synchronize stem/tether line and center aim dot alpha
+        // Synchronize stem/tether line alpha
         val stemAlpha = (currentAlpha * 0.7f).roundToInt().coerceIn(20, 255)
         stemLinePaint.color = Color.argb(stemAlpha, 255, 255, 255)
-        aimDotPaint.color = Color.argb(currentAlpha, 255, 255, 255)
 
         val shadowAlpha = (currentAlpha * 0.85f).roundToInt().coerceIn(20, 255)
         aimShadowPaint.color = Color.argb(shadowAlpha, 0, 0, 0)
@@ -978,17 +918,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         aimCenterDotPaint.color = Color.argb(currentAlpha, 255, 255, 255)
 
         invalidate()
-    }
-
-    fun setShowRadialGuides(show: Boolean) {
-        showRadialGuides = show
-        prefsManager.saveShowRadialGuides(show)
-        invalidate()
-    }
-
-    fun toggleRadialGuides(): Boolean {
-        setShowRadialGuides(!showRadialGuides)
-        return showRadialGuides
     }
 
     fun setShowBankGuides(show: Boolean) {
@@ -1019,38 +948,11 @@ class CanvasOverlayView @JvmOverloads constructor(
         invalidate()
     }
 
-    fun setPointA(aimX: Float, aimY: Float, gripX: Float = aimX, gripY: Float = aimY) {
-        pointA.set(aimX, aimY)
-        gripA.set(gripX, gripY)
-        hasGripA = (GeometryUtils.distance(aimX, aimY, gripX, gripY) > 5f)
-        invalidate()
-    }
-
     fun setPointB(aimX: Float, aimY: Float, gripX: Float = aimX, gripY: Float = aimY) {
         pointB.set(aimX, aimY)
         gripB.set(gripX, gripY)
         hasGripB = (GeometryUtils.distance(aimX, aimY, gripX, gripY) > 5f)
         invalidate()
-    }
-
-    fun setPointC(aimX: Float, aimY: Float, gripX: Float = aimX, gripY: Float = aimY) {
-        pointC.set(aimX, aimY)
-        gripC.set(gripX, gripY)
-        hasGripC = (GeometryUtils.distance(aimX, aimY, gripX, gripY) > 5f)
-        invalidate()
-    }
-
-    fun setRulerMode(mode: RulerMode) {
-        currentMode = mode
-        prefsManager.saveMode(mode.ordinal)
-        invalidate()
-    }
-
-    fun cycleRulerMode(): RulerMode {
-        val nextOrdinal = (currentMode.ordinal + 1) % RulerMode.values().size
-        val nextMode = RulerMode.values()[nextOrdinal]
-        setRulerMode(nextMode)
-        return nextMode
     }
 
     fun setCalibrating(calibrating: Boolean) {
@@ -1093,47 +995,15 @@ class CanvasOverlayView @JvmOverloads constructor(
         if (isCalibrating) {
             drawBoundaryBox(canvas)
             drawEightCalibrationHandles(canvas)
-        }
-
-        if (!isCalibrating) {
-            if (showRadialGuides) {
-                // Requirement 2: Mode 1-Titik Fokus (Single-Point Target Mode)
-                // Hide connecting line A-B and reflection rays.
-                // Only render Point B's stem tether (from grip pad to Point B)
-                if (hasGripB) {
-                    canvas.drawLine(gripB.x, gripB.y, pointB.x, pointB.y, stemLinePaint)
-                }
-                // Render Point B's white center dot + 6 Direct rays + 6 Mirror Bank rays
-                drawTargetAndRadialGuides(canvas)
-            } else {
-                // Normal modes (Auto-Reflect, Manual 3-Pt, Edge-Marker)
-                drawStemTethers(canvas)
-                when (currentMode) {
-                    RulerMode.AUTO_REFLECT -> drawAutoReflection(canvas)
-                    RulerMode.MANUAL_3_POINT -> drawManualThreePoint(canvas)
-                    RulerMode.EDGE_MARKER_ONLY -> drawEdgeMarkerOnly(canvas)
-                }
+        } else {
+            // Single-point target mode: stem tether + ring + 6 direct rays + 10 bank rays
+            if (hasGripB) {
+                canvas.drawLine(gripB.x, gripB.y, pointB.x, pointB.y, stemLinePaint)
             }
+            drawTargetAndRadialGuides(canvas)
         }
 
         canvas.restoreToCount(saveCount)
-    }
-
-    /**
-     * Visual connection between finger Grip Pad and the actual Aim Point.
-     */
-    private fun drawStemTethers(canvas: Canvas) {
-        if (hasGripA) {
-            canvas.drawLine(gripA.x, gripA.y, pointA.x, pointA.y, stemLinePaint)
-            canvas.drawCircle(pointA.x, pointA.y, 4f * density, aimDotPaint)
-        }
-        if (hasGripB) {
-            canvas.drawLine(gripB.x, gripB.y, pointB.x, pointB.y, stemLinePaint)
-        }
-        if (hasGripC && currentMode == RulerMode.MANUAL_3_POINT) {
-            canvas.drawLine(gripC.x, gripC.y, pointC.x, pointC.y, stemLinePaint)
-            canvas.drawCircle(pointC.x, pointC.y, 4f * density, aimDotPaint)
-        }
     }
 
     /**
@@ -1393,104 +1263,102 @@ class CanvasOverlayView @JvmOverloads constructor(
         canvas.drawCircle(bx, by, 2.5f * density, aimCenterShadowPaint)
         canvas.drawCircle(bx, by, 1.5f * density, aimCenterDotPaint)
 
-        // Draw the 6 direct rays and 10 mirror reflection rays if enabled
-        if (showRadialGuides) {
-            val startDist = ringRadius + (3f * density)
-            val directEndDist = 85f * density
+        // 6 direct vertex rays + 10 cushion bank rays
+        val startDist = ringRadius + (3f * density)
+        val directEndDist = 85f * density
 
-            val l = boundaryBox.left
-            val r = boundaryBox.right
-            val t = boundaryBox.top
-            val b = boundaryBox.bottom
-            val cx = boundaryBox.centerX()
+        val l = boundaryBox.left
+        val r = boundaryBox.right
+        val t = boundaryBox.top
+        val b = boundaryBox.bottom
+        val cx = boundaryBox.centerX()
 
-            // 1. 6 Direct Vertex Rays (4 Corner Gates with Rail Clearance + 2 Precision Lateral Gates with Tilt Modeling)
-            // Top-Left (Corner)
-            drawCornerVertexRay(canvas, bx, by, l, t, isLeft = true, isTop = true, startDist, directEndDist, sixLinePaint)
+        // 1. 6 Direct Vertex Rays (4 Corner Gates with Rail Clearance + 2 Precision Lateral Gates with Tilt Modeling)
+        // Top-Left (Corner)
+        drawCornerVertexRay(canvas, bx, by, l, t, isLeft = true, isTop = true, startDist, directEndDist, sixLinePaint)
 
-            // Top-Center (Precision Lateral Gate with Dynamic Tilt Angle Modeling - UNTOUCHED)
-            drawLateralVertexRay(canvas, bx, by, cx, t, isTopGate = true, startDist, directEndDist, sixLinePaint)
+        // Top-Center (Precision Lateral Gate with Dynamic Tilt Angle Modeling - UNTOUCHED)
+        drawLateralVertexRay(canvas, bx, by, cx, t, isTopGate = true, startDist, directEndDist, sixLinePaint)
 
-            // Top-Right (Corner)
-            drawCornerVertexRay(canvas, bx, by, r, t, isLeft = false, isTop = true, startDist, directEndDist, sixLinePaint)
+        // Top-Right (Corner)
+        drawCornerVertexRay(canvas, bx, by, r, t, isLeft = false, isTop = true, startDist, directEndDist, sixLinePaint)
 
-            // Bottom-Left (Corner)
-            drawCornerVertexRay(canvas, bx, by, l, b, isLeft = true, isTop = false, startDist, directEndDist, sixLinePaint)
+        // Bottom-Left (Corner)
+        drawCornerVertexRay(canvas, bx, by, l, b, isLeft = true, isTop = false, startDist, directEndDist, sixLinePaint)
 
-            // Bottom-Center (Precision Lateral Gate with Dynamic Tilt Angle Modeling - UNTOUCHED)
-            drawLateralVertexRay(canvas, bx, by, cx, b, isTopGate = false, startDist, directEndDist, sixLinePaint)
+        // Bottom-Center (Precision Lateral Gate with Dynamic Tilt Angle Modeling - UNTOUCHED)
+        drawLateralVertexRay(canvas, bx, by, cx, b, isTopGate = false, startDist, directEndDist, sixLinePaint)
 
-            // Bottom-Right (Corner)
-            drawCornerVertexRay(canvas, bx, by, r, b, isLeft = false, isTop = false, startDist, directEndDist, sixLinePaint)
+        // Bottom-Right (Corner)
+        drawCornerVertexRay(canvas, bx, by, r, b, isLeft = false, isTop = false, startDist, directEndDist, sixLinePaint)
 
-            // 2. 10 Mirror Bank Rays (Pantulan Dinding Rel) - Toggleable via showBankGuides
-            if (showBankGuides) {
-                val ballR = ringRadiusDp * density
-                val bounceL = l + ballR
-                val bounceR = r - ballR
-                val bounceT = t + ballR
-                val bounceB = b - ballR
+        // 2. 10 Mirror Bank Rays (Pantulan Dinding Rel) - Toggleable via showBankGuides
+        if (showBankGuides) {
+            val ballR = ringRadiusDp * density
+            val bounceL = l + ballR
+            val bounceR = r - ballR
+            val bounceT = t + ballR
+            val bounceB = b - ballR
 
-                // Precision Pocket Destination Targets for Cushion Bank Reflections:
-                // Corner pockets: Target the exact corner vertex (l, r, t, b) so the reflected ray
-                // enters symmetrically into the throat of the pocket without clipping rail knuckles.
-                val pocketTL_X = l
-                val pocketTL_Y = t
+            // Precision Pocket Destination Targets for Cushion Bank Reflections:
+            // Corner pockets: Target the exact corner vertex (l, r, t, b) so the reflected ray
+            // enters symmetrically into the throat of the pocket without clipping rail knuckles.
+            val pocketTL_X = l
+            val pocketTL_Y = t
 
-                val pocketTR_X = r
-                val pocketTR_Y = t
+            val pocketTR_X = r
+            val pocketTR_Y = t
 
-                val pocketBL_X = l
-                val pocketBL_Y = b
+            val pocketBL_X = l
+            val pocketBL_Y = b
 
-                val pocketBR_X = r
-                val pocketBR_Y = b
+            val pocketBR_X = r
+            val pocketBR_Y = b
 
-                // Middle pockets: Centered horizontally at cx, extending slightly into the pocket mouth opening
-                val pocketTC_X = cx
-                val pocketTC_Y = t - (2f * density)
+            // Middle pockets: Centered horizontally at cx, extending slightly into the pocket mouth opening
+            val pocketTC_X = cx
+            val pocketTC_Y = t - (2f * density)
 
-                val pocketBC_X = cx
-                val pocketBC_Y = b + (2f * density)
+            val pocketBC_X = cx
+            val pocketBC_Y = b + (2f * density)
 
-                val shortBankLength = 85f * density
+            val shortBankLength = 85f * density
 
-                // Cushion min/max along rails (excluding corner mouth drop areas)
-                val cornerClearance = 8f * density
-                val railH_Min = l + cornerClearance
-                val railH_Max = r - cornerClearance
-                val railV_Min = t + cornerClearance
-                val railV_Max = b - cornerClearance
+            // Cushion min/max along rails (excluding corner mouth drop areas)
+            val cornerClearance = 8f * density
+            val railH_Min = l + cornerClearance
+            val railH_Max = r - cornerClearance
+            val railV_Min = t + cornerClearance
+            val railV_Max = b - cornerClearance
 
-                // Top Cushion (3 rays: bounce off top rail toward bottom pockets)
-                // Enabled whenever ball is on table above bottom pockets (even when touching top rail)
-                if (by < b - 15f * density && by >= t - 5f * density) {
-                    drawBankRayToPocket(canvas, bx, by, pocketBL_X, pocketBL_Y, true, bounceT, railH_Min, railH_Max, startDist, shortBankLength)
-                    drawBankRayToPocket(canvas, bx, by, pocketBC_X, pocketBC_Y, true, bounceT, railH_Min, railH_Max, startDist, shortBankLength)
-                    drawBankRayToPocket(canvas, bx, by, pocketBR_X, pocketBR_Y, true, bounceT, railH_Min, railH_Max, startDist, shortBankLength)
-                }
+            // Top Cushion (3 rays: bounce off top rail toward bottom pockets)
+            // Enabled whenever ball is on table above bottom pockets (even when touching top rail)
+            if (by < b - 15f * density && by >= t - 5f * density) {
+                drawBankRayToPocket(canvas, bx, by, pocketBL_X, pocketBL_Y, true, bounceT, railH_Min, railH_Max, startDist, shortBankLength)
+                drawBankRayToPocket(canvas, bx, by, pocketBC_X, pocketBC_Y, true, bounceT, railH_Min, railH_Max, startDist, shortBankLength)
+                drawBankRayToPocket(canvas, bx, by, pocketBR_X, pocketBR_Y, true, bounceT, railH_Min, railH_Max, startDist, shortBankLength)
+            }
 
-                // Bottom Cushion (3 rays: bounce off bottom rail toward top pockets)
-                // Enabled whenever ball is on table below top pockets (even when touching bottom rail)
-                if (by > t + 15f * density && by <= b + 5f * density) {
-                    drawBankRayToPocket(canvas, bx, by, pocketTL_X, pocketTL_Y, true, bounceB, railH_Min, railH_Max, startDist, shortBankLength)
-                    drawBankRayToPocket(canvas, bx, by, pocketTC_X, pocketTC_Y, true, bounceB, railH_Min, railH_Max, startDist, shortBankLength)
-                    drawBankRayToPocket(canvas, bx, by, pocketTR_X, pocketTR_Y, true, bounceB, railH_Min, railH_Max, startDist, shortBankLength)
-                }
+            // Bottom Cushion (3 rays: bounce off bottom rail toward top pockets)
+            // Enabled whenever ball is on table below top pockets (even when touching bottom rail)
+            if (by > t + 15f * density && by <= b + 5f * density) {
+                drawBankRayToPocket(canvas, bx, by, pocketTL_X, pocketTL_Y, true, bounceB, railH_Min, railH_Max, startDist, shortBankLength)
+                drawBankRayToPocket(canvas, bx, by, pocketTC_X, pocketTC_Y, true, bounceB, railH_Min, railH_Max, startDist, shortBankLength)
+                drawBankRayToPocket(canvas, bx, by, pocketTR_X, pocketTR_Y, true, bounceB, railH_Min, railH_Max, startDist, shortBankLength)
+            }
 
-                // Right Cushion (2 rays: bounce off right rail toward left pockets)
-                // Enabled whenever ball is on table to the right of left pockets (even when touching right rail)
-                if (bx > l + 15f * density && bx <= r + 5f * density) {
-                    drawBankRayToPocket(canvas, bx, by, pocketTL_X, pocketTL_Y, false, bounceR, railV_Min, railV_Max, startDist, shortBankLength)
-                    drawBankRayToPocket(canvas, bx, by, pocketBL_X, pocketBL_Y, false, bounceR, railV_Min, railV_Max, startDist, shortBankLength)
-                }
+            // Right Cushion (2 rays: bounce off right rail toward left pockets)
+            // Enabled whenever ball is on table to the right of left pockets (even when touching right rail)
+            if (bx > l + 15f * density && bx <= r + 5f * density) {
+                drawBankRayToPocket(canvas, bx, by, pocketTL_X, pocketTL_Y, false, bounceR, railV_Min, railV_Max, startDist, shortBankLength)
+                drawBankRayToPocket(canvas, bx, by, pocketBL_X, pocketBL_Y, false, bounceR, railV_Min, railV_Max, startDist, shortBankLength)
+            }
 
-                // Left Cushion (2 rays: bounce off left rail toward right pockets)
-                // Enabled whenever ball is on table to the left of right pockets (even when touching left rail)
-                if (bx < r - 15f * density && bx >= l - 5f * density) {
-                    drawBankRayToPocket(canvas, bx, by, pocketTR_X, pocketTR_Y, false, bounceL, railV_Min, railV_Max, startDist, shortBankLength)
-                    drawBankRayToPocket(canvas, bx, by, pocketBR_X, pocketBR_Y, false, bounceL, railV_Min, railV_Max, startDist, shortBankLength)
-                }
+            // Left Cushion (2 rays: bounce off left rail toward right pockets)
+            // Enabled whenever ball is on table to the left of right pockets (even when touching left rail)
+            if (bx < r - 15f * density && bx >= l - 5f * density) {
+                drawBankRayToPocket(canvas, bx, by, pocketTR_X, pocketTR_Y, false, bounceL, railV_Min, railV_Max, startDist, shortBankLength)
+                drawBankRayToPocket(canvas, bx, by, pocketBR_X, pocketBR_Y, false, bounceL, railV_Min, railV_Max, startDist, shortBankLength)
             }
         }
     }
@@ -1561,118 +1429,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         canvas.drawCircle(cx, cy, radius, handleOuterPaint)
         canvas.drawCircle(cx, cy, radius, handleStrokePaint)
         canvas.drawCircle(cx, cy, 4f * density, handleCenterPaint)
-    }
-
-    private fun updateInnerInsetBox() {
-        val cushionBounceInset = ringRadiusDp * density
-        innerInsetBox.set(
-            boundaryBox.left + cushionBounceInset,
-            boundaryBox.top + cushionBounceInset,
-            boundaryBox.right - cushionBounceInset,
-            boundaryBox.bottom - cushionBounceInset
-        )
-    }
-
-    private fun drawAutoReflection(canvas: Canvas) {
-        updateInnerInsetBox()
-        val reflection = GeometryUtils.computeReflection(pointA, pointB, innerInsetBox)
-
-        if (reflection != null) {
-            // Primary Line: A -> Hit Point
-            linePath.reset()
-            linePath.moveTo(pointA.x, pointA.y)
-            linePath.lineTo(reflection.hitPoint.x, reflection.hitPoint.y)
-            canvas.drawPath(linePath, primaryLinePaint)
-
-            // Reflected Line: Hit Point -> Reflected End Point
-            linePath.reset()
-            linePath.moveTo(reflection.hitPoint.x, reflection.hitPoint.y)
-            linePath.lineTo(reflection.reflectedPoint.x, reflection.reflectedPoint.y)
-            canvas.drawPath(linePath, reflectedLinePaint)
-
-            // Collision ring at boundary hit point
-            canvas.drawCircle(
-                reflection.hitPoint.x,
-                reflection.hitPoint.y,
-                6f * density,
-                edgeMarkerPaint
-            )
-            canvas.drawCircle(
-                reflection.hitPoint.x,
-                reflection.hitPoint.y,
-                6f * density,
-                edgeMarkerStrokePaint
-            )
-
-            // Angle text badge near reflection point
-            val angleText = String.format(Locale.US, "θ = %.1f°", reflection.angleOfIncidenceDeg)
-            drawTextBadge(canvas, angleText, reflection.hitPoint.x + 12f * density, reflection.hitPoint.y - 12f * density)
-        } else {
-            // Fallback straight ray through B if no boundary hit
-            linePath.reset()
-            linePath.moveTo(pointA.x, pointA.y)
-            linePath.lineTo(pointB.x, pointB.y)
-            canvas.drawPath(linePath, primaryLinePaint)
-        }
-    }
-
-    private fun drawManualThreePoint(canvas: Canvas) {
-        // Line 1: A -> B
-        linePath.reset()
-        linePath.moveTo(pointA.x, pointA.y)
-        linePath.lineTo(pointB.x, pointB.y)
-        canvas.drawPath(linePath, primaryLinePaint)
-
-        // Line 2: B -> C
-        linePath.reset()
-        linePath.moveTo(pointB.x, pointB.y)
-        linePath.lineTo(pointC.x, pointC.y)
-        canvas.drawPath(linePath, reflectedLinePaint)
-
-        // Draw Angle at pivot Point B
-        val angle = GeometryUtils.computeAngleBetweenLines(pointA, pointB, pointC)
-        val angleText = String.format(Locale.US, "∠ = %.1f°", angle)
-        drawTextBadge(canvas, angleText, pointB.x + 14f * density, pointB.y - 14f * density)
-    }
-
-    private fun drawEdgeMarkerOnly(canvas: Canvas) {
-        updateInnerInsetBox()
-        val reflection = GeometryUtils.computeReflection(pointA, pointB, innerInsetBox)
-
-        if (reflection != null) {
-            canvas.drawCircle(
-                reflection.hitPoint.x,
-                reflection.hitPoint.y,
-                edgeMarkerRadius,
-                edgeMarkerPaint
-            )
-            canvas.drawCircle(
-                reflection.hitPoint.x,
-                reflection.hitPoint.y,
-                edgeMarkerRadius,
-                edgeMarkerStrokePaint
-            )
-
-            canvas.drawCircle(
-                reflection.reflectedPoint.x,
-                reflection.reflectedPoint.y,
-                edgeMarkerRadius * 0.75f,
-                edgeMarkerPaint
-            )
-        }
-    }
-
-    private fun drawTextBadge(canvas: Canvas, text: String, x: Float, y: Float) {
-        textPaint.getTextBounds(text, 0, text.length, textBounds)
-        val pad = 4f * density
-        badgeRect.set(
-            x - pad,
-            y - textBounds.height() - pad,
-            x + textBounds.width() + pad,
-            y + pad
-        )
-        canvas.drawRoundRect(badgeRect, 4f * density, 4f * density, textBgPaint)
-        canvas.drawText(text, x, y, textPaint)
     }
 
     /**
@@ -1812,41 +1568,25 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 }
 
+
 ==> app/src/main/java/com/utility/screenprotractor/GeometryUtils.kt <==
 package com.utility.screenprotractor
 
 import android.graphics.PointF
-import android.graphics.RectF
-import kotlin.math.acos
-import kotlin.math.atan2
 import kotlin.math.sqrt
 
 /**
- * Geometric calculation engine for ray-box intersections, vector reflections,
- * and 2D angular projections.
+ * Shared Euclidean helpers used by the overlay for hit-testing and alignment.
+ *
+ * The legacy ray-box reflection engine (A -> B -> wall) was removed together with
+ * the unreachable Auto-Reflect / Manual 3-Point / Edge-Marker modes in v2.6.
+ * All live aiming geometry (pocket rays and cushion bank rays) is computed
+ * directly in [CanvasOverlayView] against the calibrated boundary box.
  */
 object GeometryUtils {
 
-    enum class BoundarySide {
-        NONE, TOP, BOTTOM, LEFT, RIGHT
-    }
-
-    data class Intersection(
-        val point: PointF,
-        val side: BoundarySide,
-        val distance: Float
-    )
-
-    data class ReflectionPath(
-        val startPoint: PointF,
-        val hitPoint: PointF,
-        val hitSide: BoundarySide,
-        val reflectedPoint: PointF,
-        val angleOfIncidenceDeg: Float
-    )
-
     /**
-     * Compute Euclidean distance between two points.
+     * Compute Euclidean distance between two coordinate pairs.
      */
     fun distance(x1: Float, y1: Float, x2: Float, y2: Float): Float {
         val dx = x2 - x1
@@ -1857,188 +1597,8 @@ object GeometryUtils {
     fun distance(p1: PointF, p2: PointF): Float {
         return distance(p1.x, p1.y, p2.x, p2.y)
     }
-
-    /**
-     * Calculate ray-box intersection from [origin] in direction of [directionPoint]
-     * hitting the 4 edges of [box].
-     *
-     * @param origin Starting point of ray (Point A)
-     * @param directionPoint Aiming point (Point B)
-     * @param box Boundary rectangle
-     * @param minDistance Minimum forward distance to avoid immediate self-collision
-     * @return Intersection result with hit point, hit side, and distance, or null if no hit
-     */
-    fun computeRayBoxIntersection(
-        origin: PointF,
-        directionPoint: PointF,
-        box: RectF,
-        minDistance: Float = 0.5f
-    ): Intersection? {
-        val rawDx = directionPoint.x - origin.x
-        val rawDy = directionPoint.y - origin.y
-        val len = sqrt(rawDx * rawDx + rawDy * rawDy)
-
-        if (len < 1e-5f) {
-            return null
-        }
-
-        // Unit vector
-        val ux = rawDx / len
-        val uy = rawDy / len
-
-        var closestT = Float.MAX_VALUE
-        var hitSide = BoundarySide.NONE
-        var hitX = 0f
-        var hitY = 0f
-
-        // 1. Check Horizontal Top Edge: y = box.top
-        if (uy < -1e-5f) { // Moving upwards
-            val t = (box.top - origin.y) / uy
-            if (t > minDistance && t < closestT) {
-                val x = origin.x + t * ux
-                if (x in (box.left - 1f)..(box.right + 1f)) {
-                    closestT = t
-                    hitSide = BoundarySide.TOP
-                    hitX = x.coerceIn(box.left, box.right)
-                    hitY = box.top
-                }
-            }
-        }
-
-        // 2. Check Horizontal Bottom Edge: y = box.bottom
-        if (uy > 1e-5f) { // Moving downwards
-            val t = (box.bottom - origin.y) / uy
-            if (t > minDistance && t < closestT) {
-                val x = origin.x + t * ux
-                if (x in (box.left - 1f)..(box.right + 1f)) {
-                    closestT = t
-                    hitSide = BoundarySide.BOTTOM
-                    hitX = x.coerceIn(box.left, box.right)
-                    hitY = box.bottom
-                }
-            }
-        }
-
-        // 3. Check Vertical Left Edge: x = box.left
-        if (ux < -1e-5f) { // Moving leftwards
-            val t = (box.left - origin.x) / ux
-            if (t > minDistance && t < closestT) {
-                val y = origin.y + t * uy
-                if (y in (box.top - 1f)..(box.bottom + 1f)) {
-                    closestT = t
-                    hitSide = BoundarySide.LEFT
-                    hitX = box.left
-                    hitY = y.coerceIn(box.top, box.bottom)
-                }
-            }
-        }
-
-        // 4. Check Vertical Right Edge: x = box.right
-        if (ux > 1e-5f) { // Moving rightwards
-            val t = (box.right - origin.x) / ux
-            if (t > minDistance && t < closestT) {
-                val y = origin.y + t * uy
-                if (y in (box.top - 1f)..(box.bottom + 1f)) {
-                    closestT = t
-                    hitSide = BoundarySide.RIGHT
-                    hitX = box.right
-                    hitY = y.coerceIn(box.top, box.bottom)
-                }
-            }
-        }
-
-        return if (hitSide != BoundarySide.NONE && closestT < Float.MAX_VALUE) {
-            Intersection(PointF(hitX, hitY), hitSide, closestT)
-        } else {
-            null
-        }
-    }
-
-    /**
-     * Compute full reflection path:
-     * 1. Primary ray from [pointA] towards [pointB] hitting [box] at [hitPoint].
-     * 2. Reflected vector based on hit edge:
-     *    - Horizontal (Top/Bottom): (dx', dy') = (dx, -dy)
-     *    - Vertical (Left/Right): (dx', dy') = (-dx, dy)
-     * 3. Reflected ray continues to the next boundary wall.
-     */
-    fun computeReflection(
-        pointA: PointF,
-        pointB: PointF,
-        box: RectF
-    ): ReflectionPath? {
-        val firstHit = computeRayBoxIntersection(pointA, pointB, box) ?: return null
-
-        val rawDx = pointB.x - pointA.x
-        val rawDy = pointB.y - pointA.y
-        val len = sqrt(rawDx * rawDx + rawDy * rawDy)
-        if (len < 1e-5f) return null
-
-        val ux = rawDx / len
-        val uy = rawDy / len
-
-        // Invert vector according to reflection surface normal
-        val (refUx, refUy) = when (firstHit.side) {
-            BoundarySide.TOP, BoundarySide.BOTTOM -> Pair(ux, -uy)
-            BoundarySide.LEFT, BoundarySide.RIGHT -> Pair(-ux, uy)
-            BoundarySide.NONE -> Pair(ux, uy)
-        }
-
-        // Calculate angle of incidence (with surface normal, between 0° and 90°)
-        val normalX: Float
-        val normalY: Float
-        when (firstHit.side) {
-            BoundarySide.TOP -> { normalX = 0f; normalY = 1f }
-            BoundarySide.BOTTOM -> { normalX = 0f; normalY = -1f }
-            BoundarySide.LEFT -> { normalX = 1f; normalY = 0f }
-            BoundarySide.RIGHT -> { normalX = -1f; normalY = 0f }
-            BoundarySide.NONE -> { normalX = 0f; normalY = 0f }
-        }
-
-        // Vector from hit point back towards incoming ray
-        val incomingRevX = -ux
-        val incomingRevY = -uy
-        val dot = (incomingRevX * normalX + incomingRevY * normalY).coerceIn(-1f, 1f)
-        val angleDeg = Math.toDegrees(acos(dot).toDouble()).toFloat()
-
-        // Calculate bounce end point by intersecting reflected ray with next boundary wall
-        val reflectedAimPoint = PointF(
-            firstHit.point.x + refUx * 100f,
-            firstHit.point.y + refUy * 100f
-        )
-
-        val secondHit = computeRayBoxIntersection(
-            firstHit.point,
-            reflectedAimPoint,
-            box,
-            minDistance = 2.0f
-        )
-
-        val bounceEnd = secondHit?.point ?: PointF(
-            firstHit.point.x + refUx * 300f,
-            firstHit.point.y + refUy * 300f
-        )
-
-        return ReflectionPath(
-            startPoint = pointA,
-            hitPoint = firstHit.point,
-            hitSide = firstHit.side,
-            reflectedPoint = bounceEnd,
-            angleOfIncidenceDeg = angleDeg
-        )
-    }
-
-    /**
-     * Compute angle between two lines: (A -> B) and (B -> C) in degrees.
-     */
-    fun computeAngleBetweenLines(a: PointF, b: PointF, c: PointF): Float {
-        val angle1 = atan2(a.y - b.y, a.x - b.x)
-        val angle2 = atan2(c.y - b.y, c.x - b.x)
-        var diff = Math.toDegrees((angle2 - angle1).toDouble()).toFloat()
-        if (diff < 0) diff += 360f
-        return diff
-    }
 }
+
 
 ==> app/src/main/java/com/utility/screenprotractor/HandleView.kt <==
 package com.utility.screenprotractor
@@ -2105,6 +1665,7 @@ class HandleView(
         canvas.drawLine(cx, cy - armLength, cx, cy + armLength, plusPaint)
     }
 }
+
 
 ==> app/src/main/java/com/utility/screenprotractor/MainActivity.kt <==
 package com.utility.screenprotractor
@@ -2322,6 +1883,7 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
+
 ==> app/src/main/java/com/utility/screenprotractor/OverlayService.kt <==
 package com.utility.screenprotractor
 
@@ -2361,10 +1923,10 @@ import kotlin.math.roundToInt
 
 /**
  * Multi-window foreground service managing:
- * 1. Pass-through canvas overlay with 6-pocket radial lines and offset tethers.
- * 2. Independent floating handle windows with vertical offset to prevent finger obstruction.
- * 3. Draggable compact floating control bar with collapsible minimize bubble,
- *    Quick-Ghost 4s, calibration toggle, 6-line toggle, and line sliders.
+ * 1. Table-bounded pass-through canvas overlay with pocket rays and bank rays.
+ * 2. Independent floating target-ball handle with anti-finger offset.
+ * 3. Draggable compact floating control bar with collapsible mini capsule,
+ *    calibration toggle, ray length toggle, bank ray toggle, and styling sliders.
  */
 class OverlayService : Service() {
 
@@ -2375,20 +1937,13 @@ class OverlayService : Service() {
     private var canvasOverlayView: CanvasOverlayView? = null
     private lateinit var canvasLayoutParams: WindowManager.LayoutParams
 
-    // Independent Floating Handles (Grip Pads)
-    private var handleViewA: HandleView? = null
+    // Independent Floating Handle (Grip Pad)
     private var handleViewB: HandleView? = null
-    private var handleViewC: HandleView? = null
-
-    private lateinit var handleParamsA: WindowManager.LayoutParams
     private lateinit var handleParamsB: WindowManager.LayoutParams
-    private lateinit var handleParamsC: WindowManager.LayoutParams
     private var handleSizePx = 0
     private var handleOffsetX = 48f
     private var handleOffsetY = 36f
-    private var isOffsetInvertedA = false
     private var isOffsetInvertedB = false
-    private var isOffsetInvertedC = false
 
     // Floating Control Bar
     private var floatingControlView: View? = null
@@ -2656,34 +2211,16 @@ class OverlayService : Service() {
         val screenW = kotlin.math.max(realSize.x, realSize.y).toFloat()
         val screenH = kotlin.math.min(realSize.x, realSize.y).toFloat()
 
-        val (ptA, ptB, ptC) = prefsManager.getPoints(screenW, screenH)
+        val targetPoint = prefsManager.getTargetPoint(screenW, screenH)
         val initialAlpha = prefsManager.getLineAlpha()
         val initialColor = prefsManager.getLineColor()
 
-        // 1. Handle A
-        handleViewA = HandleView(this, "A").apply {
-            updateColor(initialColor)
-            updateHandleAlpha(initialAlpha)
-        }
-        val gripPosA = calculateGripFromAim(ptA, isOffsetInvertedA)
-        handleParamsA = createHandleLayoutParams(gripPosA)
-        setupHandleTouchListener(
-            handleViewA!!,
-            handleParamsA,
-            initialInverted = isOffsetInvertedA,
-            onInversionChanged = { isOffsetInvertedA = it }
-        ) { aimX, aimY, gripX, gripY ->
-            canvasOverlayView?.setPointA(aimX, aimY, gripX, gripY)
-        }
-        windowManager.addView(handleViewA, handleParamsA)
-        canvasOverlayView?.setPointA(ptA.x, ptA.y, gripPosA.x, gripPosA.y)
-
-        // 2. Handle B (Target Ball)
+        // Target Ball Handle (Point B)
         handleViewB = HandleView(this, "B").apply {
             updateColor(initialColor)
             updateHandleAlpha(initialAlpha)
         }
-        val gripPosB = calculateGripFromAim(ptB, isOffsetInvertedB)
+        val gripPosB = calculateGripFromAim(targetPoint, isOffsetInvertedB)
         handleParamsB = createHandleLayoutParams(gripPosB)
         setupHandleTouchListener(
             handleViewB!!,
@@ -2694,25 +2231,7 @@ class OverlayService : Service() {
             canvasOverlayView?.setPointB(aimX, aimY, gripX, gripY)
         }
         windowManager.addView(handleViewB, handleParamsB)
-        canvasOverlayView?.setPointB(ptB.x, ptB.y, gripPosB.x, gripPosB.y)
-
-        // 3. Handle C
-        handleViewC = HandleView(this, "C").apply {
-            updateColor(initialColor)
-            updateHandleAlpha(initialAlpha)
-        }
-        val gripPosC = calculateGripFromAim(ptC, isOffsetInvertedC)
-        handleParamsC = createHandleLayoutParams(gripPosC)
-        setupHandleTouchListener(
-            handleViewC!!,
-            handleParamsC,
-            initialInverted = isOffsetInvertedC,
-            onInversionChanged = { isOffsetInvertedC = it }
-        ) { aimX, aimY, gripX, gripY ->
-            canvasOverlayView?.setPointC(aimX, aimY, gripX, gripY)
-        }
-        windowManager.addView(handleViewC, handleParamsC)
-        canvasOverlayView?.setPointC(ptC.x, ptC.y, gripPosC.x, gripPosC.y)
+        canvasOverlayView?.setPointB(targetPoint.x, targetPoint.y, gripPosB.x, gripPosB.y)
 
         syncHandlesVisibility()
     }
@@ -2767,12 +2286,10 @@ class OverlayService : Service() {
         var currentGripX = 0f
         var currentGripY = 0f
 
-        var downTime = 0L
         var downRawX = 0f
         var downRawY = 0f
 
         // Long-Press Tracking (Smart Offset Flip)
-        var isLongPressed = false
         var hasMovedSignificantly = false
 
         fun flipOffset() {
@@ -2806,7 +2323,6 @@ class OverlayService : Service() {
 
         val longPressRunnable = Runnable {
             if (!hasMovedSignificantly) {
-                isLongPressed = true
                 flipOffset()
             }
         }
@@ -2818,13 +2334,11 @@ class OverlayService : Service() {
                     lastRawY = event.rawY
                     downRawX = event.rawX
                     downRawY = event.rawY
-                    downTime = System.currentTimeMillis()
 
                     currentGripX = params.x + (handleSizePx / 2f)
                     currentGripY = params.y + (handleSizePx / 2f)
 
                     hasMovedSignificantly = false
-                    isLongPressed = false
                     mainHandler.postDelayed(longPressRunnable, 450L)
                     true
                 }
@@ -2886,7 +2400,6 @@ class OverlayService : Service() {
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     mainHandler.removeCallbacks(longPressRunnable)
-                    isLongPressed = false
                     persistHandlePositions()
                     true
                 }
@@ -2897,7 +2410,7 @@ class OverlayService : Service() {
 
     private fun persistHandlePositions() {
         val canvas = canvasOverlayView ?: return
-        prefsManager.savePoints(canvas.pointA, canvas.pointB, canvas.pointC)
+        prefsManager.saveTargetPoint(canvas.pointB)
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -3441,71 +2954,36 @@ class OverlayService : Service() {
 
     private fun syncHandlesVisibility() {
         if (isCanvasHidden || isCalibrationActive) {
-            handleViewA?.visibility = View.GONE
             handleViewB?.visibility = View.GONE
-            handleViewC?.visibility = View.GONE
             return
         }
-
-        val isSixLinesActive = canvasOverlayView?.showRadialGuides ?: false
-        if (isSixLinesActive) {
-            handleViewA?.visibility = View.GONE
-            handleViewB?.visibility = View.VISIBLE
-            handleViewC?.visibility = View.GONE
-        } else {
-            handleViewA?.visibility = View.VISIBLE
-            handleViewB?.visibility = View.VISIBLE
-            val currentMode = canvasOverlayView?.currentMode ?: CanvasOverlayView.RulerMode.AUTO_REFLECT
-            handleViewC?.visibility = if (currentMode == CanvasOverlayView.RulerMode.MANUAL_3_POINT) {
-                View.VISIBLE
-            } else {
-                View.GONE
-            }
-        }
+        handleViewB?.visibility = View.VISIBLE
     }
 
-    private fun syncHandleCVisibility() = syncHandlesVisibility()
-
     private fun updateAllHandlesAlpha(alpha: Int) {
-        handleViewA?.updateHandleAlpha(alpha)
         handleViewB?.updateHandleAlpha(alpha)
-        handleViewC?.updateHandleAlpha(alpha)
     }
 
     private fun updateAllHandlesColor(color: Int) {
-        handleViewA?.updateColor(color)
         handleViewB?.updateColor(color)
-        handleViewC?.updateColor(color)
     }
 
     private fun repositionHandlesToAimPoints() {
         val canvas = canvasOverlayView ?: return
-        val hA = handleViewA ?: return
         val hB = handleViewB ?: return
-        val hC = handleViewC ?: return
 
-        val gripPosA = calculateGripFromAim(canvas.pointA, isOffsetInvertedA)
         val gripPosB = calculateGripFromAim(canvas.pointB, isOffsetInvertedB)
-        val gripPosC = calculateGripFromAim(canvas.pointC, isOffsetInvertedC)
 
-        handleParamsA.x = (gripPosA.x - handleSizePx / 2f).roundToInt()
-        handleParamsA.y = (gripPosA.y - handleSizePx / 2f).roundToInt()
         handleParamsB.x = (gripPosB.x - handleSizePx / 2f).roundToInt()
         handleParamsB.y = (gripPosB.y - handleSizePx / 2f).roundToInt()
-        handleParamsC.x = (gripPosC.x - handleSizePx / 2f).roundToInt()
-        handleParamsC.y = (gripPosC.y - handleSizePx / 2f).roundToInt()
 
         try {
-            windowManager.updateViewLayout(hA, handleParamsA)
             windowManager.updateViewLayout(hB, handleParamsB)
-            windowManager.updateViewLayout(hC, handleParamsC)
         } catch (e: Exception) {
             e.printStackTrace()
         }
 
-        canvas.setPointA(canvas.pointA.x, canvas.pointA.y, gripPosA.x, gripPosA.y)
         canvas.setPointB(canvas.pointB.x, canvas.pointB.y, gripPosB.x, gripPosB.y)
-        canvas.setPointC(canvas.pointC.x, canvas.pointC.y, gripPosC.x, gripPosC.y)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -3648,16 +3126,7 @@ class OverlayService : Service() {
             canvasOverlayView = null
         }
 
-        // Remove floating handles
-        handleViewA?.let {
-            try {
-                windowManager.removeView(it)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-            handleViewA = null
-        }
-
+        // Remove floating handle
         handleViewB?.let {
             try {
                 windowManager.removeView(it)
@@ -3665,15 +3134,6 @@ class OverlayService : Service() {
                 e.printStackTrace()
             }
             handleViewB = null
-        }
-
-        handleViewC?.let {
-            try {
-                windowManager.removeView(it)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-            handleViewC = null
         }
 
         // Remove control bar
@@ -3697,6 +3157,7 @@ class OverlayService : Service() {
             private set
     }
 }
+
 
 ==> app/src/main/java/com/utility/screenprotractor/PrefsManager.kt <==
 package com.utility.screenprotractor
@@ -3789,55 +3250,28 @@ class PrefsManager(context: Context) {
     }
 
     /**
-     * Save the last active ruler mode index.
+     * Save the single target-ball handle position so it survives overlay restarts.
      */
-    fun saveMode(modeOrdinal: Int) {
-        prefs.edit().putInt(KEY_ACTIVE_MODE, modeOrdinal).apply()
-    }
-
-    /**
-     * Retrieve the last active ruler mode index.
-     */
-    fun getMode(): Int {
-        return prefs.getInt(KEY_ACTIVE_MODE, 0)
-    }
-
-    /**
-     * Save last handle positions to persist between overlay launches.
-     */
-    fun savePoints(pointA: PointF, pointB: PointF, pointC: PointF) {
+    fun saveTargetPoint(pointB: PointF) {
         prefs.edit().apply {
-            putFloat(KEY_PT_A_X, pointA.x)
-            putFloat(KEY_PT_A_Y, pointA.y)
             putFloat(KEY_PT_B_X, pointB.x)
             putFloat(KEY_PT_B_Y, pointB.y)
-            putFloat(KEY_PT_C_X, pointC.x)
-            putFloat(KEY_PT_C_Y, pointC.y)
             putBoolean(KEY_POINTS_INITIALIZED, true)
             apply()
         }
     }
 
     /**
-     * Retrieve last handle positions, or initialize to reasonable defaults inside screen.
+     * Retrieve the last target-ball position, or a sensible default inside the screen.
      */
-    fun getPoints(screenWidth: Float, screenHeight: Float): Triple<PointF, PointF, PointF> {
-        val hasPoints = prefs.getBoolean(KEY_POINTS_INITIALIZED, false)
-        if (hasPoints) {
-            val ax = prefs.getFloat(KEY_PT_A_X, screenWidth * 0.5f)
-            val ay = prefs.getFloat(KEY_PT_A_Y, screenHeight * 0.7f)
+    fun getTargetPoint(screenWidth: Float, screenHeight: Float): PointF {
+        val hasPoint = prefs.getBoolean(KEY_POINTS_INITIALIZED, false)
+        if (hasPoint) {
             val bx = prefs.getFloat(KEY_PT_B_X, screenWidth * 0.5f)
             val by = prefs.getFloat(KEY_PT_B_Y, screenHeight * 0.4f)
-            val cx = prefs.getFloat(KEY_PT_C_X, screenWidth * 0.8f)
-            val cy = prefs.getFloat(KEY_PT_C_Y, screenHeight * 0.4f)
-            return Triple(PointF(ax, ay), PointF(bx, by), PointF(cx, cy))
+            return PointF(bx, by)
         }
-
-        // Sensible default positions
-        val defaultA = PointF(screenWidth * 0.5f, screenHeight * 0.65f)
-        val defaultB = PointF(screenWidth * 0.5f, screenHeight * 0.35f)
-        val defaultC = PointF(screenWidth * 0.75f, screenHeight * 0.35f)
-        return Triple(defaultA, defaultB, defaultC)
+        return PointF(screenWidth * 0.5f, screenHeight * 0.35f)
     }
 
     /**
@@ -3883,17 +3317,6 @@ class PrefsManager(context: Context) {
 
     fun saveBankLineColor(color: Int) = saveSecondaryRayColor(color)
     fun getBankLineColor(): Int = getSecondaryRayColor()
-
-    /**
-     * Save and retrieve radial lines visibility toggle.
-     */
-    fun saveShowRadialGuides(show: Boolean) {
-        prefs.edit().putBoolean(KEY_SHOW_SIX_LINES, show).apply()
-    }
-
-    fun getShowRadialGuides(): Boolean {
-        return prefs.getBoolean(KEY_SHOW_SIX_LINES, true)
-    }
 
     /**
      * Save and retrieve target ring radius.
@@ -3942,14 +3365,8 @@ class PrefsManager(context: Context) {
         private const val KEY_CALIB_VERSION = "calib_version"
         private const val CURRENT_CALIB_VERSION = 3
 
-        private const val KEY_ACTIVE_MODE = "active_mode"
-
-        private const val KEY_PT_A_X = "pt_a_x"
-        private const val KEY_PT_A_Y = "pt_a_y"
         private const val KEY_PT_B_X = "pt_b_x"
         private const val KEY_PT_B_Y = "pt_b_y"
-        private const val KEY_PT_C_X = "pt_c_x"
-        private const val KEY_PT_C_Y = "pt_c_y"
         private const val KEY_POINTS_INITIALIZED = "points_initialized"
 
         private const val KEY_LINE_STROKE_WIDTH = "line_stroke_width"
@@ -3957,12 +3374,12 @@ class PrefsManager(context: Context) {
         private const val KEY_LINE_COLOR = "line_color"
         private const val KEY_BANK_LINE_COLOR = "secondary_ray_color"
 
-        private const val KEY_SHOW_SIX_LINES = "show_radial_guides"
         private const val KEY_SHOW_BANK_GUIDES = "show_bank_guides"
         private const val KEY_FULL_LENGTH_GUIDES = "full_length_guides"
         private const val KEY_BALL_RADIUS = "target_ring_radius"
     }
 }
+
 
 ==> app/src/main/res/drawable/bg_btn_off.xml <==
 <?xml version="1.0" encoding="utf-8"?>
@@ -3972,6 +3389,7 @@ class PrefsManager(context: Context) {
     <corners android:radius="8dp" />
 </shape>
 
+
 ==> app/src/main/res/drawable/bg_btn_on.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
@@ -3979,6 +3397,7 @@ class PrefsManager(context: Context) {
     <solid android:color="#2E7D32" />
     <corners android:radius="8dp" />
 </shape>
+
 
 ==> app/src/main/res/drawable/bg_card.xml <==
 <?xml version="1.0" encoding="utf-8"?>
@@ -3991,6 +3410,7 @@ class PrefsManager(context: Context) {
     <corners android:radius="16dp" />
 </shape>
 
+
 ==> app/src/main/res/drawable/bg_control_bar.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
@@ -4002,6 +3422,7 @@ class PrefsManager(context: Context) {
     <corners android:radius="12dp" />
 </shape>
 
+
 ==> app/src/main/res/drawable/bg_control_btn.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
@@ -4009,6 +3430,7 @@ class PrefsManager(context: Context) {
     <solid android:color="#26FFFFFF" />
     <corners android:radius="8dp" />
 </shape>
+
 
 ==> app/src/main/res/drawable/bg_control_btn_active.xml <==
 <?xml version="1.0" encoding="utf-8"?>
@@ -4021,6 +3443,7 @@ class PrefsManager(context: Context) {
     <corners android:radius="8dp" />
 </shape>
 
+
 ==> app/src/main/res/drawable/bg_minimized_bubble.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
@@ -4030,6 +3453,7 @@ class PrefsManager(context: Context) {
         android:width="1.5dp"
         android:color="#00E5FF" />
 </shape>
+
 
 ==> app/src/main/res/drawable/ic_launcher_background.xml <==
 <?xml version="1.0" encoding="utf-8"?>
@@ -4042,6 +3466,7 @@ class PrefsManager(context: Context) {
         android:fillColor="#1E1E1E"
         android:pathData="M0,0h108v108h-108z"/>
 </vector>
+
 
 ==> app/src/main/res/drawable/ic_launcher_foreground.xml <==
 <?xml version="1.0" encoding="utf-8"?>
@@ -4074,6 +3499,7 @@ class PrefsManager(context: Context) {
         android:pathData="M54,68m-3,0a3,3 0 1,0 6,0a3,3 0 1,0 -6,0"/>
 </vector>
 
+
 ==> app/src/main/res/drawable/ic_notification.xml <==
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
@@ -4084,6 +3510,7 @@ class PrefsManager(context: Context) {
       android:fillColor="#00E5FF"
       android:pathData="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12C20,13.1 19.8,14.1 19.4,15L15,10.6V8H13V9.6L10.4,7H8.8L12,10.2V12H13.8L17,15.2C15.8,16.9 14,18 12,18A6,6 0 0,1 6,12A8,8 0 0,1 12,4Z"/>
 </vector>
+
 
 ==> app/src/main/res/layout/activity_main.xml <==
 <?xml version="1.0" encoding="utf-8"?>
@@ -4383,6 +3810,7 @@ class PrefsManager(context: Context) {
 
     </LinearLayout>
 </ScrollView>
+
 
 ==> app/src/main/res/layout/layout_floating_control.xml <==
 <?xml version="1.0" encoding="utf-8"?>
@@ -4881,6 +4309,7 @@ class PrefsManager(context: Context) {
 
 </FrameLayout>
 
+
 ==> app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
@@ -4888,12 +4317,14 @@ class PrefsManager(context: Context) {
     <foreground android:drawable="@drawable/ic_launcher_foreground" />
 </adaptive-icon>
 
+
 ==> app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@drawable/ic_launcher_background" />
     <foreground android:drawable="@drawable/ic_launcher_foreground" />
 </adaptive-icon>
+
 
 ==> app/src/main/res/values/colors.xml <==
 <?xml version="1.0" encoding="utf-8"?>
@@ -4927,6 +4358,7 @@ class PrefsManager(context: Context) {
     <color name="text_hint">#78909C</color>
 </resources>
 
+
 ==> app/src/main/res/values/strings.xml <==
 <resources>
     <string name="app_name">Screen Angle Ruler</string>
@@ -4953,22 +4385,9 @@ class PrefsManager(context: Context) {
 
     <!-- Overlay Controls -->
     <string name="control_drag_handle">::</string>
-    <string name="control_edit">Edit</string>
-    <string name="control_lock">Lock</string>
-    <string name="control_ghost">Ghost 4s</string>
-    <string name="control_ghosting">Ghosting...</string>
-    <string name="control_hide">Hide</string>
-    <string name="control_show">Show</string>
     <string name="control_calibrate">Calib</string>
     <string name="control_save_bound">Save Bound</string>
-    <string name="control_reset_bound">Reset Bound</string>
-    <string name="control_six_lines">6-Line</string>
     <string name="control_settings">⚙</string>
-    <string name="control_mode_auto">Auto-Reflect</string>
-    <string name="control_mode_manual">Manual 3-Pt</string>
-    <string name="control_mode_edge">Edge-Marker</string>
-    <string name="control_minimize">−</string>
-    <string name="control_maximize">+</string>
     <string name="control_on">ON</string>
     <string name="control_off">OFF</string>
     <string name="control_line_short">Short</string>
@@ -4991,9 +4410,7 @@ class PrefsManager(context: Context) {
     <string name="toast_bank_off">Bank Rays: OFF</string>
 
     <!-- Calibration Info -->
-    <string name="calib_instructions">Drag corner handles to align boundary box with target area.</string>
     <string name="toast_calib_saved">Boundary box calibration saved.</string>
-    <string name="toast_calib_reset">Boundary box reset to center.</string>
     <string name="toast_permission_needed">Please grant Overlay Permission to start the ruler.</string>
     <!-- In-App Auto Update -->
     <string name="label_check_update">App Update</string>
@@ -5008,6 +4425,7 @@ class PrefsManager(context: Context) {
     <string name="update_download_failed">Gagal mengunduh pembaruan</string>
     <string name="update_check_failed">Gagal memeriksa pembaruan: periksa koneksi internet</string>
 </resources>
+
 
 ==> app/src/main/res/values/themes.xml <==
 <resources xmlns:tools="http://schemas.android.com/tools">
@@ -5032,6 +4450,7 @@ class PrefsManager(context: Context) {
     </style>
 </resources>
 
+
 ==> app/src/main/res/xml/file_paths.xml <==
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
@@ -5040,4 +4459,5 @@ class PrefsManager(context: Context) {
     <files-path name="internal_files" path="." />
     <external-files-path name="external_files" path="." />
 </paths>
+
 

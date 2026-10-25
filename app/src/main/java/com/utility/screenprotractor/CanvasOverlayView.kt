@@ -17,17 +17,15 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
 /**
- * High-performance full-screen transparent canvas rendering:
- * 1. Primary & Reflected geometry lines.
- * 2. 6-Pocket Radial Short Lines from target ball (Point B).
- * 3. Connecting stem/tether lines from offset finger grips to actual aim coordinates.
+ * High-performance transparent canvas rendering:
+ * 1. 6-pocket direct vertex rays from the target ball (Point B).
+ * 2. 10 cushion bank rays with pocket-quality reflection paths.
+ * 3. Connecting stem/tether line from the offset finger grip to the real aim coordinate.
  * 4. Interactive 8-handle boundary box calibration (auto-clamped for Landscape & Portrait,
  *    and completely hidden when not calibrating for clean view).
  */
@@ -37,12 +35,6 @@ class CanvasOverlayView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
-    enum class RulerMode {
-        AUTO_REFLECT,
-        MANUAL_3_POINT,
-        EDGE_MARKER_ONLY
-    }
-
     private enum class DragTarget {
         NONE,
         CORNER_TOP_LEFT, CORNER_TOP_RIGHT, CORNER_BOTTOM_LEFT, CORNER_BOTTOM_RIGHT,
@@ -51,16 +43,11 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     private val prefsManager = PrefsManager(context)
 
-    // Current Mode & Calibration
-    var currentMode: RulerMode = RulerMode.AUTO_REFLECT
-        private set
+    // Calibration
     var isCalibrating: Boolean = false
         private set
 
-    // Feature 1: Radial Lines & Target Ring Radius
-    var showRadialGuides: Boolean = true
-        private set
-
+    // Target Ring Radius & Bank Ray Toggle
     var showBankGuides: Boolean = true
         private set
 
@@ -103,21 +90,11 @@ class CanvasOverlayView @JvmOverloads constructor(
         return PointF(landW, landH)
     }
 
-    // Actual Aim Coordinates (where rays originate and reflect)
-    var pointA = PointF()
-        private set
+    // Actual aim coordinate of the target ball and its offset finger grip
     var pointB = PointF()
         private set
-    var pointC = PointF()
-        private set
-
-    // Finger Grip Coordinates (HandleView touch pad positions)
-    private var gripA = PointF()
     private var gripB = PointF()
-    private var gripC = PointF()
-    private var hasGripA = false
     private var hasGripB = false
-    private var hasGripC = false
 
     var boundaryBox = RectF()
         private set
@@ -128,24 +105,7 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     // Density scaled dimensions
     private val density = resources.displayMetrics.density
-    private val edgeMarkerRadius = 8f * density
     private val edgeHandleRadius = 14f * density
-
-    // Paint: Primary Line (Point A -> Point B / Hit Point)
-    private val primaryLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#00E5FF")
-        style = Paint.Style.STROKE
-        strokeWidth = 3.5f * density
-        pathEffect = DashPathEffect(floatArrayOf(15f * density, 10f * density), 0f)
-    }
-
-    // Paint: Reflected Line (Hit Point -> Reflected End / Point B -> C)
-    private val reflectedLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#00E5FF")
-        style = Paint.Style.STROKE
-        strokeWidth = 3.5f * density
-        pathEffect = DashPathEffect(floatArrayOf(15f * density, 10f * density), 0f)
-    }
 
     // Paint: 6-Pocket Radial Short Lines from Target Ball (sixLinePaint)
     private val sixLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -154,7 +114,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         strokeWidth = 3.5f * density
         strokeCap = Paint.Cap.ROUND
     }
-    private val pocketLinePaint get() = sixLinePaint
 
     // Paint: 6 Mirror Bank Rays from Target Ball (bankLinePaint) - Dashed styling
     private val bankLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -172,6 +131,8 @@ class CanvasOverlayView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
 
+    var onCanvasSizeChanged: ((w: Int, h: Int) -> Unit)? = null
+
     // Active line styling state
     var currentLineColor: Int = PrefsManager.DEFAULT_LINE_COLOR
         private set
@@ -188,11 +149,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         style = Paint.Style.STROKE
         strokeWidth = 1.5f * density
         pathEffect = DashPathEffect(floatArrayOf(6f * density, 6f * density), 0f)
-    }
-
-    private val aimDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        style = Paint.Style.FILL
     }
 
     // Paints: High-Contrast Hollow Bullseye & Ball-Fit Ring for Point B
@@ -256,19 +212,7 @@ class CanvasOverlayView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
 
-    // Paint: Edge-Marker Dot (Mode 3)
-    private val edgeMarkerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#FFD600")
-        style = Paint.Style.FILL
-    }
-
-    private val edgeMarkerStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        style = Paint.Style.STROKE
-        strokeWidth = 2f * density
-    }
-
-    // Paint: Text Badges (Labels & Angle Info)
+    // Paint: Calibration label text
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textSize = 13f * density
@@ -279,31 +223,14 @@ class CanvasOverlayView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
 
-    private val linePath = Path()
     private val textBounds = Rect()
-    private val badgeRect = RectF()
-    private val innerInsetBox = RectF()
-
-    var onCanvasSizeChanged: ((w: Int, h: Int) -> Unit)? = null
-
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        super.onSizeChanged(w, h, oldw, oldh)
-    }
 
     init {
         val landSize = getLandscapeScreenSize()
         boundaryBox = prefsManager.getBoundaryBox(landSize.x, landSize.y)
         clampBoundaryBox(landSize.x, landSize.y)
 
-        val (savedA, savedB, savedC) = prefsManager.getPoints(landSize.x, landSize.y)
-        pointA = savedA
-        pointB = savedB
-        pointC = savedC
-
-        val savedModeOrdinal = prefsManager.getMode()
-        if (savedModeOrdinal in RulerMode.values().indices) {
-            currentMode = RulerMode.values()[savedModeOrdinal]
-        }
+        pointB = prefsManager.getTargetPoint(landSize.x, landSize.y)
 
         currentLineColor = prefsManager.getLineColor()
         currentBankLineColor = prefsManager.getSecondaryRayColor()
@@ -313,7 +240,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         updateBankLineColor(currentBankLineColor)
         updateLineStyle(currentStrokeWidth, currentAlpha)
 
-        showRadialGuides = prefsManager.getShowRadialGuides()
         showBankGuides = prefsManager.getShowBankGuides()
         isFullLengthGuides = prefsManager.isFullLengthGuides()
         ringRadiusDp = prefsManager.getRingRadius()
@@ -361,7 +287,7 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     /**
-     * Requirement 2: Dynamically adjust line color across primary, reflected, and 6-pocket lines,
+     * Requirement 2: Dynamically adjust line color of the pocket rays,
      * preserving currently active opacity alpha.
      */
     fun updateLineColor(color: Int) {
@@ -371,8 +297,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         val b = Color.blue(color)
         val argb = Color.argb(currentAlpha, r, g, b)
 
-        primaryLinePaint.color = argb
-        reflectedLinePaint.color = argb
         sixLinePaint.color = argb
 
         invalidate()
@@ -402,8 +326,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         currentStrokeWidth = strokeWidth
         val strokePx = strokeWidth * density
 
-        primaryLinePaint.strokeWidth = strokePx
-        reflectedLinePaint.strokeWidth = strokePx
         sixLinePaint.strokeWidth = strokePx
         bankLinePaint.strokeWidth = strokePx
 
@@ -412,8 +334,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         val b = Color.blue(currentLineColor)
         val argb = Color.argb(currentAlpha, r, g, b)
 
-        primaryLinePaint.color = argb
-        reflectedLinePaint.color = argb
         sixLinePaint.color = argb
 
         val br = Color.red(currentBankLineColor)
@@ -425,10 +345,9 @@ class CanvasOverlayView @JvmOverloads constructor(
         bankDotPaint.color = bankArgb
         bankLinePaint.pathEffect = DashPathEffect(floatArrayOf(10f * density, 7f * density), 0f)
 
-        // Synchronize stem/tether line and center aim dot alpha
+        // Synchronize stem/tether line alpha
         val stemAlpha = (currentAlpha * 0.7f).roundToInt().coerceIn(20, 255)
         stemLinePaint.color = Color.argb(stemAlpha, 255, 255, 255)
-        aimDotPaint.color = Color.argb(currentAlpha, 255, 255, 255)
 
         val shadowAlpha = (currentAlpha * 0.85f).roundToInt().coerceIn(20, 255)
         aimShadowPaint.color = Color.argb(shadowAlpha, 0, 0, 0)
@@ -437,17 +356,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         aimCenterDotPaint.color = Color.argb(currentAlpha, 255, 255, 255)
 
         invalidate()
-    }
-
-    fun setShowRadialGuides(show: Boolean) {
-        showRadialGuides = show
-        prefsManager.saveShowRadialGuides(show)
-        invalidate()
-    }
-
-    fun toggleRadialGuides(): Boolean {
-        setShowRadialGuides(!showRadialGuides)
-        return showRadialGuides
     }
 
     fun setShowBankGuides(show: Boolean) {
@@ -478,38 +386,11 @@ class CanvasOverlayView @JvmOverloads constructor(
         invalidate()
     }
 
-    fun setPointA(aimX: Float, aimY: Float, gripX: Float = aimX, gripY: Float = aimY) {
-        pointA.set(aimX, aimY)
-        gripA.set(gripX, gripY)
-        hasGripA = (GeometryUtils.distance(aimX, aimY, gripX, gripY) > 5f)
-        invalidate()
-    }
-
     fun setPointB(aimX: Float, aimY: Float, gripX: Float = aimX, gripY: Float = aimY) {
         pointB.set(aimX, aimY)
         gripB.set(gripX, gripY)
         hasGripB = (GeometryUtils.distance(aimX, aimY, gripX, gripY) > 5f)
         invalidate()
-    }
-
-    fun setPointC(aimX: Float, aimY: Float, gripX: Float = aimX, gripY: Float = aimY) {
-        pointC.set(aimX, aimY)
-        gripC.set(gripX, gripY)
-        hasGripC = (GeometryUtils.distance(aimX, aimY, gripX, gripY) > 5f)
-        invalidate()
-    }
-
-    fun setRulerMode(mode: RulerMode) {
-        currentMode = mode
-        prefsManager.saveMode(mode.ordinal)
-        invalidate()
-    }
-
-    fun cycleRulerMode(): RulerMode {
-        val nextOrdinal = (currentMode.ordinal + 1) % RulerMode.values().size
-        val nextMode = RulerMode.values()[nextOrdinal]
-        setRulerMode(nextMode)
-        return nextMode
     }
 
     fun setCalibrating(calibrating: Boolean) {
@@ -552,47 +433,15 @@ class CanvasOverlayView @JvmOverloads constructor(
         if (isCalibrating) {
             drawBoundaryBox(canvas)
             drawEightCalibrationHandles(canvas)
-        }
-
-        if (!isCalibrating) {
-            if (showRadialGuides) {
-                // Requirement 2: Mode 1-Titik Fokus (Single-Point Target Mode)
-                // Hide connecting line A-B and reflection rays.
-                // Only render Point B's stem tether (from grip pad to Point B)
-                if (hasGripB) {
-                    canvas.drawLine(gripB.x, gripB.y, pointB.x, pointB.y, stemLinePaint)
-                }
-                // Render Point B's white center dot + 6 Direct rays + 6 Mirror Bank rays
-                drawTargetAndRadialGuides(canvas)
-            } else {
-                // Normal modes (Auto-Reflect, Manual 3-Pt, Edge-Marker)
-                drawStemTethers(canvas)
-                when (currentMode) {
-                    RulerMode.AUTO_REFLECT -> drawAutoReflection(canvas)
-                    RulerMode.MANUAL_3_POINT -> drawManualThreePoint(canvas)
-                    RulerMode.EDGE_MARKER_ONLY -> drawEdgeMarkerOnly(canvas)
-                }
+        } else {
+            // Single-point target mode: stem tether + ring + 6 direct rays + 10 bank rays
+            if (hasGripB) {
+                canvas.drawLine(gripB.x, gripB.y, pointB.x, pointB.y, stemLinePaint)
             }
+            drawTargetAndRadialGuides(canvas)
         }
 
         canvas.restoreToCount(saveCount)
-    }
-
-    /**
-     * Visual connection between finger Grip Pad and the actual Aim Point.
-     */
-    private fun drawStemTethers(canvas: Canvas) {
-        if (hasGripA) {
-            canvas.drawLine(gripA.x, gripA.y, pointA.x, pointA.y, stemLinePaint)
-            canvas.drawCircle(pointA.x, pointA.y, 4f * density, aimDotPaint)
-        }
-        if (hasGripB) {
-            canvas.drawLine(gripB.x, gripB.y, pointB.x, pointB.y, stemLinePaint)
-        }
-        if (hasGripC && currentMode == RulerMode.MANUAL_3_POINT) {
-            canvas.drawLine(gripC.x, gripC.y, pointC.x, pointC.y, stemLinePaint)
-            canvas.drawCircle(pointC.x, pointC.y, 4f * density, aimDotPaint)
-        }
     }
 
     /**
@@ -852,104 +701,102 @@ class CanvasOverlayView @JvmOverloads constructor(
         canvas.drawCircle(bx, by, 2.5f * density, aimCenterShadowPaint)
         canvas.drawCircle(bx, by, 1.5f * density, aimCenterDotPaint)
 
-        // Draw the 6 direct rays and 10 mirror reflection rays if enabled
-        if (showRadialGuides) {
-            val startDist = ringRadius + (3f * density)
-            val directEndDist = 85f * density
+        // 6 direct vertex rays + 10 cushion bank rays
+        val startDist = ringRadius + (3f * density)
+        val directEndDist = 85f * density
 
-            val l = boundaryBox.left
-            val r = boundaryBox.right
-            val t = boundaryBox.top
-            val b = boundaryBox.bottom
-            val cx = boundaryBox.centerX()
+        val l = boundaryBox.left
+        val r = boundaryBox.right
+        val t = boundaryBox.top
+        val b = boundaryBox.bottom
+        val cx = boundaryBox.centerX()
 
-            // 1. 6 Direct Vertex Rays (4 Corner Gates with Rail Clearance + 2 Precision Lateral Gates with Tilt Modeling)
-            // Top-Left (Corner)
-            drawCornerVertexRay(canvas, bx, by, l, t, isLeft = true, isTop = true, startDist, directEndDist, sixLinePaint)
+        // 1. 6 Direct Vertex Rays (4 Corner Gates with Rail Clearance + 2 Precision Lateral Gates with Tilt Modeling)
+        // Top-Left (Corner)
+        drawCornerVertexRay(canvas, bx, by, l, t, isLeft = true, isTop = true, startDist, directEndDist, sixLinePaint)
 
-            // Top-Center (Precision Lateral Gate with Dynamic Tilt Angle Modeling - UNTOUCHED)
-            drawLateralVertexRay(canvas, bx, by, cx, t, isTopGate = true, startDist, directEndDist, sixLinePaint)
+        // Top-Center (Precision Lateral Gate with Dynamic Tilt Angle Modeling - UNTOUCHED)
+        drawLateralVertexRay(canvas, bx, by, cx, t, isTopGate = true, startDist, directEndDist, sixLinePaint)
 
-            // Top-Right (Corner)
-            drawCornerVertexRay(canvas, bx, by, r, t, isLeft = false, isTop = true, startDist, directEndDist, sixLinePaint)
+        // Top-Right (Corner)
+        drawCornerVertexRay(canvas, bx, by, r, t, isLeft = false, isTop = true, startDist, directEndDist, sixLinePaint)
 
-            // Bottom-Left (Corner)
-            drawCornerVertexRay(canvas, bx, by, l, b, isLeft = true, isTop = false, startDist, directEndDist, sixLinePaint)
+        // Bottom-Left (Corner)
+        drawCornerVertexRay(canvas, bx, by, l, b, isLeft = true, isTop = false, startDist, directEndDist, sixLinePaint)
 
-            // Bottom-Center (Precision Lateral Gate with Dynamic Tilt Angle Modeling - UNTOUCHED)
-            drawLateralVertexRay(canvas, bx, by, cx, b, isTopGate = false, startDist, directEndDist, sixLinePaint)
+        // Bottom-Center (Precision Lateral Gate with Dynamic Tilt Angle Modeling - UNTOUCHED)
+        drawLateralVertexRay(canvas, bx, by, cx, b, isTopGate = false, startDist, directEndDist, sixLinePaint)
 
-            // Bottom-Right (Corner)
-            drawCornerVertexRay(canvas, bx, by, r, b, isLeft = false, isTop = false, startDist, directEndDist, sixLinePaint)
+        // Bottom-Right (Corner)
+        drawCornerVertexRay(canvas, bx, by, r, b, isLeft = false, isTop = false, startDist, directEndDist, sixLinePaint)
 
-            // 2. 10 Mirror Bank Rays (Pantulan Dinding Rel) - Toggleable via showBankGuides
-            if (showBankGuides) {
-                val ballR = ringRadiusDp * density
-                val bounceL = l + ballR
-                val bounceR = r - ballR
-                val bounceT = t + ballR
-                val bounceB = b - ballR
+        // 2. 10 Mirror Bank Rays (Pantulan Dinding Rel) - Toggleable via showBankGuides
+        if (showBankGuides) {
+            val ballR = ringRadiusDp * density
+            val bounceL = l + ballR
+            val bounceR = r - ballR
+            val bounceT = t + ballR
+            val bounceB = b - ballR
 
-                // Precision Pocket Destination Targets for Cushion Bank Reflections:
-                // Corner pockets: Target the exact corner vertex (l, r, t, b) so the reflected ray
-                // enters symmetrically into the throat of the pocket without clipping rail knuckles.
-                val pocketTL_X = l
-                val pocketTL_Y = t
+            // Precision Pocket Destination Targets for Cushion Bank Reflections:
+            // Corner pockets: Target the exact corner vertex (l, r, t, b) so the reflected ray
+            // enters symmetrically into the throat of the pocket without clipping rail knuckles.
+            val pocketTL_X = l
+            val pocketTL_Y = t
 
-                val pocketTR_X = r
-                val pocketTR_Y = t
+            val pocketTR_X = r
+            val pocketTR_Y = t
 
-                val pocketBL_X = l
-                val pocketBL_Y = b
+            val pocketBL_X = l
+            val pocketBL_Y = b
 
-                val pocketBR_X = r
-                val pocketBR_Y = b
+            val pocketBR_X = r
+            val pocketBR_Y = b
 
-                // Middle pockets: Centered horizontally at cx, extending slightly into the pocket mouth opening
-                val pocketTC_X = cx
-                val pocketTC_Y = t - (2f * density)
+            // Middle pockets: Centered horizontally at cx, extending slightly into the pocket mouth opening
+            val pocketTC_X = cx
+            val pocketTC_Y = t - (2f * density)
 
-                val pocketBC_X = cx
-                val pocketBC_Y = b + (2f * density)
+            val pocketBC_X = cx
+            val pocketBC_Y = b + (2f * density)
 
-                val shortBankLength = 85f * density
+            val shortBankLength = 85f * density
 
-                // Cushion min/max along rails (excluding corner mouth drop areas)
-                val cornerClearance = 8f * density
-                val railH_Min = l + cornerClearance
-                val railH_Max = r - cornerClearance
-                val railV_Min = t + cornerClearance
-                val railV_Max = b - cornerClearance
+            // Cushion min/max along rails (excluding corner mouth drop areas)
+            val cornerClearance = 8f * density
+            val railH_Min = l + cornerClearance
+            val railH_Max = r - cornerClearance
+            val railV_Min = t + cornerClearance
+            val railV_Max = b - cornerClearance
 
-                // Top Cushion (3 rays: bounce off top rail toward bottom pockets)
-                // Enabled whenever ball is on table above bottom pockets (even when touching top rail)
-                if (by < b - 15f * density && by >= t - 5f * density) {
-                    drawBankRayToPocket(canvas, bx, by, pocketBL_X, pocketBL_Y, true, bounceT, railH_Min, railH_Max, startDist, shortBankLength)
-                    drawBankRayToPocket(canvas, bx, by, pocketBC_X, pocketBC_Y, true, bounceT, railH_Min, railH_Max, startDist, shortBankLength)
-                    drawBankRayToPocket(canvas, bx, by, pocketBR_X, pocketBR_Y, true, bounceT, railH_Min, railH_Max, startDist, shortBankLength)
-                }
+            // Top Cushion (3 rays: bounce off top rail toward bottom pockets)
+            // Enabled whenever ball is on table above bottom pockets (even when touching top rail)
+            if (by < b - 15f * density && by >= t - 5f * density) {
+                drawBankRayToPocket(canvas, bx, by, pocketBL_X, pocketBL_Y, true, bounceT, railH_Min, railH_Max, startDist, shortBankLength)
+                drawBankRayToPocket(canvas, bx, by, pocketBC_X, pocketBC_Y, true, bounceT, railH_Min, railH_Max, startDist, shortBankLength)
+                drawBankRayToPocket(canvas, bx, by, pocketBR_X, pocketBR_Y, true, bounceT, railH_Min, railH_Max, startDist, shortBankLength)
+            }
 
-                // Bottom Cushion (3 rays: bounce off bottom rail toward top pockets)
-                // Enabled whenever ball is on table below top pockets (even when touching bottom rail)
-                if (by > t + 15f * density && by <= b + 5f * density) {
-                    drawBankRayToPocket(canvas, bx, by, pocketTL_X, pocketTL_Y, true, bounceB, railH_Min, railH_Max, startDist, shortBankLength)
-                    drawBankRayToPocket(canvas, bx, by, pocketTC_X, pocketTC_Y, true, bounceB, railH_Min, railH_Max, startDist, shortBankLength)
-                    drawBankRayToPocket(canvas, bx, by, pocketTR_X, pocketTR_Y, true, bounceB, railH_Min, railH_Max, startDist, shortBankLength)
-                }
+            // Bottom Cushion (3 rays: bounce off bottom rail toward top pockets)
+            // Enabled whenever ball is on table below top pockets (even when touching bottom rail)
+            if (by > t + 15f * density && by <= b + 5f * density) {
+                drawBankRayToPocket(canvas, bx, by, pocketTL_X, pocketTL_Y, true, bounceB, railH_Min, railH_Max, startDist, shortBankLength)
+                drawBankRayToPocket(canvas, bx, by, pocketTC_X, pocketTC_Y, true, bounceB, railH_Min, railH_Max, startDist, shortBankLength)
+                drawBankRayToPocket(canvas, bx, by, pocketTR_X, pocketTR_Y, true, bounceB, railH_Min, railH_Max, startDist, shortBankLength)
+            }
 
-                // Right Cushion (2 rays: bounce off right rail toward left pockets)
-                // Enabled whenever ball is on table to the right of left pockets (even when touching right rail)
-                if (bx > l + 15f * density && bx <= r + 5f * density) {
-                    drawBankRayToPocket(canvas, bx, by, pocketTL_X, pocketTL_Y, false, bounceR, railV_Min, railV_Max, startDist, shortBankLength)
-                    drawBankRayToPocket(canvas, bx, by, pocketBL_X, pocketBL_Y, false, bounceR, railV_Min, railV_Max, startDist, shortBankLength)
-                }
+            // Right Cushion (2 rays: bounce off right rail toward left pockets)
+            // Enabled whenever ball is on table to the right of left pockets (even when touching right rail)
+            if (bx > l + 15f * density && bx <= r + 5f * density) {
+                drawBankRayToPocket(canvas, bx, by, pocketTL_X, pocketTL_Y, false, bounceR, railV_Min, railV_Max, startDist, shortBankLength)
+                drawBankRayToPocket(canvas, bx, by, pocketBL_X, pocketBL_Y, false, bounceR, railV_Min, railV_Max, startDist, shortBankLength)
+            }
 
-                // Left Cushion (2 rays: bounce off left rail toward right pockets)
-                // Enabled whenever ball is on table to the left of right pockets (even when touching left rail)
-                if (bx < r - 15f * density && bx >= l - 5f * density) {
-                    drawBankRayToPocket(canvas, bx, by, pocketTR_X, pocketTR_Y, false, bounceL, railV_Min, railV_Max, startDist, shortBankLength)
-                    drawBankRayToPocket(canvas, bx, by, pocketBR_X, pocketBR_Y, false, bounceL, railV_Min, railV_Max, startDist, shortBankLength)
-                }
+            // Left Cushion (2 rays: bounce off left rail toward right pockets)
+            // Enabled whenever ball is on table to the left of right pockets (even when touching left rail)
+            if (bx < r - 15f * density && bx >= l - 5f * density) {
+                drawBankRayToPocket(canvas, bx, by, pocketTR_X, pocketTR_Y, false, bounceL, railV_Min, railV_Max, startDist, shortBankLength)
+                drawBankRayToPocket(canvas, bx, by, pocketBR_X, pocketBR_Y, false, bounceL, railV_Min, railV_Max, startDist, shortBankLength)
             }
         }
     }
@@ -1020,118 +867,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         canvas.drawCircle(cx, cy, radius, handleOuterPaint)
         canvas.drawCircle(cx, cy, radius, handleStrokePaint)
         canvas.drawCircle(cx, cy, 4f * density, handleCenterPaint)
-    }
-
-    private fun updateInnerInsetBox() {
-        val cushionBounceInset = ringRadiusDp * density
-        innerInsetBox.set(
-            boundaryBox.left + cushionBounceInset,
-            boundaryBox.top + cushionBounceInset,
-            boundaryBox.right - cushionBounceInset,
-            boundaryBox.bottom - cushionBounceInset
-        )
-    }
-
-    private fun drawAutoReflection(canvas: Canvas) {
-        updateInnerInsetBox()
-        val reflection = GeometryUtils.computeReflection(pointA, pointB, innerInsetBox)
-
-        if (reflection != null) {
-            // Primary Line: A -> Hit Point
-            linePath.reset()
-            linePath.moveTo(pointA.x, pointA.y)
-            linePath.lineTo(reflection.hitPoint.x, reflection.hitPoint.y)
-            canvas.drawPath(linePath, primaryLinePaint)
-
-            // Reflected Line: Hit Point -> Reflected End Point
-            linePath.reset()
-            linePath.moveTo(reflection.hitPoint.x, reflection.hitPoint.y)
-            linePath.lineTo(reflection.reflectedPoint.x, reflection.reflectedPoint.y)
-            canvas.drawPath(linePath, reflectedLinePaint)
-
-            // Collision ring at boundary hit point
-            canvas.drawCircle(
-                reflection.hitPoint.x,
-                reflection.hitPoint.y,
-                6f * density,
-                edgeMarkerPaint
-            )
-            canvas.drawCircle(
-                reflection.hitPoint.x,
-                reflection.hitPoint.y,
-                6f * density,
-                edgeMarkerStrokePaint
-            )
-
-            // Angle text badge near reflection point
-            val angleText = String.format(Locale.US, "θ = %.1f°", reflection.angleOfIncidenceDeg)
-            drawTextBadge(canvas, angleText, reflection.hitPoint.x + 12f * density, reflection.hitPoint.y - 12f * density)
-        } else {
-            // Fallback straight ray through B if no boundary hit
-            linePath.reset()
-            linePath.moveTo(pointA.x, pointA.y)
-            linePath.lineTo(pointB.x, pointB.y)
-            canvas.drawPath(linePath, primaryLinePaint)
-        }
-    }
-
-    private fun drawManualThreePoint(canvas: Canvas) {
-        // Line 1: A -> B
-        linePath.reset()
-        linePath.moveTo(pointA.x, pointA.y)
-        linePath.lineTo(pointB.x, pointB.y)
-        canvas.drawPath(linePath, primaryLinePaint)
-
-        // Line 2: B -> C
-        linePath.reset()
-        linePath.moveTo(pointB.x, pointB.y)
-        linePath.lineTo(pointC.x, pointC.y)
-        canvas.drawPath(linePath, reflectedLinePaint)
-
-        // Draw Angle at pivot Point B
-        val angle = GeometryUtils.computeAngleBetweenLines(pointA, pointB, pointC)
-        val angleText = String.format(Locale.US, "∠ = %.1f°", angle)
-        drawTextBadge(canvas, angleText, pointB.x + 14f * density, pointB.y - 14f * density)
-    }
-
-    private fun drawEdgeMarkerOnly(canvas: Canvas) {
-        updateInnerInsetBox()
-        val reflection = GeometryUtils.computeReflection(pointA, pointB, innerInsetBox)
-
-        if (reflection != null) {
-            canvas.drawCircle(
-                reflection.hitPoint.x,
-                reflection.hitPoint.y,
-                edgeMarkerRadius,
-                edgeMarkerPaint
-            )
-            canvas.drawCircle(
-                reflection.hitPoint.x,
-                reflection.hitPoint.y,
-                edgeMarkerRadius,
-                edgeMarkerStrokePaint
-            )
-
-            canvas.drawCircle(
-                reflection.reflectedPoint.x,
-                reflection.reflectedPoint.y,
-                edgeMarkerRadius * 0.75f,
-                edgeMarkerPaint
-            )
-        }
-    }
-
-    private fun drawTextBadge(canvas: Canvas, text: String, x: Float, y: Float) {
-        textPaint.getTextBounds(text, 0, text.length, textBounds)
-        val pad = 4f * density
-        badgeRect.set(
-            x - pad,
-            y - textBounds.height() - pad,
-            x + textBounds.width() + pad,
-            y + pad
-        )
-        canvas.drawRoundRect(badgeRect, 4f * density, 4f * density, textBgPaint)
-        canvas.drawText(text, x, y, textPaint)
     }
 
     /**

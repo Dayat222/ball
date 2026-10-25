@@ -88,55 +88,28 @@ class PrefsManager(context: Context) {
     }
 
     /**
-     * Save the last active ruler mode index.
+     * Save the single target-ball handle position so it survives overlay restarts.
      */
-    fun saveMode(modeOrdinal: Int) {
-        prefs.edit().putInt(KEY_ACTIVE_MODE, modeOrdinal).apply()
-    }
-
-    /**
-     * Retrieve the last active ruler mode index.
-     */
-    fun getMode(): Int {
-        return prefs.getInt(KEY_ACTIVE_MODE, 0)
-    }
-
-    /**
-     * Save last handle positions to persist between overlay launches.
-     */
-    fun savePoints(pointA: PointF, pointB: PointF, pointC: PointF) {
+    fun saveTargetPoint(pointB: PointF) {
         prefs.edit().apply {
-            putFloat(KEY_PT_A_X, pointA.x)
-            putFloat(KEY_PT_A_Y, pointA.y)
             putFloat(KEY_PT_B_X, pointB.x)
             putFloat(KEY_PT_B_Y, pointB.y)
-            putFloat(KEY_PT_C_X, pointC.x)
-            putFloat(KEY_PT_C_Y, pointC.y)
             putBoolean(KEY_POINTS_INITIALIZED, true)
             apply()
         }
     }
 
     /**
-     * Retrieve last handle positions, or initialize to reasonable defaults inside screen.
+     * Retrieve the last target-ball position, or a sensible default inside the screen.
      */
-    fun getPoints(screenWidth: Float, screenHeight: Float): Triple<PointF, PointF, PointF> {
-        val hasPoints = prefs.getBoolean(KEY_POINTS_INITIALIZED, false)
-        if (hasPoints) {
-            val ax = prefs.getFloat(KEY_PT_A_X, screenWidth * 0.5f)
-            val ay = prefs.getFloat(KEY_PT_A_Y, screenHeight * 0.7f)
+    fun getTargetPoint(screenWidth: Float, screenHeight: Float): PointF {
+        val hasPoint = prefs.getBoolean(KEY_POINTS_INITIALIZED, false)
+        if (hasPoint) {
             val bx = prefs.getFloat(KEY_PT_B_X, screenWidth * 0.5f)
             val by = prefs.getFloat(KEY_PT_B_Y, screenHeight * 0.4f)
-            val cx = prefs.getFloat(KEY_PT_C_X, screenWidth * 0.8f)
-            val cy = prefs.getFloat(KEY_PT_C_Y, screenHeight * 0.4f)
-            return Triple(PointF(ax, ay), PointF(bx, by), PointF(cx, cy))
+            return PointF(bx, by)
         }
-
-        // Sensible default positions
-        val defaultA = PointF(screenWidth * 0.5f, screenHeight * 0.65f)
-        val defaultB = PointF(screenWidth * 0.5f, screenHeight * 0.35f)
-        val defaultC = PointF(screenWidth * 0.75f, screenHeight * 0.35f)
-        return Triple(defaultA, defaultB, defaultC)
+        return PointF(screenWidth * 0.5f, screenHeight * 0.35f)
     }
 
     /**
@@ -182,17 +155,6 @@ class PrefsManager(context: Context) {
 
     fun saveBankLineColor(color: Int) = saveSecondaryRayColor(color)
     fun getBankLineColor(): Int = getSecondaryRayColor()
-
-    /**
-     * Save and retrieve radial lines visibility toggle.
-     */
-    fun saveShowRadialGuides(show: Boolean) {
-        prefs.edit().putBoolean(KEY_SHOW_SIX_LINES, show).apply()
-    }
-
-    fun getShowRadialGuides(): Boolean {
-        return prefs.getBoolean(KEY_SHOW_SIX_LINES, true)
-    }
 
     /**
      * Save and retrieve target ring radius.
@@ -241,14 +203,8 @@ class PrefsManager(context: Context) {
         private const val KEY_CALIB_VERSION = "calib_version"
         private const val CURRENT_CALIB_VERSION = 3
 
-        private const val KEY_ACTIVE_MODE = "active_mode"
-
-        private const val KEY_PT_A_X = "pt_a_x"
-        private const val KEY_PT_A_Y = "pt_a_y"
         private const val KEY_PT_B_X = "pt_b_x"
         private const val KEY_PT_B_Y = "pt_b_y"
-        private const val KEY_PT_C_X = "pt_c_x"
-        private const val KEY_PT_C_Y = "pt_c_y"
         private const val KEY_POINTS_INITIALIZED = "points_initialized"
 
         private const val KEY_LINE_STROKE_WIDTH = "line_stroke_width"
@@ -256,7 +212,6 @@ class PrefsManager(context: Context) {
         private const val KEY_LINE_COLOR = "line_color"
         private const val KEY_BANK_LINE_COLOR = "secondary_ray_color"
 
-        private const val KEY_SHOW_SIX_LINES = "show_radial_guides"
         private const val KEY_SHOW_BANK_GUIDES = "show_bank_guides"
         private const val KEY_FULL_LENGTH_GUIDES = "full_length_guides"
         private const val KEY_BALL_RADIUS = "target_ring_radius"

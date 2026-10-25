@@ -121,71 +121,89 @@ object AppUpdateManager {
         return try {
             val cacheBusterUrl = "$VERSION_JSON_URL?t=${System.currentTimeMillis()}"
             val conn = openConnectionWithRedirects(cacheBusterUrl)
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+            try {
+                if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
+                parseVersionJson(
+                    conn.inputStream.bufferedReader().use { it.readText() },
+                    currentVersionCode
+                )
+            } finally {
                 conn.disconnect()
-                return null
             }
-            val jsonText = conn.inputStream.bufferedReader().use { it.readText() }
-            conn.disconnect()
-
-            val json = JSONObject(jsonText)
-            val remoteCode = json.optLong("versionCode", 1L)
-            val remoteName = json.optString("versionName", "1.0")
-            val downloadUrl = json.optString("downloadUrl", "")
-            val changelog = json.optString("changelog", "Pembaruan kestabilan dan perbaikan fitur.")
-
-            UpdateInfo(
-                remoteVersionCode = remoteCode,
-                remoteVersionName = remoteName,
-                downloadUrl = downloadUrl,
-                changelog = changelog,
-                isUpdateAvailable = remoteCode > currentVersionCode
-            )
         } catch (e: Exception) {
             null
         }
     }
 
+    /**
+     * Fallback channel: reads the version.json published as an asset on the latest GitHub release.
+     *
+     * Why: the release tag is a floating "latest" tag, so the tag name carries no version number.
+     * Guessing `currentVersionCode + 1` from it caused a permanent false "update available" prompt
+     * whenever raw.githubusercontent.com was unreachable. The manifest asset is the only reliable
+     * versionCode source in that case; if it is missing we report no update instead of guessing.
+     */
     private fun fetchFromGitHubReleases(currentVersionCode: Long): UpdateInfo? {
         return try {
             val conn = openConnectionWithRedirects(GITHUB_LATEST_RELEASE_API)
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) {
+            val releaseJsonText = try {
+                if (conn.responseCode != HttpURLConnection.HTTP_OK) return null
+                conn.inputStream.bufferedReader().use { it.readText() }
+            } finally {
                 conn.disconnect()
-                return null
             }
-            val jsonText = conn.inputStream.bufferedReader().use { it.readText() }
-            conn.disconnect()
 
-            val json = JSONObject(jsonText)
-            val tagName = json.optString("tag_name", "v1.0")
-            val body = json.optString("body", "Pembaruan otomatis terbaru.")
-
+            val json = JSONObject(releaseJsonText)
             var apkUrl = ""
+            var manifestUrl = ""
             val assets = json.optJSONArray("assets")
             if (assets != null) {
                 for (i in 0 until assets.length()) {
                     val asset = assets.getJSONObject(i)
                     val name = asset.optString("name", "")
-                    if (name.endsWith(".apk", ignoreCase = true)) {
-                        apkUrl = asset.optString("browser_download_url", "")
-                        break
+                    val url = asset.optString("browser_download_url", "")
+                    when {
+                        name.equals("version.json", ignoreCase = true) -> manifestUrl = url
+                        apkUrl.isEmpty() && name.endsWith(".apk", ignoreCase = true) -> apkUrl = url
                     }
                 }
             }
 
-            if (apkUrl.isEmpty()) {
-                apkUrl = "https://github.com/Dayat222/ball/releases/download/latest/app-debug.apk"
+            if (manifestUrl.isEmpty() || apkUrl.isEmpty()) return null
+
+            val manifestConn = openConnectionWithRedirects("$manifestUrl?t=${System.currentTimeMillis()}")
+            val manifestText = try {
+                if (manifestConn.responseCode != HttpURLConnection.HTTP_OK) return null
+                manifestConn.inputStream.bufferedReader().use { it.readText() }
+            } finally {
+                manifestConn.disconnect()
             }
 
-            // Estimate remote version code from tag if format is v1.2 or similar
-            val tagNumber = tagName.removePrefix("v").replace(".", "").toLongOrNull() ?: (currentVersionCode + 1)
+            parseVersionJson(manifestText, currentVersionCode)?.let { info ->
+                if (info.downloadUrl.isEmpty()) info.copy(downloadUrl = apkUrl) else info
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Parses the OTA manifest. Its versionCode is the single source of truth for comparisons,
+     * so an up-to-date install is never prompted to install the same build again.
+     */
+    private fun parseVersionJson(jsonText: String, currentVersionCode: Long): UpdateInfo? {
+        return try {
+            val json = JSONObject(jsonText)
+            val remoteCode = json.optLong("versionCode", currentVersionCode)
+            val remoteName = json.optString("versionName", "")
+            if (remoteName.isEmpty()) return null
 
             UpdateInfo(
-                remoteVersionCode = tagNumber,
-                remoteVersionName = tagName,
-                downloadUrl = apkUrl,
-                changelog = body,
-                isUpdateAvailable = true
+                remoteVersionCode = remoteCode,
+                remoteVersionName = remoteName,
+                downloadUrl = json.optString("downloadUrl", ""),
+                changelog = json.optString("changelog", "Pembaruan kestabilan dan perbaikan fitur."),
+                isUpdateAvailable = remoteCode > currentVersionCode
             )
         } catch (e: Exception) {
             null

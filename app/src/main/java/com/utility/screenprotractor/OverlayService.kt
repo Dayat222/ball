@@ -36,10 +36,10 @@ import kotlin.math.roundToInt
 
 /**
  * Multi-window foreground service managing:
- * 1. Pass-through canvas overlay with 6-pocket radial lines and offset tethers.
- * 2. Independent floating handle windows with vertical offset to prevent finger obstruction.
- * 3. Draggable compact floating control bar with collapsible minimize bubble,
- *    Quick-Ghost 4s, calibration toggle, 6-line toggle, and line sliders.
+ * 1. Table-bounded pass-through canvas overlay with pocket rays and bank rays.
+ * 2. Independent floating target-ball handle with anti-finger offset.
+ * 3. Draggable compact floating control bar with collapsible mini capsule,
+ *    calibration toggle, ray length toggle, bank ray toggle, and styling sliders.
  */
 class OverlayService : Service() {
 
@@ -50,20 +50,13 @@ class OverlayService : Service() {
     private var canvasOverlayView: CanvasOverlayView? = null
     private lateinit var canvasLayoutParams: WindowManager.LayoutParams
 
-    // Independent Floating Handles (Grip Pads)
-    private var handleViewA: HandleView? = null
+    // Independent Floating Handle (Grip Pad)
     private var handleViewB: HandleView? = null
-    private var handleViewC: HandleView? = null
-
-    private lateinit var handleParamsA: WindowManager.LayoutParams
     private lateinit var handleParamsB: WindowManager.LayoutParams
-    private lateinit var handleParamsC: WindowManager.LayoutParams
     private var handleSizePx = 0
     private var handleOffsetX = 48f
     private var handleOffsetY = 36f
-    private var isOffsetInvertedA = false
     private var isOffsetInvertedB = false
-    private var isOffsetInvertedC = false
 
     // Floating Control Bar
     private var floatingControlView: View? = null
@@ -331,34 +324,16 @@ class OverlayService : Service() {
         val screenW = kotlin.math.max(realSize.x, realSize.y).toFloat()
         val screenH = kotlin.math.min(realSize.x, realSize.y).toFloat()
 
-        val (ptA, ptB, ptC) = prefsManager.getPoints(screenW, screenH)
+        val targetPoint = prefsManager.getTargetPoint(screenW, screenH)
         val initialAlpha = prefsManager.getLineAlpha()
         val initialColor = prefsManager.getLineColor()
 
-        // 1. Handle A
-        handleViewA = HandleView(this, "A").apply {
-            updateColor(initialColor)
-            updateHandleAlpha(initialAlpha)
-        }
-        val gripPosA = calculateGripFromAim(ptA, isOffsetInvertedA)
-        handleParamsA = createHandleLayoutParams(gripPosA)
-        setupHandleTouchListener(
-            handleViewA!!,
-            handleParamsA,
-            initialInverted = isOffsetInvertedA,
-            onInversionChanged = { isOffsetInvertedA = it }
-        ) { aimX, aimY, gripX, gripY ->
-            canvasOverlayView?.setPointA(aimX, aimY, gripX, gripY)
-        }
-        windowManager.addView(handleViewA, handleParamsA)
-        canvasOverlayView?.setPointA(ptA.x, ptA.y, gripPosA.x, gripPosA.y)
-
-        // 2. Handle B (Target Ball)
+        // Target Ball Handle (Point B)
         handleViewB = HandleView(this, "B").apply {
             updateColor(initialColor)
             updateHandleAlpha(initialAlpha)
         }
-        val gripPosB = calculateGripFromAim(ptB, isOffsetInvertedB)
+        val gripPosB = calculateGripFromAim(targetPoint, isOffsetInvertedB)
         handleParamsB = createHandleLayoutParams(gripPosB)
         setupHandleTouchListener(
             handleViewB!!,
@@ -369,25 +344,7 @@ class OverlayService : Service() {
             canvasOverlayView?.setPointB(aimX, aimY, gripX, gripY)
         }
         windowManager.addView(handleViewB, handleParamsB)
-        canvasOverlayView?.setPointB(ptB.x, ptB.y, gripPosB.x, gripPosB.y)
-
-        // 3. Handle C
-        handleViewC = HandleView(this, "C").apply {
-            updateColor(initialColor)
-            updateHandleAlpha(initialAlpha)
-        }
-        val gripPosC = calculateGripFromAim(ptC, isOffsetInvertedC)
-        handleParamsC = createHandleLayoutParams(gripPosC)
-        setupHandleTouchListener(
-            handleViewC!!,
-            handleParamsC,
-            initialInverted = isOffsetInvertedC,
-            onInversionChanged = { isOffsetInvertedC = it }
-        ) { aimX, aimY, gripX, gripY ->
-            canvasOverlayView?.setPointC(aimX, aimY, gripX, gripY)
-        }
-        windowManager.addView(handleViewC, handleParamsC)
-        canvasOverlayView?.setPointC(ptC.x, ptC.y, gripPosC.x, gripPosC.y)
+        canvasOverlayView?.setPointB(targetPoint.x, targetPoint.y, gripPosB.x, gripPosB.y)
 
         syncHandlesVisibility()
     }
@@ -442,12 +399,10 @@ class OverlayService : Service() {
         var currentGripX = 0f
         var currentGripY = 0f
 
-        var downTime = 0L
         var downRawX = 0f
         var downRawY = 0f
 
         // Long-Press Tracking (Smart Offset Flip)
-        var isLongPressed = false
         var hasMovedSignificantly = false
 
         fun flipOffset() {
@@ -481,7 +436,6 @@ class OverlayService : Service() {
 
         val longPressRunnable = Runnable {
             if (!hasMovedSignificantly) {
-                isLongPressed = true
                 flipOffset()
             }
         }
@@ -493,13 +447,11 @@ class OverlayService : Service() {
                     lastRawY = event.rawY
                     downRawX = event.rawX
                     downRawY = event.rawY
-                    downTime = System.currentTimeMillis()
 
                     currentGripX = params.x + (handleSizePx / 2f)
                     currentGripY = params.y + (handleSizePx / 2f)
 
                     hasMovedSignificantly = false
-                    isLongPressed = false
                     mainHandler.postDelayed(longPressRunnable, 450L)
                     true
                 }
@@ -561,7 +513,6 @@ class OverlayService : Service() {
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     mainHandler.removeCallbacks(longPressRunnable)
-                    isLongPressed = false
                     persistHandlePositions()
                     true
                 }
@@ -572,7 +523,7 @@ class OverlayService : Service() {
 
     private fun persistHandlePositions() {
         val canvas = canvasOverlayView ?: return
-        prefsManager.savePoints(canvas.pointA, canvas.pointB, canvas.pointC)
+        prefsManager.saveTargetPoint(canvas.pointB)
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -1116,71 +1067,36 @@ class OverlayService : Service() {
 
     private fun syncHandlesVisibility() {
         if (isCanvasHidden || isCalibrationActive) {
-            handleViewA?.visibility = View.GONE
             handleViewB?.visibility = View.GONE
-            handleViewC?.visibility = View.GONE
             return
         }
-
-        val isSixLinesActive = canvasOverlayView?.showRadialGuides ?: false
-        if (isSixLinesActive) {
-            handleViewA?.visibility = View.GONE
-            handleViewB?.visibility = View.VISIBLE
-            handleViewC?.visibility = View.GONE
-        } else {
-            handleViewA?.visibility = View.VISIBLE
-            handleViewB?.visibility = View.VISIBLE
-            val currentMode = canvasOverlayView?.currentMode ?: CanvasOverlayView.RulerMode.AUTO_REFLECT
-            handleViewC?.visibility = if (currentMode == CanvasOverlayView.RulerMode.MANUAL_3_POINT) {
-                View.VISIBLE
-            } else {
-                View.GONE
-            }
-        }
+        handleViewB?.visibility = View.VISIBLE
     }
 
-    private fun syncHandleCVisibility() = syncHandlesVisibility()
-
     private fun updateAllHandlesAlpha(alpha: Int) {
-        handleViewA?.updateHandleAlpha(alpha)
         handleViewB?.updateHandleAlpha(alpha)
-        handleViewC?.updateHandleAlpha(alpha)
     }
 
     private fun updateAllHandlesColor(color: Int) {
-        handleViewA?.updateColor(color)
         handleViewB?.updateColor(color)
-        handleViewC?.updateColor(color)
     }
 
     private fun repositionHandlesToAimPoints() {
         val canvas = canvasOverlayView ?: return
-        val hA = handleViewA ?: return
         val hB = handleViewB ?: return
-        val hC = handleViewC ?: return
 
-        val gripPosA = calculateGripFromAim(canvas.pointA, isOffsetInvertedA)
         val gripPosB = calculateGripFromAim(canvas.pointB, isOffsetInvertedB)
-        val gripPosC = calculateGripFromAim(canvas.pointC, isOffsetInvertedC)
 
-        handleParamsA.x = (gripPosA.x - handleSizePx / 2f).roundToInt()
-        handleParamsA.y = (gripPosA.y - handleSizePx / 2f).roundToInt()
         handleParamsB.x = (gripPosB.x - handleSizePx / 2f).roundToInt()
         handleParamsB.y = (gripPosB.y - handleSizePx / 2f).roundToInt()
-        handleParamsC.x = (gripPosC.x - handleSizePx / 2f).roundToInt()
-        handleParamsC.y = (gripPosC.y - handleSizePx / 2f).roundToInt()
 
         try {
-            windowManager.updateViewLayout(hA, handleParamsA)
             windowManager.updateViewLayout(hB, handleParamsB)
-            windowManager.updateViewLayout(hC, handleParamsC)
         } catch (e: Exception) {
             e.printStackTrace()
         }
 
-        canvas.setPointA(canvas.pointA.x, canvas.pointA.y, gripPosA.x, gripPosA.y)
         canvas.setPointB(canvas.pointB.x, canvas.pointB.y, gripPosB.x, gripPosB.y)
-        canvas.setPointC(canvas.pointC.x, canvas.pointC.y, gripPosC.x, gripPosC.y)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -1323,16 +1239,7 @@ class OverlayService : Service() {
             canvasOverlayView = null
         }
 
-        // Remove floating handles
-        handleViewA?.let {
-            try {
-                windowManager.removeView(it)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-            handleViewA = null
-        }
-
+        // Remove floating handle
         handleViewB?.let {
             try {
                 windowManager.removeView(it)
@@ -1340,15 +1247,6 @@ class OverlayService : Service() {
                 e.printStackTrace()
             }
             handleViewB = null
-        }
-
-        handleViewC?.let {
-            try {
-                windowManager.removeView(it)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-            handleViewC = null
         }
 
         // Remove control bar

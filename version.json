@@ -1,6 +1,6 @@
 {
-  "versionCode": 16,
-  "versionName": "2.5",
+  "versionCode": 17,
+  "versionName": "2.6",
   "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-debug.apk",
-  "changelog": "Versi 2.5:\n• Kalibrasi akurasi perhitungan garis pantul (bank shots): titik target kantong disesuaikan tepat ke pusat lubang sudut dan mulut kantong tengah sehingga pantulan bola masuk lurus ke dalam lubang tanpa menabrak karet rel.\n• Sinkronisasi bidang pantul bantalan (cushion bounce plane) tepat sesuai radius bola."
+  "changelog": "Versi 2.6:\n- Pemeriksa pembaruan tidak lagi menampilkan update palsu saat version.json tidak dapat diakses: versionCode dari asset rilis dipakai sebagai sumber utama, tag \"latest\" tidak lagi ditebak sebagai versi lebih baru.\n- Menghapus sisa kode mode Auto-Reflect / Manual 3-Point / Edge-Marker beserta handle A dan C yang sudah tidak bisa diakses dari toolbar, sehingga overlay hanya merender mode target 1 titik.\n- Menyinkronkan README dan PRD dengan perilaku aplikasi sebenarnya (izin, fitur aktif, alur OTA).\n- Perbaikan kalibrasi bank shot (v2.5) tetap dipertahankan."
 }

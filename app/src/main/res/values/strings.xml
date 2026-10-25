@@ -23,22 +23,9 @@
 
     <!-- Overlay Controls -->
     <string name="control_drag_handle">::</string>
-    <string name="control_edit">Edit</string>
-    <string name="control_lock">Lock</string>
-    <string name="control_ghost">Ghost 4s</string>
-    <string name="control_ghosting">Ghosting...</string>
-    <string name="control_hide">Hide</string>
-    <string name="control_show">Show</string>
     <string name="control_calibrate">Calib</string>
     <string name="control_save_bound">Save Bound</string>
-    <string name="control_reset_bound">Reset Bound</string>
-    <string name="control_six_lines">6-Line</string>
     <string name="control_settings">⚙</string>
-    <string name="control_mode_auto">Auto-Reflect</string>
-    <string name="control_mode_manual">Manual 3-Pt</string>
-    <string name="control_mode_edge">Edge-Marker</string>
-    <string name="control_minimize">−</string>
-    <string name="control_maximize">+</string>
     <string name="control_on">ON</string>
     <string name="control_off">OFF</string>
     <string name="control_line_short">Short</string>
@@ -61,9 +48,7 @@
     <string name="toast_bank_off">Bank Rays: OFF</string>
 
     <!-- Calibration Info -->
-    <string name="calib_instructions">Drag corner handles to align boundary box with target area.</string>
     <string name="toast_calib_saved">Boundary box calibration saved.</string>
-    <string name="toast_calib_reset">Boundary box reset to center.</string>
     <string name="toast_permission_needed">Please grant Overlay Permission to start the ruler.</string>
     <!-- In-App Auto Update -->
     <string name="label_check_update">App Update</string>

@@ -1,92 +1,150 @@
 # Screen Angle Ruler (Screen Protractor)
 
-A precision geometric screen overlay ruler and vector 2D reflection visualizer ($\theta_i = \theta_r$) for Android. Built with a safe, non-intrusive architecture and lightweight standard Android SDK components.
+A precision screen-overlay aiming guide for Android. It draws a target-ball reticle with direct
+pocket rays and cushion bank rays on top of a calibrated table boundary, and it is fully
+pass-through: touches never reach the overlay, they go straight to the app underneath.
 
 ---
 
 ## Features
 
-- **Multi-Window Overlay Service:**
-  - **Always Pass-Through Canvas Overlay (`MATCH_PARENT` x `MATCH_PARENT`):** Full-screen transparent canvas permanently set with `FLAG_NOT_TOUCHABLE` and `FLAG_NOT_FOCUSABLE`. All touches on screen pass directly through to underlying apps.
-  - **Clean View:** Boundary box and calibration pins are strictly visible only during calibration mode. Once saved, the border is completely hidden from view while retaining active reflection calculations.
-  - **Minimalist Plus-Sign Handles (`+`) & Live Alpha Sync:** Independent `42dp x 42dp` transparent touch pads displaying a clean center crosshair (`+`) without circle borders or labels, with transparency and color synchronized in real-time with line settings.
-  - **1-Point Target Mode with 6 Direct & 10 Mirror Reflection Rays (Plain Lines):**
-    - **Single-Point Mode:** Activating 6-Line mode automatically hides handles A and C, displaying only Point B with its stem tether for an uncluttered target view.
-    - **6 Direct Vertex Rays:** Clean plain lines (`85dp`) pointing directly to all 6 calibrated boundary vertices from Point B's center white dot (`6dp`), using the user's primary line color.
-    - **10 Mirror Reflection Rays:** Clean plain rays (`64dp`) pointing towards 10 virtual mirror points across all 4 boundary rails (Top, Bottom, Right, Left), highlighted in contrasting amber/gold without tip dots or text labels.
-  - **Collapsible Mini Capsule Bar:** Tap `[−]` to collapse toolbar into a draggable mini capsule containing quick `[ON]` / `[OFF]` switch and `[+]` expand button.
-  - **Draggable Floating Control Bar (`WRAP_CONTENT` x `WRAP_CONTENT`):** Compact dark UI (`#CC1E1E1E`, 12dp rounded corners) with Quick-Ghost, 6-Line toggle, calibration controls, and line sliders.
-- **Instant Controls & Quick-Ghost:**
-  - **Landscape & Portrait 8-Handle Calibration:** 8 draggable handles (4 corners + 4 edge centers) with auto-clamping preventing borders from overflowing screen bounds, plus a `[Reset Bound]` button.
-  - **Real-Time Line Customization (`[⚙]`):** Sub-panel with sliders for line thickness (`0.5dp` – `15dp`), line opacity (`10%` – `100%`), and **Line Color Picker** (6 preset color swatches + 360° Hue spectrum slider with live preview).
-  - **Quick-Ghost (Auto-Hide 4s):** Temporarily hides all overlay graphics and handles for 4 seconds for unobstructed execution, auto-restoring automatically.
-  - **Direct-Touch Interaction:** Move handles A, B, C freely at any time without having to toggle an Edit/Lock mode.
-  - **Quick ON/OFF Switch:** Instant one-tap toggle on minimized bar (`[ON]` / `[OFF]`) for 100% clean screen during shots.
-- **3 Measurement & Reflection Modes:**
-  - **Auto-Reflection ($\theta_i = \theta_r$):** Ray-box intersection from Point A through Point B hitting calibrated boundary walls, reflecting automatically with angle computation.
-  - **Manual 3-Point:** Freely reposition Start (A), Pivot (B), and End (C) to measure angles ($\angle ABC$).
-  - **Edge-Marker Only:** Minimalist mode displaying indicator dots ($16\text{dp}$) directly at the boundary wall bounce points without obstructing the middle of the screen.
-- **Persistent Calibration:** Boundary box coordinates, line styles (thickness, opacity, color), 6-line toggle, and handle positions are persisted in `SharedPreferences`.
-- **Strict Offline & Safe Policy:**
-  - 100% offline (No `android.permission.INTERNET`).
-  - No `AccessibilityService`, `MediaProjection`, or `QUERY_ALL_PACKAGES`.
-  - Android 14 (API 34) compliant using `FOREGROUND_SERVICE_SPECIAL_USE`.
+- **Table-bounded pass-through overlay**
+  - The canvas window is cropped to the calibrated table plus `18dp` padding, so the power bar and
+    the rest of the UI stay completely clear.
+  - `FLAG_NOT_TOUCHABLE` while playing: every touch passes through to the game underneath.
+  - Calibration mode temporarily expands the window to full screen and enables touch.
+- **Single-point target mode (Point B)**
+  - Ball-sized reticle ring (`8dp` – `30dp`, persisted).
+  - **6 direct vertex rays** (`85dp`) to the four corner mouths and two side pockets, with
+    corner-mouth insets and lateral tilt compensation.
+  - **10 cushion bank rays**, computed with the mirror-point method against the cushion plane and
+    aimed at real pocket targets. Optional full-length mode draws the incoming ray, the contact
+    dot, and the reflected ray into the pocket.
+- **Anti-finger handle**
+  - The draggable `42dp` crosshair sits `48dp` to the right and `36dp` above/below the real aim
+    point, connected by a dashed tether, so the finger never covers the target.
+  - Long-press flips the grip above/below the ball; auto-flip near the bottom edge.
+  - Three-stage drag sensitivity (`0.28` / `0.65` / `1.0` px per frame) for fine aiming.
+- **8-handle calibration** with auto-clamping, sanity checks, and a `Reset Bound` path.
+  Verified state is persisted together with a calibration version so stale geometry is invalidated.
+- **Compact dark toolbar** (`#CC1E1E1E`, 12dp corners): Short/Full ray length, Bank rays on/off,
+  Calibrate, Settings, Close; collapsible to a draggable mini capsule with a quick ON/OFF switch.
+- **Live styling** persisted across restarts: thickness (`0.5dp` – `15dp`), opacity (`25` – `255`),
+  primary ray color, bank ray color (6 presets each plus a 360° hue slider).
+- **In-app OTA updater** with manifest fallback and `FileProvider` installation.
+
+> The old Auto-Reflect / Manual 3-Point / Edge-Marker modes and the 4-second Quick-Ghost were
+> removed in v2.6. They were unreachable from the toolbar since v2.4; the single-point target mode
+> is the only rendering mode left.
 
 ---
 
-## Project Structure
+## Architecture
+
+```text
+OverlayService (foreground, type specialUse)
+├── CanvasOverlayView   MATCH_PARENT or table-sized window, pass-through, renders rays
+├── HandleView "B"      42dp drag handle window with anti-finger offset
+└── FloatingControlView toolbar + minimized capsule (layout_floating_control.xml)
+```
+
+Coordinate model: all geometry lives in a **landscape screen space** (`max(w,h) × min(w,h)`).
+When the canvas window is cropped, `CanvasOverlayView` translates drawing by `(-winX, -winY)` so
+world coordinates stay identical between calibration and play.
+
+| File | Responsibility |
+|---|---|
+| `MainActivity.kt` | Permission gate, start/stop service, update check UI |
+| `OverlayService.kt` | WindowManager setup, handle drag logic, toolbar wiring, persistence |
+| `CanvasOverlayView.kt` | Ray/bank rendering, calibration handles and hit-testing |
+| `PrefsManager.kt` | Boundary box, target point, styling and toggles in `SharedPreferences` |
+| `AppUpdateManager.kt` | OTA manifest fetch, APK download, install intent |
+| `HandleView.kt` | Minimal crosshair touch pad |
+| `GeometryUtils.kt` | Distance helpers used by calibration hit-testing |
+
+---
+
+## Permissions
+
+| Permission | Why |
+|---|---|
+| `SYSTEM_ALERT_WINDOW` | Draw the overlay above other apps |
+| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE` | Keep the overlay alive on Android 14+ |
+| `INTERNET` | In-app update check and APK download |
+| `REQUEST_INSTALL_PACKAGES` | Launch the package installer for a downloaded update |
+
+No `AccessibilityService`, no `MediaProjection`, no `QUERY_ALL_PACKAGES`, and no analytics or
+third-party SDKs.
+
+---
+
+## Build
+
+**Local**
+
+```bash
+./gradlew assembleDebug      # debug APK, signed with the release keystore
+./gradlew assembleRelease
+```
+
+`app/build.gradle.kts` signs both build types with `app/release.keystore` so that a new build can
+replace an installed one without a signature mismatch. The keystore and its passwords are committed
+to the repository for that update continuity; treat the repository as sensitive.
+
+**CI (`.github/workflows/build-apk.yml`)**
+
+1. Every push builds `assembleDebug` with JDK 17 and Gradle 8.4.
+2. The APK is uploaded as the artifact `ScreenAngleRuler-Debug-APK`.
+3. Pushes to `main` also publish/refresh the GitHub release tagged `latest` with **both**
+   `app-debug.apk` and `version.json`.
+
+The wrapper JAR is not committed; local builds need a Gradle installation, CI uses
+`gradle/actions/setup-gradle`.
+
+---
+
+## Release / update flow
+
+1. Bump `versionCode` in `app/build.gradle.kts` **and** `version.json` (currently `17` / `2.6`).
+2. Update the `changelog` in `version.json`.
+3. Push to `main` → CI builds and refreshes the `latest` release assets.
+4. Installed apps read `version.json` from `raw.githubusercontent.com`; if that is unreachable they
+   read the `version.json` asset of the latest release through the GitHub API.
+5. An update is offered only when the manifest `versionCode` is greater than the installed one.
+
+The manifest `versionCode` is the single source of truth. The floating `latest` tag is never
+interpreted as a version number.
+
+---
+
+## Project structure
 
 ```text
 .
-├── .github/
-│   └── workflows/
-│       └── build-apk.yml              # CI/CD workflow to compile debug APK
+├── .github/workflows/build-apk.yml
 ├── app/
-│   ├── build.gradle.kts               # App-level build config (Kotlin DSL)
-│   ├── proguard-rules.pro
+│   ├── build.gradle.kts
+│   ├── release.keystore
 │   └── src/main/
-│       ├── AndroidManifest.xml        # Permissions and service declarations
+│       ├── AndroidManifest.xml
 │       ├── java/com/utility/screenprotractor/
-│       │   ├── CanvasOverlayView.kt   # High-performance transparent canvas (pass-through)
-│       │   ├── GeometryUtils.kt       # Ray-box intersection & reflection engine
-│       │   ├── HandleView.kt          # Independent 42dp floating touch handle
-│       │   ├── MainActivity.kt        # Entry dashboard & permission manager
-│       │   ├── OverlayService.kt      # Foreground service & multi-window manager
-│       │   └── PrefsManager.kt        # Calibration & coordinates persistence
+│       │   ├── AppUpdateManager.kt
+│       │   ├── CanvasOverlayView.kt
+│       │   ├── GeometryUtils.kt
+│       │   ├── HandleView.kt
+│       │   ├── MainActivity.kt
+│       │   ├── OverlayService.kt
+│       │   └── PrefsManager.kt
 │       └── res/
-│           ├── drawable/              # Vector icons and rounded shapes
-│           ├── layout/                # Activity and floating toolbar layouts
-│           ├── mipmap-anydpi-v26/     # Adaptive app icons
-│           └── values/                # Strings, colors, and dark theme
-├── build.gradle.kts                   # Root build script
-├── settings.gradle.kts                # Repositories and project settings
-├── gradle.properties                  # JVM args and AndroidX configuration
-└── gradlew / gradlew.bat              # Gradle wrapper scripts
+│           ├── drawable/
+│           ├── layout/
+│           ├── mipmap-anydpi-v26/
+│           └── values/
+├── build.gradle.kts
+├── settings.gradle.kts
+├── gradle.properties
+└── version.json
 ```
 
----
-
-## Build with GitHub Actions
-
-This repository is pre-configured with `.github/workflows/build-apk.yml`. You don't need Android Studio installed locally to compile the APK:
-
-1. **Push to GitHub:**
-   ```bash
-   git init
-   git add .
-   git commit -m "Initial commit: Screen Angle Ruler"
-   git branch -M main
-   git remote add origin <YOUR_GITHUB_REPO_URL>
-   git push -u origin main
-   ```
-
-2. **Automatic Compilation:**
-   - GitHub Actions will trigger automatically on `push`.
-   - The workflow sets up JDK 17, Android SDK 34, and Gradle 8.4.
-   - It runs `gradle assembleDebug` to produce `app-debug.apk`.
-
-3. **Download the APK:**
-   - Go to your repository on GitHub.
-   - Click on the **Actions** tab.
-   - Select the latest workflow run.
-   - Download the artifact named **`ScreenAngleRuler-Debug-APK`**.
+`gabungan_kode_terbaru.txt` is a generated concatenation of the sources kept for offline review;
+it is not compiled.

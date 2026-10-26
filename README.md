@@ -27,6 +27,9 @@ pass-through: touches never reach the overlay, they go straight to the app under
   - **10 cushion bank rays**, solved analytically against the ball-centre cushion plane and aimed at
     the same mouth-gate point the direct rays use. Optional full-length mode draws the incoming ray,
     the contact dot, and the reflected ray into the pocket.
+  - In Short mode the reflected leg always keeps its full `85dp` length, even when the ball sits
+    against a cushion, so the bank line stays usable as a parallel-direction reference. The incoming
+    leg may be naturally short; the reflected one never is.
 - **Anti-finger handle**
   - The draggable `42dp` crosshair sits `48dp` to the right and `36dp` above/below the real aim
     point, connected by a dashed tether, so the finger never covers the target.
@@ -114,7 +117,7 @@ The wrapper JAR is not committed; local builds need a Gradle installation, CI us
 
 ## Release / update flow
 
-1. Bump `versionCode` in `app/build.gradle.kts` **and** `version.json` (currently `19` / `3.0`).
+1. Bump `versionCode` in `app/build.gradle.kts` **and** `version.json` (currently `20` / `3.0.1`).
 2. Update the `changelog` in `version.json`.
 3. Push to `main` → CI builds and refreshes the `latest` release assets.
 4. Installed apps read `version.json` from `raw.githubusercontent.com`; if that is unreachable they

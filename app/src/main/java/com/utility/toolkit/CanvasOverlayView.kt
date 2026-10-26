@@ -711,24 +711,44 @@ class CanvasOverlayView @JvmOverloads constructor(
             bankRayPath.lineTo(gateX + ux2 * extend, gateY + uy2 * extend)
             canvas.drawPath(bankRayPath, bankLinePaint)
         } else {
-            if (dist1 > startDist) {
-                val ux1 = dx1 / dist1
-                val uy1 = dy1 / dist1
-                val actualEnd = shortLen.coerceAtMost(dist1)
-                if (actualEnd > startDist) {
+            // Short mode must not shorten the reflected leg.
+            //
+            // Near a cushion the incoming leg is only a few dp long (the bounce
+            // point sits next to the ball), so capping the whole path at the
+            // short length collapsed the bank guide into a stub that could not
+            // be used as an alignment reference. The reflection therefore always
+            // runs the full short length from the contact point, independent of
+            // how close the ball is to the cushion.
+            val ux2 = dx2 / dist2
+            val uy2 = dy2 / dist2
+            val outgoing = shortLen.coerceAtMost(dist2)
+
+            if (dist1 > shortLen) {
+                // Bounce beyond the short reach: show the incoming leg only.
+                if (dist1 > startDist) {
+                    val ux1 = dx1 / dist1
+                    val uy1 = dy1 / dist1
                     bankRayPath.reset()
                     bankRayPath.moveTo(bx + ux1 * startDist, by + uy1 * startDist)
-                    bankRayPath.lineTo(bx + ux1 * actualEnd, by + uy1 * actualEnd)
+                    bankRayPath.lineTo(bx + ux1 * shortLen, by + uy1 * shortLen)
                     canvas.drawPath(bankRayPath, bankLinePaint)
                 }
             } else {
-                // Ball already on the cushion: show the outgoing leg only.
-                val ux2 = dx2 / dist2
-                val uy2 = dy2 / dist2
-                val actualEnd = shortLen.coerceAtMost(dist2)
+                // Bounce inside the short reach: full path, fixed-length reflection.
+                if (dist1 > startDist) {
+                    val ux1 = dx1 / dist1
+                    val uy1 = dy1 / dist1
+                    bankRayPath.reset()
+                    bankRayPath.moveTo(bx + ux1 * startDist, by + uy1 * startDist)
+                    bankRayPath.lineTo(hx, hy)
+                    canvas.drawPath(bankRayPath, bankLinePaint)
+                }
+
+                canvas.drawCircle(hx, hy, 3.5f * density, bankDotPaint)
+
                 bankRayPath.reset()
                 bankRayPath.moveTo(hx, hy)
-                bankRayPath.lineTo(hx + ux2 * actualEnd, hy + uy2 * actualEnd)
+                bankRayPath.lineTo(hx + ux2 * outgoing, hy + uy2 * outgoing)
                 canvas.drawPath(bankRayPath, bankLinePaint)
             }
         }

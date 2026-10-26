@@ -303,7 +303,18 @@ class OverlayService : Service() {
             // keeps moving. A constant size turns every drag update into a
             // cheap move transaction, and the radius covers the whole 85dp ray,
             // so nothing is ever clipped mid-drag.
-            val reach = (85f * density).roundToInt() + ballR + (24f * density).roundToInt()
+            val shortLen = (85f * density).roundToInt()
+            val reach = if (canvas.showBankGuides) {
+                // A bank is two legs: ball -> cushion -> reflected leg. The
+                // reflected leg keeps its full short length even next to a
+                // cushion, so the envelope is twice the short length while
+                // banks are visible.
+                shortLen * 2 + (8f * density).roundToInt()
+            } else {
+                // Direct rays need one leg only; keeping the window small when
+                // banks are off preserves the minimal obscured area.
+                shortLen + ballR + (24f * density).roundToInt()
+            }
             val size = (reach * 2).coerceIn(64, kotlin.math.min(screenW, screenH))
             winW = size
             winH = size
@@ -725,6 +736,9 @@ class OverlayService : Service() {
         btnToggleBankGuides?.setOnClickListener {
             val isNowBankOn = canvasOverlayView?.toggleBankGuides() ?: true
             updateBankGuidesUI(isNowBankOn)
+            // The Short-mode window envelope depends on whether bank rays are
+            // visible, so refit once when the toggle changes.
+            applyTableBoundedWindow()
             Toast.makeText(
                 this,
                 if (isNowBankOn) getString(R.string.toast_bank_on) else getString(R.string.toast_bank_off),

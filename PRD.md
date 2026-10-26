@@ -1,6 +1,6 @@
 # Product Requirements Document (PRD): Toolkit Overlay Utility
 
-**Status dokumen:** diselaraskan dengan implementasi **v3.0** (versionCode 19).
+**Status dokumen:** diselaraskan dengan implementasi **v3.0.1** (versionCode 20).
 Bagian yang sudah tidak berlaku ditandai di §8.
 
 ## 1. Ringkasan Produk
@@ -57,6 +57,9 @@ Bagian yang sudah tidak berlaku ditandai di §8.
   pantul. Validasi memakai segmen bantalan nyata (di antara mulut lubang), sehingga pantulan yang
   jatuh di mulut lubang ditolak. Opsional koefisien rebound (sudut keluar = k × sudut masuk).
 - Panjang ray: **Short** (`85dp`) atau **Full** (sampai lubang/vertex, plus titik kontak bantalan).
+  Pada mode Short, garis pantul selalu memakai panjang penuh `85dp` dari titik kontak walaupun bola
+  menempel bantalan. Kaki datang boleh memendek secara alami (jarak bola ke bantalan), tetapi kaki
+  pantul tidak pernah dipendekkan, sehingga garis tetap bisa dipakai sebagai acuan arah sejajar.
 - Mode render tunggal: *single-point target*. Garis A–B dan mode Auto-Reflect / Manual 3-Point /
   Edge-Marker sudah dihapus.
 

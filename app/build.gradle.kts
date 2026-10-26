@@ -4,15 +4,15 @@ plugins {
 }
 
 android {
-    namespace = "com.utility.screenprotractor"
+    namespace = "com.utility.toolkit"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.utility.screenprotractor"
+        applicationId = "com.utility.toolkit"
         minSdk = 26
         targetSdk = 34
-        versionCode = 18
-        versionName = "2.7"
+        versionCode = 19
+        versionName = "3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -28,7 +28,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

@@ -1,4 +1,4 @@
-package com.utility.screenprotractor
+package com.utility.toolkit
 
 import kotlin.math.abs
 import kotlin.math.atan

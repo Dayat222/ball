@@ -1,4 +1,4 @@
-package com.utility.screenprotractor
+package com.utility.toolkit
 
 import android.annotation.SuppressLint
 import android.app.Notification
@@ -14,7 +14,6 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Point
 import android.graphics.PointF
-import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
@@ -76,12 +75,6 @@ class OverlayService : Service() {
     private var isCanvasHidden = false
     private var isCalibrationActive = false
     private val mainHandler = Handler(Looper.getMainLooper())
-
-    private var windowFitPending = false
-    private val windowFitRunnable = Runnable {
-        windowFitPending = false
-        applyTableBoundedWindow()
-    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -285,33 +278,48 @@ class OverlayService : Service() {
         // Saat bermain normal: pangkas jendela kanvas sekecil mungkin.
         val box = canvas.boundaryBox
         val realSize = getRealScreenSize()
-        val screenW = kotlin.math.max(realSize.x, realSize.y).toFloat()
-        val screenH = kotlin.math.min(realSize.x, realSize.y).toFloat()
-        val ballR = canvas.ringRadiusDp * density
-        val pad = 18f * density
+        val screenW = kotlin.math.max(realSize.x, realSize.y)
+        val screenH = kotlin.math.min(realSize.x, realSize.y)
+        val pad = (18f * density).roundToInt()
+        val ballR = (canvas.ringRadiusDp * density).roundToInt()
 
-        val content = if (canvas.isFullLengthGuides) {
-            RectF(box.left - pad, box.top - pad, box.right + pad, box.bottom + pad)
+        val winX: Int
+        val winY: Int
+        val winW: Int
+        val winH: Int
+
+        if (canvas.isFullLengthGuides) {
+            winX = (box.left.roundToInt() - pad).coerceIn(0, (screenW - 1).coerceAtLeast(0))
+            winY = (box.top.roundToInt() - pad).coerceIn(0, (screenH - 1).coerceAtLeast(0))
+            winW = (box.width().roundToInt() + pad * 2).coerceIn(1, screenW - winX)
+            winH = (box.height().roundToInt() + pad * 2).coerceIn(1, screenH - winY)
         } else {
-            // 85dp ray + ring + one drag frame of slack
-            val reach = 85f * density + ballR + 36f * density
-            RectF(
-                canvas.pointB.x - reach,
-                canvas.pointB.y - reach,
-                canvas.pointB.x + reach,
-                canvas.pointB.y + reach
-            )
+            // Fixed-size capsule that only MOVES with the target.
+            //
+            // Resizing the window on every touch sample was the cause of the
+            // choppy, clipped Short-mode guides: each resize reallocates the
+            // surface and lands on a different vsync than the redraw, so the
+            // buffer is briefly composited at the old offset while the pointer
+            // keeps moving. A constant size turns every drag update into a
+            // cheap move transaction, and the radius covers the whole 85dp ray,
+            // so nothing is ever clipped mid-drag.
+            val reach = (85f * density).roundToInt() + ballR + (24f * density).roundToInt()
+            val size = (reach * 2).coerceIn(64, kotlin.math.min(screenW, screenH))
+            winW = size
+            winH = size
+            winX = (canvas.pointB.x.roundToInt() - size / 2).coerceIn(0, (screenW - size).coerceAtLeast(0))
+            winY = (canvas.pointB.y.roundToInt() - size / 2).coerceIn(0, (screenH - size).coerceAtLeast(0))
         }
 
-        content.left = content.left.coerceIn(0f, screenW - 1f)
-        content.top = content.top.coerceIn(0f, screenH - 1f)
-        content.right = content.right.coerceIn(content.left + 1f, screenW)
-        content.bottom = content.bottom.coerceIn(content.top + 1f, screenH)
-
-        val winX = content.left.roundToInt()
-        val winY = content.top.roundToInt()
-        val winW = content.width().roundToInt().coerceIn(1, screenW.roundToInt())
-        val winH = content.height().roundToInt().coerceIn(1, screenH.roundToInt())
+        // Nothing to do when the window already sits exactly there.
+        if (canvas.parent != null &&
+            canvasLayoutParams.x == winX &&
+            canvasLayoutParams.y == winY &&
+            canvasLayoutParams.width == winW &&
+            canvasLayoutParams.height == winH
+        ) {
+            return
+        }
 
         canvasLayoutParams.width = winW
         canvasLayoutParams.height = winH
@@ -343,16 +351,6 @@ class OverlayService : Service() {
         } catch (e: Exception) {
             e.printStackTrace()
         }
-    }
-
-    /**
-     * Coalesce window refits while the target handle is being dragged:
-     * one relayout per ~90 ms instead of one per touch sample.
-     */
-    private fun scheduleWindowFit() {
-        if (windowFitPending) return
-        windowFitPending = true
-        mainHandler.postDelayed(windowFitRunnable, 90L)
     }
 
     /**
@@ -410,11 +408,11 @@ class OverlayService : Service() {
             onInversionChanged = { isOffsetInvertedB = it }
         ) { aimX, aimY, gripX, gripY ->
             canvasOverlayView?.setPointB(aimX, aimY, gripX, gripY)
-            scheduleWindowFit()
+            applyTableBoundedWindow()
         }
         windowManager.addView(handleViewB, handleParamsB)
         canvasOverlayView?.setPointB(targetPoint.x, targetPoint.y, gripPosB.x, gripPosB.y)
-        scheduleWindowFit()
+        applyTableBoundedWindow()
 
         syncHandlesVisibility()
     }
@@ -685,7 +683,7 @@ class OverlayService : Service() {
         btnToggleLineLength?.setOnClickListener {
             val isNowFull = canvasOverlayView?.toggleFullLengthGuides() ?: false
             updateLineLengthUI(isNowFull)
-            scheduleWindowFit()
+            applyTableBoundedWindow()
             Toast.makeText(
                 this,
                 if (isNowFull) getString(R.string.toast_line_full) else getString(R.string.toast_line_short),
@@ -696,14 +694,14 @@ class OverlayService : Service() {
         btnSettingLineShort?.setOnClickListener {
             canvasOverlayView?.setFullLengthGuides(false)
             updateLineLengthUI(false)
-            scheduleWindowFit()
+            applyTableBoundedWindow()
             Toast.makeText(this, getString(R.string.toast_line_short), Toast.LENGTH_SHORT).show()
         }
 
         btnSettingLineFull?.setOnClickListener {
             canvasOverlayView?.setFullLengthGuides(true)
             updateLineLengthUI(true)
-            scheduleWindowFit()
+            applyTableBoundedWindow()
             Toast.makeText(this, getString(R.string.toast_line_full), Toast.LENGTH_SHORT).show()
         }
 
@@ -825,7 +823,7 @@ class OverlayService : Service() {
                 tvBallSize.text = getString(R.string.label_ball_size, radiusDp)
                 if (fromUser) {
                     canvasOverlayView?.setRingRadius(radiusDp)
-                    scheduleWindowFit()
+                    applyTableBoundedWindow()
                 }
             }
 
@@ -836,7 +834,7 @@ class OverlayService : Service() {
                 val radiusDp = progress.coerceIn(8, 30) * 1.0f
                 prefsManager.saveRingRadius(radiusDp)
                 canvasOverlayView?.setRingRadius(radiusDp)
-                scheduleWindowFit()
+                applyTableBoundedWindow()
             }
         })
 
@@ -1343,9 +1341,9 @@ class OverlayService : Service() {
     }
 
     companion object {
-        const val CHANNEL_ID = "screen_angle_ruler_channel"
+        const val CHANNEL_ID = "toolkit_channel"
         const val NOTIFICATION_ID = 1001
-        const val ACTION_STOP_SERVICE = "com.utility.screenprotractor.ACTION_STOP"
+        const val ACTION_STOP_SERVICE = "com.utility.toolkit.ACTION_STOP"
 
         /** Neutral window title; the default is the leaking view class name. */
         private const val WINDOW_TITLE = "Utility"

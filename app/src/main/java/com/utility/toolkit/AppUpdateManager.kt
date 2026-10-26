@@ -1,4 +1,4 @@
-package com.utility.screenprotractor
+package com.utility.toolkit
 
 import android.app.Activity
 import android.content.Context

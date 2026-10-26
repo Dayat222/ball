@@ -1,24 +1,24 @@
 <resources>
-    <string name="app_name">Screen Angle Ruler</string>
-    <string name="app_description">Precision geometric screen overlay ruler and vector 2D reflection visualizer.</string>
+    <string name="app_name">Toolkit</string>
+    <string name="app_description">Screen overlay utility for geometry and vector visualisation.</string>
 
     <!-- Permissions -->
     <string name="permission_title">Overlay Permission Required</string>
-    <string name="permission_desc">This app needs permission to display over other apps to render the geometry ruler overlay on screen.</string>
+    <string name="permission_desc">This app needs permission to display over other apps to render its overlay on screen.</string>
     <string name="permission_granted">Overlay Permission Active</string>
     <string name="permission_not_granted">Overlay Permission Not Granted</string>
     <string name="btn_grant_permission">Grant Permission</string>
 
     <!-- Actions -->
-    <string name="btn_start_overlay">Start Ruler Overlay</string>
+    <string name="btn_start_overlay">Start Overlay</string>
     <string name="btn_stop_overlay">Stop Overlay</string>
     <string name="btn_reset_calibration">Reset Calibration</string>
 
     <!-- Foreground Service -->
-    <string name="notification_channel_name">Screen Protractor Service</string>
-    <string name="notification_channel_desc">Active geometry ruler overlay service notification</string>
-    <string name="notification_title">Screen Angle Ruler Active</string>
-    <string name="notification_text">Floating ruler overlay is running. Tap to open settings.</string>
+    <string name="notification_channel_name">Utility Service</string>
+    <string name="notification_channel_desc">Overlay service notification</string>
+    <string name="notification_title">Utility Active</string>
+    <string name="notification_text">Floating overlay is running. Tap to open settings.</string>
     <string name="notification_action_stop">Stop</string>
 
     <!-- Overlay Controls -->
@@ -49,7 +49,7 @@
 
     <!-- Calibration Info -->
     <string name="toast_calib_saved">Boundary box calibration saved.</string>
-    <string name="toast_permission_needed">Please grant Overlay Permission to start the ruler.</string>
+    <string name="toast_permission_needed">Please grant Overlay Permission to start the overlay.</string>
     <!-- In-App Auto Update -->
     <string name="label_check_update">App Update</string>
     <string name="btn_check_update">Cek Update</string>

@@ -1,4 +1,4 @@
-name: Build Android Debug APK
+name: Build Android Release APK
 
 on:
   push:
@@ -27,25 +27,39 @@ jobs:
         with:
           gradle-version: '8.4'
 
-      - name: Build Debug APK
-        run: gradle assembleDebug --stacktrace
+      - name: Build Release APK (R8 minified)
+        run: gradle assembleRelease --stacktrace
 
-      - name: Upload Debug APK Artifact
+      - name: Stage release asset
+        run: cp app/build/outputs/apk/release/app-release.apk app-latest.apk
+
+      - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ScreenAngleRuler-Debug-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: Toolkit-Release-APK
+          path: app-latest.apk
           if-no-files-found: error
+
+      - name: Remove stale release assets
+        if: github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view latest --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null | while read -r name; do
+            if [ "$name" != "version.json" ] && [ "$name" != "app-latest.apk" ]; then
+              gh release delete-asset latest "$name" --repo "$GITHUB_REPOSITORY" --yes || true
+            fi
+          done
 
       - name: Publish Latest GitHub Release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "Screen Angle Ruler - Latest Release"
+          name: "Toolkit - Latest Release"
           body: "Automated release build with In-App Updater support."
           files: |
-            app/build/outputs/apk/debug/app-debug.apk
+            app-latest.apk
             version.json
           fail_on_unmatched_files: true
         env:

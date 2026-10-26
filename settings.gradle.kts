@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "ScreenAngleRuler"
+rootProject.name = "Toolkit"
 include(":app")

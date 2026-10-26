@@ -1,4 +1,4 @@
-package com.utility.screenprotractor
+package com.utility.toolkit
 
 import android.annotation.SuppressLint
 import android.content.Context

@@ -1,4 +1,4 @@
-package com.utility.screenprotractor
+package com.utility.toolkit
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -6,7 +6,7 @@ import android.graphics.PointF
 import android.graphics.RectF
 
 /**
- * Storage manager for persisting ruler calibration coordinates, point positions,
+ * Storage manager for persisting overlay calibration coordinates, point positions,
  * and user preferences using Android SharedPreferences.
  */
 class PrefsManager(context: Context) {
@@ -201,7 +201,7 @@ class PrefsManager(context: Context) {
     }
 
     companion object {
-        private const val PREFS_NAME = "screen_protractor_prefs"
+        private const val PREFS_NAME = "toolkit_prefs"
         private const val DEFAULT_MARGIN_RATIO = 0.08f
         const val DEFAULT_LINE_COLOR = 0xFF00E5FF.toInt() // Cyan #00E5FF
         const val DEFAULT_BANK_LINE_COLOR = 0xFFFFAB00.toInt() // Amber/Gold #FFAB00

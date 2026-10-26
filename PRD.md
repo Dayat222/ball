@@ -1,12 +1,12 @@
-# Product Requirements Document (PRD): Screen Angle Ruler Overlay
+# Product Requirements Document (PRD): Toolkit Overlay Utility
 
-**Status dokumen:** diselaraskan dengan implementasi **v2.7** (versionCode 18).
+**Status dokumen:** diselaraskan dengan implementasi **v3.0** (versionCode 19).
 Bagian yang sudah tidak berlaku ditandai di §8.
 
 ## 1. Ringkasan Produk
 
-- **Nama aplikasi:** Screen Angle Ruler
-- **Package:** `com.utility.screenprotractor`
+- **Nama aplikasi:** Toolkit
+- **Package:** `com.utility.toolkit`
 - **Platform:** Android, minSdk 26, targetSdk 34
 - **Bahasa & build:** Kotlin, Gradle Kotlin DSL, Android SDK standar tanpa library berat
 - **Tujuan inti:** overlay transparan untuk memvisualisasikan arah tembakan bola pada meja
@@ -18,7 +18,7 @@ Bagian yang sudah tidak berlaku ditandai di §8.
 ## 2. Alur Pengguna
 
 1. Pengguna membuka `MainActivity`, aplikasi mengecek izin `SYSTEM_ALERT_WINDOW`.
-2. Tombol **Start Ruler Overlay** menjalankan `OverlayService` sebagai foreground service lalu
+2. Tombol **Start Overlay** menjalankan `OverlayService` sebagai foreground service lalu
    menutup activity.
 3. Muncul tiga komponen: kanvas overlay (dipotong seukuran meja), satu handle target `+`, dan
    toolbar mengambang.
@@ -33,8 +33,10 @@ Bagian yang sudah tidak berlaku ditandai di §8.
 ### 3.1 Manajemen multi-window (`OverlayService`)
 
 - `CanvasOverlayView`: `MATCH_PARENT` saat kalibrasi; saat bermain dipotong seukuran boundary box
-  + `18dp` pada mode Full, atau hanya seukuran kapsul jangkauan garis (`85dp` + ring) pada mode
-  Short. Jendela dilepas dari `WindowManager` total saat overlay OFF. Selalu
+  + `18dp` pada mode Full, atau **kapsul berukuran tetap** pada mode Short. Kapsul Short hanya
+  **bergeser** mengikuti titik target (ukuran tidak berubah saat drag), sehingga tidak ada
+  realokasi surface di tengah gestur yang membuat garis tampak patah-patah. Jendela dilepas dari
+  `WindowManager` total saat overlay OFF. Selalu
   `FLAG_NOT_TOUCHABLE` + `FLAG_NOT_FOCUSABLE`; touch diaktifkan hanya saat kalibrasi. Alpha window
   `0.78`. Window tidak masuk accessibility tree dan memakai judul netral.
 - `HandleView` target: window `42dp` terpisah, selalu menerima sentuhan, digeser dengan offset
@@ -64,7 +66,7 @@ Bagian yang sudah tidak berlaku ditandai di §8.
   terbalik/kolaps.
 - `calib_version` disimpan; kalibrasi dari versi lama otomatis direset.
 - Default boundary mengikuti proporsi meja 2:1 (`x: 19.1%`, `y: 22.8%` sampai `92.1%`).
-- Disimpan di `SharedPreferences` `screen_protractor_prefs`: boundary box, posisi target,
+- Disimpan di `SharedPreferences` `toolkit_prefs`: boundary box, posisi target,
   ketebalan, opacity, warna garis, warna bank ray, radius ring, status Bank, dan mode panjang ray.
 
 ### 3.4 Toolbar & pengaturan
@@ -108,10 +110,15 @@ pihak ketiga.
 
 - Workflow: `.github/workflows/build-apk.yml`, trigger semua push dan `workflow_dispatch`.
 - Runner `ubuntu-latest`, JDK 17, Gradle 8.4 via `gradle/actions/setup-gradle`.
-- Build `assembleDebug`; artifact `ScreenAngleRuler-Debug-APK`.
-- Push ke `main` juga merefresh release tag `latest` berisi `app-debug.apk` **dan** `version.json`.
-- Debug dan release ditandatangani dengan `app/release.keystore` agar update tidak bentrok
+- Build `assembleRelease` dengan R8 (`isMinifyEnabled = true`, `isShrinkResources = true`);
+  artifact `Toolkit-Release-APK`. APK rilis tidak `debuggable`, nama kelas di-obfuscate, dan
+  resource yang tidak terpakai dibuang.
+- Push ke `main` juga merefresh release tag `latest` berisi `app-latest.apk` **dan** `version.json`.
+- Release dan debug ditandatangani dengan `app/release.keystore` agar update tidak bentrok
   signature. Keystore dan password ada di repo: repo harus diperlakukan sebagai rahasia.
+- Sejak v3.0 identitas aplikasi berubah (`com.utility.toolkit`, keystore baru). APK v3.0 adalah
+  aplikasi terpisah bagi v2.7, jadi instalasi pertama v3.0 tidak menimpa v2.7; pengguna perlu
+  uninstall aplikasi lama sekali.
 
 ## 7. Kriteria Rilis
 
@@ -119,11 +126,13 @@ pihak ketiga.
    versi terpasang.
 2. `changelog` di `version.json` diperbarui.
 3. CI hijau dan asset release `latest` berisi APK + `version.json`.
-4. APK baru bisa dipasang di atas APK lama tanpa uninstall.
+4. Update in-place hanya berlaku antar build dengan `applicationId` dan keystore yang sama. Rename
+   paket (v3.0) adalah pengecualian satu kali: pengguna memasang aplikasi baru lalu meng-uninstall
+   yang lama.
 
 ## 8. Perubahan dari spesifikasi awal
 
-| Item spesifikasi lama | Status v2.6 |
+| Item spesifikasi lama | Status v3.0 |
 |---|---|
 | Mode Auto-Reflect (A→B→dinding), Manual 3-Point, Edge-Marker | Dihapus; tidak dapat diakses sejak v2.4 |
 | Handle A dan C | Dihapus |

@@ -1,4 +1,4 @@
-package com.utility.screenprotractor
+package com.utility.toolkit
 
 import android.content.Intent
 import android.graphics.Color
@@ -12,7 +12,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import com.utility.screenprotractor.databinding.ActivityMainBinding
+import com.utility.toolkit.databinding.ActivityMainBinding
 
 /**
  * Entry dashboard activity providing permission checks, overlay start/stop controls,
@@ -205,7 +205,7 @@ class MainActivity : AppCompatActivity() {
         // Update stop button visibility / state
         if (isRunning) {
             binding.btnStopOverlay.visibility = View.VISIBLE
-            binding.btnStartOverlay.text = "Ruler Running (Restart)"
+            binding.btnStartOverlay.text = "Overlay Running (Restart)"
         } else {
             binding.btnStopOverlay.visibility = View.GONE
             binding.btnStartOverlay.text = getString(R.string.btn_start_overlay)

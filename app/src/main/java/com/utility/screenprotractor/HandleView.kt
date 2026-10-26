@@ -18,6 +18,12 @@ class HandleView(
 
     private val density = resources.displayMetrics.density
 
+    init {
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+
+    override fun getAccessibilityClassName(): CharSequence = "android.view.View"
+
     // Paint: Center Plus (+) Crosshair
     private val plusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE

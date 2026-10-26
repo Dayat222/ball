@@ -168,6 +168,17 @@ class PrefsManager(context: Context) {
     }
 
     /**
+     * Cushion rebound ratio used by the bank solver. 1.0 = perfect mirror.
+     */
+    fun saveBankRebound(ratio: Float) {
+        prefs.edit().putFloat(KEY_BANK_REBOUND, ratio).apply()
+    }
+
+    fun getBankRebound(): Float {
+        return prefs.getFloat(KEY_BANK_REBOUND, 1.0f)
+    }
+
+    /**
      * Save and retrieve full length guideline toggle (panjang garis sampai ke 6 lubang).
      */
     fun saveFullLengthGuides(isFull: Boolean) {
@@ -215,5 +226,6 @@ class PrefsManager(context: Context) {
         private const val KEY_SHOW_BANK_GUIDES = "show_bank_guides"
         private const val KEY_FULL_LENGTH_GUIDES = "full_length_guides"
         private const val KEY_BALL_RADIUS = "target_ring_radius"
+        private const val KEY_BANK_REBOUND = "bank_rebound_ratio"
     }
 }

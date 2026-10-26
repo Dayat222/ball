@@ -17,7 +17,6 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 
@@ -55,6 +54,10 @@ class CanvasOverlayView @JvmOverloads constructor(
         private set
 
     var ringRadiusDp: Float = 13.5f
+        private set
+
+    // Cushion rebound ratio: 1.0 = pure specular mirror, 0.90 = real cloth "short" bank.
+    var bankRebound: Float = 1f
         private set
 
     // Window Offset for Table-Bounded Window Cropping
@@ -226,6 +229,11 @@ class CanvasOverlayView @JvmOverloads constructor(
     private val textBounds = Rect()
 
     init {
+        // Stealth: keep the overlay out of the accessibility tree. Another app
+        // holding AccessibilityService can enumerate overlay windows and would
+        // otherwise read this package/class name straight off the node.
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+
         val landSize = getLandscapeScreenSize()
         boundaryBox = prefsManager.getBoundaryBox(landSize.x, landSize.y)
         clampBoundaryBox(landSize.x, landSize.y)
@@ -243,7 +251,10 @@ class CanvasOverlayView @JvmOverloads constructor(
         showBankGuides = prefsManager.getShowBankGuides()
         isFullLengthGuides = prefsManager.isFullLengthGuides()
         ringRadiusDp = prefsManager.getRingRadius()
+        bankRebound = prefsManager.getBankRebound()
     }
+
+    override fun getAccessibilityClassName(): CharSequence = "android.view.View"
 
     /**
      * Requirement 2: Auto-clamp boundaryBox to prevent overflowing screen edges in Landscape mode.
@@ -386,6 +397,16 @@ class CanvasOverlayView @JvmOverloads constructor(
         invalidate()
     }
 
+    /**
+     * Cushion restitution as an angle ratio. 1.0 keeps exact mirror geometry;
+     * lower values make every bank roll short the way a real cloth does.
+     */
+    fun setBankRebound(ratio: Float) {
+        bankRebound = ratio.coerceIn(0.70f, 1.0f)
+        prefsManager.saveBankRebound(bankRebound)
+        invalidate()
+    }
+
     fun setPointB(aimX: Float, aimY: Float, gripX: Float = aimX, gripY: Float = aimY) {
         pointB.set(aimX, aimY)
         gripB.set(gripX, gripY)
@@ -444,228 +465,256 @@ class CanvasOverlayView @JvmOverloads constructor(
         canvas.restoreToCount(saveCount)
     }
 
+    // --- Aim solver (scratch instance, allocation-free per frame) ---
+
+    private val aim = AimGeometry()
+
+    private val allPockets = arrayOf(
+        AimGeometry.Pocket.TOP_LEFT,
+        AimGeometry.Pocket.TOP_CENTER,
+        AimGeometry.Pocket.TOP_RIGHT,
+        AimGeometry.Pocket.BOTTOM_LEFT,
+        AimGeometry.Pocket.BOTTOM_CENTER,
+        AimGeometry.Pocket.BOTTOM_RIGHT
+    )
+
+    private val topCushionPockets = arrayOf(
+        AimGeometry.Pocket.BOTTOM_LEFT,
+        AimGeometry.Pocket.BOTTOM_CENTER,
+        AimGeometry.Pocket.BOTTOM_RIGHT
+    )
+
+    private val bottomCushionPockets = arrayOf(
+        AimGeometry.Pocket.TOP_LEFT,
+        AimGeometry.Pocket.TOP_CENTER,
+        AimGeometry.Pocket.TOP_RIGHT
+    )
+
+    private val rightCushionPockets = arrayOf(
+        AimGeometry.Pocket.TOP_LEFT,
+        AimGeometry.Pocket.BOTTOM_LEFT
+    )
+
+    private val leftCushionPockets = arrayOf(
+        AimGeometry.Pocket.TOP_RIGHT,
+        AimGeometry.Pocket.BOTTOM_RIGHT
+    )
+
     /**
-     * Zero-allocation helper to draw a radial ray from (bx, by) toward target (tx, ty).
+     * One direct ray: ball centre -> gate point of the last solved pocket.
+     * Short mode stops at 85dp, Full mode runs through the mouth.
      */
-    private fun drawRadialRay(
+    private fun drawDirectRay(
         canvas: Canvas,
         bx: Float,
         by: Float,
-        tx: Float,
-        ty: Float,
         startDist: Float,
-        endDist: Float,
-        paint: Paint
+        shortLen: Float
     ) {
+        val tx = aim.targetX.toFloat()
+        val ty = aim.targetY.toFloat()
         val dx = tx - bx
         val dy = ty - by
         val dist = hypot(dx, dy)
-        if (dist > 1f) {
-            val ux = dx / dist
-            val uy = dy / dist
-            val startX = bx + ux * startDist
-            val startY = by + uy * startDist
-            val endX = bx + ux * endDist
-            val endY = by + uy * endDist
-            canvas.drawLine(startX, startY, endX, endY, paint)
-        }
+        if (dist <= startDist) return
+
+        val ux = dx / dist
+        val uy = dy / dist
+        val end = if (isFullLengthGuides) dist + aim.mouthDepthPx.toFloat() else shortLen.coerceAtMost(dist)
+        if (end <= startDist) return
+
+        canvas.drawLine(
+            bx + ux * startDist,
+            by + uy * startDist,
+            bx + ux * end,
+            by + uy * end,
+            sixLinePaint
+        )
     }
 
     /**
-     * Precision Lateral Vertex Ray (Top & Bottom Center Gate Clearance).
-     * Accounts for approach tilt angle (kemiringan tembakan) across all cut angles.
-     * In pool physics, as the shot becomes more angled (tiltRatio = |dx| / dist),
-     * the near cushion knuckle physically obstructs the direct line of sight to the pocket center.
-     * To prevent the ball from colliding with the near cushion knuckle and rattling out,
-     * the entry target along the rail line MUST dynamically shift AWAY from the near knuckle
-     * (towards the pocket opening center / far facing) based on ball radius and approach inclination.
-     * Zero-allocation primitive Float calculations.
+     * All ten one-cushion banks: 3 off each long rail, 2 off each short rail.
+     * Bounce validity is checked against the real cushion segment between the
+     * pocket mouths, so a ray whose bounce lands inside a pocket opening is
+     * rejected instead of being drawn through the gap.
      */
-    private fun drawLateralVertexRay(
+    private fun drawBankGuides(
         canvas: Canvas,
         bx: Float,
         by: Float,
-        cx: Float,
-        railY: Float,
-        isTopGate: Boolean,
+        ringRadius: Float,
         startDist: Float,
-        endDist: Float,
-        paint: Paint
+        shortLen: Float
     ) {
-        val dx = bx - cx
-        val dy = if (isTopGate) (by - railY).coerceAtLeast(1f) else (railY - by).coerceAtLeast(1f)
-        val dist = hypot(dx, dy)
+        val l = boundaryBox.left
+        val r = boundaryBox.right
+        val t = boundaryBox.top
+        val b = boundaryBox.bottom
+        val cx = boundaryBox.centerX()
 
-        val ballR = ringRadiusDp * density
-        val maxShift = (ballR * 0.60f).coerceIn(6f * density, 9f * density)
+        val ballR = ringRadius
+        val jaw = aim.cornerJawPx.toFloat()
+        val mouth = aim.middleHalfPx.toFloat()
 
-        // Tilt ratio ranges from 0.0 (straight-in) to 1.0 (parallel cut along cushion)
-        val tiltRatio = if (dist > 1f) (abs(dx) / dist).coerceIn(0f, 1f) else 0f
+        // Nothing to bank off while the handle is dragged outside the cloth.
+        if (bx < l - ballR || bx > r + ballR || by < t - ballR || by > b + ballR) return
 
-        // Dynamic tilt compensation: shifts AWAY from the near cushion knuckle
-        // (dx > 0 means ball is to the right, near knuckle is right, shift LEFT; vice-versa)
-        val shiftMagnitude = (ballR * (tiltRatio * tiltRatio * 0.55f + tiltRatio * 0.15f)).coerceAtMost(maxShift)
-        val shiftSign = if (dx > 0.5f) -1f else if (dx < -0.5f) 1f else 0f
+        // A ball centre can never roll closer than one radius to a jaw tip.
+        val topSegA0 = l + jaw + ballR
+        val topSegA1 = cx - mouth - ballR
+        val topSegB0 = cx + mouth + ballR
+        val topSegB1 = r - jaw - ballR
 
-        val targetX = cx + (shiftSign * shiftMagnitude)
-        val targetY = railY
+        val sideSeg0 = t + jaw + ballR
+        val sideSeg1 = b - jaw - ballR
 
-        val rayDx = targetX - bx
-        val rayDy = targetY - by
-        val rayDist = hypot(rayDx, rayDy)
-        if (rayDist > 1f) {
-            val ux = rayDx / rayDist
-            val uy = rayDy / rayDist
-            val actualEnd = if (isFullLengthGuides) rayDist else endDist.coerceAtMost(rayDist)
-            if (actualEnd > startDist) {
-                canvas.drawLine(
-                    bx + ux * startDist,
-                    by + uy * startDist,
-                    bx + ux * actualEnd,
-                    by + uy * actualEnd,
-                    paint
-                )
+        drawBankSet(
+            canvas, bx, by, AimGeometry.Axis.HORIZONTAL, t + ballR, 1,
+            topCushionPockets,
+            topSegA0, topSegA1, topSegB0, topSegB1,
+            startDist, shortLen
+        )
+
+        drawBankSet(
+            canvas, bx, by, AimGeometry.Axis.HORIZONTAL, b - ballR, -1,
+            bottomCushionPockets,
+            topSegA0, topSegA1, topSegB0, topSegB1,
+            startDist, shortLen
+        )
+
+        drawBankSet(
+            canvas, bx, by, AimGeometry.Axis.VERTICAL, r - ballR, -1,
+            rightCushionPockets,
+            sideSeg0, sideSeg1, Float.NaN, Float.NaN,
+            startDist, shortLen
+        )
+
+        drawBankSet(
+            canvas, bx, by, AimGeometry.Axis.VERTICAL, l + ballR, 1,
+            leftCushionPockets,
+            sideSeg0, sideSeg1, Float.NaN, Float.NaN,
+            startDist, shortLen
+        )
+    }
+
+    private fun drawBankSet(
+        canvas: Canvas,
+        bx: Float,
+        by: Float,
+        axis: AimGeometry.Axis,
+        plane: Float,
+        side: Int,
+        pockets: Array<AimGeometry.Pocket>,
+        segAStart: Float,
+        segAEnd: Float,
+        segBStart: Float,
+        segBEnd: Float,
+        startDist: Float,
+        shortLen: Float
+    ) {
+        val hasA = segAEnd > segAStart
+        val hasB = segBEnd > segBStart
+        if (!hasA && !hasB) return
+
+        for (pocket in pockets) {
+            // Seed: aim straight at the mouth, then let the bank solve fold it.
+            aim.gate(pocket, bx.toDouble(), by.toDouble())
+            if (!solveOnRail(bx, by, axis, plane, side, segAStart, segAEnd, segBStart, segBEnd, hasA, hasB)) {
+                continue
             }
-        }
-    }
 
-    /**
-     * Precision Corner Vertex Ray (4 Corner Gates: Top-Left, Top-Right, Bottom-Left, Bottom-Right).
-     * Accounts for physical corner pocket mouth center, ensuring all rays accurately target the
-     * corner pocket openings across any position on the table without clipping cushions.
-     * Zero-allocation primitive Float calculations.
-     */
-    private fun drawCornerVertexRay(
-        canvas: Canvas,
-        bx: Float,
-        by: Float,
-        cornerX: Float,
-        cornerY: Float,
-        isLeft: Boolean,
-        isTop: Boolean,
-        startDist: Float,
-        endDist: Float,
-        paint: Paint
-    ) {
-        val signX = if (isLeft) 1f else -1f
-        val signY = if (isTop) 1f else -1f
+            // Re-thread the entry from the real bounce point, then re-solve once.
+            val seedX = aim.hitX
+            val seedY = aim.hitY
+            aim.gate(pocket, seedX, seedY)
+            val gateX = aim.targetX.toFloat()
+            val gateY = aim.targetY.toFloat()
 
-        // Precision corner pocket target center (titik pusat arah 4 lubang sudut)
-        // Offset horizontal (9.0dp) dan vertikal (11.2dp) tepat mengarah ke titik pusat mulut lubang kantong
-        val cornerMouthInsetX = 9.0f * density
-        val cornerMouthInsetY = 11.2f * density
-        val targetX = cornerX + (signX * cornerMouthInsetX)
-        val targetY = cornerY + (signY * cornerMouthInsetY)
-
-        val rayDx = targetX - bx
-        val rayDy = targetY - by
-        val rayDist = hypot(rayDx, rayDy)
-        if (rayDist > 1f) {
-            val ux = rayDx / rayDist
-            val uy = rayDy / rayDist
-            val actualEnd = if (isFullLengthGuides) rayDist else endDist.coerceAtMost(rayDist)
-            if (actualEnd > startDist) {
-                canvas.drawLine(
-                    bx + ux * startDist,
-                    by + uy * startDist,
-                    bx + ux * actualEnd,
-                    by + uy * actualEnd,
-                    paint
-                )
+            if (!solveOnRail(bx, by, axis, plane, side, segAStart, segAEnd, segBStart, segBEnd, hasA, hasB)) {
+                continue
             }
+
+            drawBankShot(canvas, bx, by, gateX, gateY, startDist, shortLen)
         }
     }
 
-    /**
-     * Precision Bank / Cushion Reflection Ray.
-     * Computes exact geometric reflection off cushion plane (horizontal or vertical)
-     * towards destination pocket, drawing:
-     * - In Short Mode: dashed ray (85dp) from ball toward cushion bounce point (or along reflection path if at cushion).
-     * - In Full Mode: full dashed ray from ball to cushion bounce point, contact dot marker,
-     *   and full dashed reflected ray from cushion bounce point into destination pocket mouth!
-     * Rendered via bankRayPath + DashPathEffect for hardware-accelerated dashed styling.
-     * Fully preserves bank rays even when target ball is directly adjacent to or touching the cushion rail.
-     */
-    private fun drawBankRayToPocket(
+    private fun solveOnRail(
+        bx: Float,
+        by: Float,
+        axis: AimGeometry.Axis,
+        plane: Float,
+        side: Int,
+        segAStart: Float,
+        segAEnd: Float,
+        segBStart: Float,
+        segBEnd: Float,
+        hasA: Boolean,
+        hasB: Boolean
+    ): Boolean {
+        val gx = aim.targetX
+        val gy = aim.targetY
+        val ballX = bx.toDouble()
+        val ballY = by.toDouble()
+
+        if (hasA && aim.bankFrom(ballX, ballY, gx, gy, axis, plane, side, segAStart.toDouble(), segAEnd.toDouble())) {
+            return true
+        }
+        if (hasB && aim.bankFrom(ballX, ballY, gx, gy, axis, plane, side, segBStart.toDouble(), segBEnd.toDouble())) {
+            return true
+        }
+        return false
+    }
+
+    private fun drawBankShot(
         canvas: Canvas,
         bx: Float,
         by: Float,
-        pocketX: Float,
-        pocketY: Float,
-        cushionIsHorizontal: Boolean,
-        cushionCoord: Float,
-        cushionMin: Float,
-        cushionMax: Float,
+        gateX: Float,
+        gateY: Float,
         startDist: Float,
-        shortRayLength: Float
+        shortLen: Float
     ) {
-        val hitX: Float
-        val hitY: Float
-        if (cushionIsHorizontal) {
-            val effBy = if (cushionCoord < pocketY) by.coerceAtLeast(cushionCoord) else by.coerceAtMost(cushionCoord)
-            val mirrorY = 2f * cushionCoord - pocketY
-            val dy = mirrorY - effBy
-            if (abs(dy) < 0.001f) return
-            val t = (cushionCoord - effBy) / dy
-            if (t < 0f || t > 1f) return
-            hitX = bx + t * (pocketX - bx)
-            hitY = cushionCoord
-            if (hitX < cushionMin || hitX > cushionMax) return
-        } else {
-            val effBx = if (cushionCoord < pocketX) bx.coerceAtLeast(cushionCoord) else bx.coerceAtMost(cushionCoord)
-            val mirrorX = 2f * cushionCoord - pocketX
-            val dx = mirrorX - effBx
-            if (abs(dx) < 0.001f) return
-            val t = (cushionCoord - effBx) / dx
-            if (t < 0f || t > 1f) return
-            hitX = cushionCoord
-            hitY = by + t * (pocketY - by)
-            if (hitY < cushionMin || hitY > cushionMax) return
-        }
+        val hx = aim.hitX.toFloat()
+        val hy = aim.hitY.toFloat()
 
-        val dx1 = hitX - bx
-        val dy1 = hitY - by
+        val dx1 = hx - bx
+        val dy1 = hy - by
         val dist1 = hypot(dx1, dy1)
 
-        val dx2 = pocketX - hitX
-        val dy2 = pocketY - hitY
+        val dx2 = gateX - hx
+        val dy2 = gateY - hy
         val dist2 = hypot(dx2, dy2)
         if (dist2 < 1f) return
-        val ux2 = dx2 / dist2
-        val uy2 = dy2 / dist2
 
         if (isFullLengthGuides) {
-            // Full Mode:
-            // 1. Incoming ray from ball to cushion hit point
             if (dist1 > startDist) {
                 val ux1 = dx1 / dist1
                 val uy1 = dy1 / dist1
                 bankRayPath.reset()
                 bankRayPath.moveTo(bx + ux1 * startDist, by + uy1 * startDist)
-                bankRayPath.lineTo(hitX, hitY)
+                bankRayPath.lineTo(hx, hy)
                 canvas.drawPath(bankRayPath, bankLinePaint)
-            } else if (dist1 > 2f * density) {
-                // Ball is very close to cushion, draw incoming segment from ball to hit point
+            } else if (dist1 > 1f) {
                 bankRayPath.reset()
                 bankRayPath.moveTo(bx, by)
-                bankRayPath.lineTo(hitX, hitY)
+                bankRayPath.lineTo(hx, hy)
                 canvas.drawPath(bankRayPath, bankLinePaint)
             }
 
-            // 2. Cushion contact dot marker
-            canvas.drawCircle(hitX, hitY, 3.5f * density, bankDotPaint)
+            canvas.drawCircle(hx, hy, 3.5f * density, bankDotPaint)
 
-            // 3. Full reflected ray from cushion hit point into destination pocket
+            val ux2 = dx2 / dist2
+            val uy2 = dy2 / dist2
+            val extend = aim.mouthDepthPx.toFloat()
             bankRayPath.reset()
-            bankRayPath.moveTo(hitX, hitY)
-            bankRayPath.lineTo(pocketX, pocketY)
+            bankRayPath.moveTo(hx, hy)
+            bankRayPath.lineTo(gateX + ux2 * extend, gateY + uy2 * extend)
             canvas.drawPath(bankRayPath, bankLinePaint)
         } else {
-            // Short Mode:
             if (dist1 > startDist) {
                 val ux1 = dx1 / dist1
                 val uy1 = dy1 / dist1
-                val actualEnd = shortRayLength.coerceAtMost(dist1)
+                val actualEnd = shortLen.coerceAtMost(dist1)
                 if (actualEnd > startDist) {
                     bankRayPath.reset()
                     bankRayPath.moveTo(bx + ux1 * startDist, by + uy1 * startDist)
@@ -673,131 +722,52 @@ class CanvasOverlayView @JvmOverloads constructor(
                     canvas.drawPath(bankRayPath, bankLinePaint)
                 }
             } else {
-                // Ball is already close to or on cushion!
-                // Draw short dashed ray along the reflected direction from cushion towards pocket!
-                val shortReflectEnd = shortRayLength.coerceAtMost(dist2)
+                // Ball already on the cushion: show the outgoing leg only.
+                val ux2 = dx2 / dist2
+                val uy2 = dy2 / dist2
+                val actualEnd = shortLen.coerceAtMost(dist2)
                 bankRayPath.reset()
-                bankRayPath.moveTo(hitX, hitY)
-                bankRayPath.lineTo(hitX + ux2 * shortReflectEnd, hitY + uy2 * shortReflectEnd)
+                bankRayPath.moveTo(hx, hy)
+                bankRayPath.lineTo(hx + ux2 * actualEnd, hy + uy2 * actualEnd)
                 canvas.drawPath(bankRayPath, bankLinePaint)
             }
         }
     }
 
     /**
-     * Zero-Allocation Target Mode: 6 Direct Rays with 12-Jaw Gate Clearance + 10 Cushion Bank Rays.
-     * Direct primitive calculations per frame without allocating any Array or PointF objects.
+     * Target mode render: ball-fit ring, 6 direct pocket rays, 10 cushion banks.
+     * Direct rays and banks share one gate solver, so both agree on where the
+     * mouth really is (the old fixed 9.0dp / 11.2dp inset did not match the
+     * vertex-targeted bank rays).
      */
     private fun drawTargetAndRadialGuides(canvas: Canvas) {
         val bx = pointB.x
         val by = pointB.y
-
-        // 1. Ball-Fit Ring: High-Contrast Hollow Reticle matching ball size
         val ringRadius = ringRadiusDp * density
+
+        // 1. Ball-Fit Ring: high-contrast hollow reticle matching ball size
         canvas.drawCircle(bx, by, ringRadius, aimShadowPaint)
         canvas.drawCircle(bx, by, ringRadius, aimRingPaint)
 
-        // 2. Micro Center Pinpoint: Double contrast micro center dot
+        // 2. Micro centre pinpoint: double contrast dot
         canvas.drawCircle(bx, by, 2.5f * density, aimCenterShadowPaint)
         canvas.drawCircle(bx, by, 1.5f * density, aimCenterDotPaint)
 
-        // 6 direct vertex rays + 10 cushion bank rays
+        aim.rebound = bankRebound.toDouble()
+        aim.configure(boundaryBox.left, boundaryBox.top, boundaryBox.right, boundaryBox.bottom, ringRadius)
+
         val startDist = ringRadius + (3f * density)
-        val directEndDist = 85f * density
+        val shortLen = 85f * density
 
-        val l = boundaryBox.left
-        val r = boundaryBox.right
-        val t = boundaryBox.top
-        val b = boundaryBox.bottom
-        val cx = boundaryBox.centerX()
+        // 3. Six direct pocket rays
+        for (pocket in allPockets) {
+            aim.gate(pocket, bx.toDouble(), by.toDouble())
+            drawDirectRay(canvas, bx, by, startDist, shortLen)
+        }
 
-        // 1. 6 Direct Vertex Rays (4 Corner Gates with Rail Clearance + 2 Precision Lateral Gates with Tilt Modeling)
-        // Top-Left (Corner)
-        drawCornerVertexRay(canvas, bx, by, l, t, isLeft = true, isTop = true, startDist, directEndDist, sixLinePaint)
-
-        // Top-Center (Precision Lateral Gate with Dynamic Tilt Angle Modeling - UNTOUCHED)
-        drawLateralVertexRay(canvas, bx, by, cx, t, isTopGate = true, startDist, directEndDist, sixLinePaint)
-
-        // Top-Right (Corner)
-        drawCornerVertexRay(canvas, bx, by, r, t, isLeft = false, isTop = true, startDist, directEndDist, sixLinePaint)
-
-        // Bottom-Left (Corner)
-        drawCornerVertexRay(canvas, bx, by, l, b, isLeft = true, isTop = false, startDist, directEndDist, sixLinePaint)
-
-        // Bottom-Center (Precision Lateral Gate with Dynamic Tilt Angle Modeling - UNTOUCHED)
-        drawLateralVertexRay(canvas, bx, by, cx, b, isTopGate = false, startDist, directEndDist, sixLinePaint)
-
-        // Bottom-Right (Corner)
-        drawCornerVertexRay(canvas, bx, by, r, b, isLeft = false, isTop = false, startDist, directEndDist, sixLinePaint)
-
-        // 2. 10 Mirror Bank Rays (Pantulan Dinding Rel) - Toggleable via showBankGuides
+        // 4. Ten cushion bank rays
         if (showBankGuides) {
-            val ballR = ringRadiusDp * density
-            val bounceL = l + ballR
-            val bounceR = r - ballR
-            val bounceT = t + ballR
-            val bounceB = b - ballR
-
-            // Precision Pocket Destination Targets for Cushion Bank Reflections:
-            // Corner pockets: Target the exact corner vertex (l, r, t, b) so the reflected ray
-            // enters symmetrically into the throat of the pocket without clipping rail knuckles.
-            val pocketTL_X = l
-            val pocketTL_Y = t
-
-            val pocketTR_X = r
-            val pocketTR_Y = t
-
-            val pocketBL_X = l
-            val pocketBL_Y = b
-
-            val pocketBR_X = r
-            val pocketBR_Y = b
-
-            // Middle pockets: Centered horizontally at cx, extending slightly into the pocket mouth opening
-            val pocketTC_X = cx
-            val pocketTC_Y = t - (2f * density)
-
-            val pocketBC_X = cx
-            val pocketBC_Y = b + (2f * density)
-
-            val shortBankLength = 85f * density
-
-            // Cushion min/max along rails (excluding corner mouth drop areas)
-            val cornerClearance = 8f * density
-            val railH_Min = l + cornerClearance
-            val railH_Max = r - cornerClearance
-            val railV_Min = t + cornerClearance
-            val railV_Max = b - cornerClearance
-
-            // Top Cushion (3 rays: bounce off top rail toward bottom pockets)
-            // Enabled whenever ball is on table above bottom pockets (even when touching top rail)
-            if (by < b - 15f * density && by >= t - 5f * density) {
-                drawBankRayToPocket(canvas, bx, by, pocketBL_X, pocketBL_Y, true, bounceT, railH_Min, railH_Max, startDist, shortBankLength)
-                drawBankRayToPocket(canvas, bx, by, pocketBC_X, pocketBC_Y, true, bounceT, railH_Min, railH_Max, startDist, shortBankLength)
-                drawBankRayToPocket(canvas, bx, by, pocketBR_X, pocketBR_Y, true, bounceT, railH_Min, railH_Max, startDist, shortBankLength)
-            }
-
-            // Bottom Cushion (3 rays: bounce off bottom rail toward top pockets)
-            // Enabled whenever ball is on table below top pockets (even when touching bottom rail)
-            if (by > t + 15f * density && by <= b + 5f * density) {
-                drawBankRayToPocket(canvas, bx, by, pocketTL_X, pocketTL_Y, true, bounceB, railH_Min, railH_Max, startDist, shortBankLength)
-                drawBankRayToPocket(canvas, bx, by, pocketTC_X, pocketTC_Y, true, bounceB, railH_Min, railH_Max, startDist, shortBankLength)
-                drawBankRayToPocket(canvas, bx, by, pocketTR_X, pocketTR_Y, true, bounceB, railH_Min, railH_Max, startDist, shortBankLength)
-            }
-
-            // Right Cushion (2 rays: bounce off right rail toward left pockets)
-            // Enabled whenever ball is on table to the right of left pockets (even when touching right rail)
-            if (bx > l + 15f * density && bx <= r + 5f * density) {
-                drawBankRayToPocket(canvas, bx, by, pocketTL_X, pocketTL_Y, false, bounceR, railV_Min, railV_Max, startDist, shortBankLength)
-                drawBankRayToPocket(canvas, bx, by, pocketBL_X, pocketBL_Y, false, bounceR, railV_Min, railV_Max, startDist, shortBankLength)
-            }
-
-            // Left Cushion (2 rays: bounce off left rail toward right pockets)
-            // Enabled whenever ball is on table to the left of right pockets (even when touching left rail)
-            if (bx < r - 15f * density && bx >= l - 5f * density) {
-                drawBankRayToPocket(canvas, bx, by, pocketTR_X, pocketTR_Y, false, bounceL, railV_Min, railV_Max, startDist, shortBankLength)
-                drawBankRayToPocket(canvas, bx, by, pocketBR_X, pocketBR_Y, false, bounceL, railV_Min, railV_Max, startDist, shortBankLength)
-            }
+            drawBankGuides(canvas, bx, by, ringRadius, startDist, shortLen)
         }
     }
 
@@ -811,15 +781,16 @@ class CanvasOverlayView @JvmOverloads constructor(
         val b = boundaryBox.bottom
         val cx = boundaryBox.centerX()
 
-        val cornerMouthInsetX = 9.0f * density
-        val cornerMouthInsetY = 11.2f * density
+        // Same mouth model the live rays use, so calibration and play agree.
+        aim.configure(boundaryBox.left, boundaryBox.top, boundaryBox.right, boundaryBox.bottom, ringRadiusDp * density)
+        val cornerMouthInset = aim.cornerJawPx.toFloat() * 0.5f
 
-        drawVertexGuideRing(canvas, l + cornerMouthInsetX, t + cornerMouthInsetY)   // Top-Left
-        drawVertexGuideRing(canvas, cx, t)                                         // Top-Center
-        drawVertexGuideRing(canvas, r - cornerMouthInsetX, t + cornerMouthInsetY)   // Top-Right
-        drawVertexGuideRing(canvas, l + cornerMouthInsetX, b - cornerMouthInsetY)   // Bottom-Left
-        drawVertexGuideRing(canvas, cx, b)                                         // Bottom-Center
-        drawVertexGuideRing(canvas, r - cornerMouthInsetX, b - cornerMouthInsetY)   // Bottom-Right
+        drawVertexGuideRing(canvas, l + cornerMouthInset, t + cornerMouthInset)   // Top-Left
+        drawVertexGuideRing(canvas, cx, t)                                        // Top-Center
+        drawVertexGuideRing(canvas, r - cornerMouthInset, t + cornerMouthInset)   // Top-Right
+        drawVertexGuideRing(canvas, l + cornerMouthInset, b - cornerMouthInset)   // Bottom-Left
+        drawVertexGuideRing(canvas, cx, b)                                        // Bottom-Center
+        drawVertexGuideRing(canvas, r - cornerMouthInset, b - cornerMouthInset)   // Bottom-Right
 
         val label = "Calibration: Drag 8 handles to align target bounds"
         textPaint.getTextBounds(label, 0, label.length, textBounds)

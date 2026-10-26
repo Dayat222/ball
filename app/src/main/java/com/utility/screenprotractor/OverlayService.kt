@@ -14,6 +14,7 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Point
 import android.graphics.PointF
+import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
@@ -75,6 +76,12 @@ class OverlayService : Service() {
     private var isCanvasHidden = false
     private var isCalibrationActive = false
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    private var windowFitPending = false
+    private val windowFitRunnable = Runnable {
+        windowFitPending = false
+        applyTableBoundedWindow()
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -229,10 +236,16 @@ class OverlayService : Service() {
     }
 
     /**
-     * Table-Bounded Window Cropping:
-     * Crops CanvasOverlayView window to table bounds (+ 18dp padding) during normal play
-     * to keep Power Bar (left) and UI completely clear of overlay window interception.
-     * Expands to MATCH_PARENT fullscreen when calibration mode is active.
+     * Window fitting.
+     *
+     * Calibration: full screen so all 8 handles are reachable.
+     * Play + Full guides: table box + 18dp, as before.
+     * Play + Short guides: only the capsule the guides can actually reach.
+     * Keeping the window small is the one passive anti-cheat lever an overlay
+     * owns: MotionEvent.FLAG_WINDOW_IS_OBSCURED is raised on the game's touches
+     * for every pixel this window covers.
+     * Hidden: the canvas window is removed from WindowManager entirely, so it
+     * stops obscuring touches instead of sitting there invisible.
      */
     private fun applyTableBoundedWindow() {
         val canvas = canvasOverlayView ?: return
@@ -252,39 +265,94 @@ class OverlayService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 canvasLayoutParams.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             }
+            canvasLayoutParams.setTitle(WINDOW_TITLE)
             canvas.setWindowOffset(0f, 0f)
-        } else {
-            // Saat bermain normal, pangkas jendela kanvas HANYA seukuran kotak meja + padding 18dp
-            // Area Power Bar di sisi kiri layar (x < winX) 100% bersih tanpa overlay!
-            val pad = 18f * density
-            val box = canvas.boundaryBox
-            val winX = (box.left - pad).roundToInt().coerceAtLeast(0)
-            val winY = (box.top - pad).roundToInt().coerceAtLeast(0)
-            val winW = (box.width() + pad * 2f).roundToInt().coerceAtLeast(100)
-            val winH = (box.height() + pad * 2f).roundToInt().coerceAtLeast(100)
-
-            canvasLayoutParams.width = winW
-            canvasLayoutParams.height = winH
-            canvasLayoutParams.x = winX
-            canvasLayoutParams.y = winY
-            canvasLayoutParams.alpha = 0.78f
-            canvasLayoutParams.gravity = Gravity.TOP or Gravity.LEFT
-            canvasLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                canvasLayoutParams.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-            }
-
-            canvas.setWindowOffset(winX.toFloat(), winY.toFloat())
+            pushCanvasLayout(canvas)
+            return
         }
 
+        if (isCanvasHidden) {
+            if (canvas.parent != null) {
+                try {
+                    windowManager.removeView(canvas)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+            return
+        }
+
+        // Saat bermain normal: pangkas jendela kanvas sekecil mungkin.
+        val box = canvas.boundaryBox
+        val realSize = getRealScreenSize()
+        val screenW = kotlin.math.max(realSize.x, realSize.y).toFloat()
+        val screenH = kotlin.math.min(realSize.x, realSize.y).toFloat()
+        val ballR = canvas.ringRadiusDp * density
+        val pad = 18f * density
+
+        val content = if (canvas.isFullLengthGuides) {
+            RectF(box.left - pad, box.top - pad, box.right + pad, box.bottom + pad)
+        } else {
+            // 85dp ray + ring + one drag frame of slack
+            val reach = 85f * density + ballR + 36f * density
+            RectF(
+                canvas.pointB.x - reach,
+                canvas.pointB.y - reach,
+                canvas.pointB.x + reach,
+                canvas.pointB.y + reach
+            )
+        }
+
+        content.left = content.left.coerceIn(0f, screenW - 1f)
+        content.top = content.top.coerceIn(0f, screenH - 1f)
+        content.right = content.right.coerceIn(content.left + 1f, screenW)
+        content.bottom = content.bottom.coerceIn(content.top + 1f, screenH)
+
+        val winX = content.left.roundToInt()
+        val winY = content.top.roundToInt()
+        val winW = content.width().roundToInt().coerceIn(1, screenW.roundToInt())
+        val winH = content.height().roundToInt().coerceIn(1, screenH.roundToInt())
+
+        canvasLayoutParams.width = winW
+        canvasLayoutParams.height = winH
+        canvasLayoutParams.x = winX
+        canvasLayoutParams.y = winY
+        canvasLayoutParams.alpha = 0.78f
+        canvasLayoutParams.gravity = Gravity.TOP or Gravity.LEFT
+        canvasLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            canvasLayoutParams.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+        canvasLayoutParams.setTitle(WINDOW_TITLE)
+
+        canvas.setWindowOffset(winX.toFloat(), winY.toFloat())
+        pushCanvasLayout(canvas)
+    }
+
+    /** Attach on first use, re-layout afterwards (window is detached while hidden). */
+    private fun pushCanvasLayout(canvas: View) {
         try {
-            windowManager.updateViewLayout(canvas, canvasLayoutParams)
+            if (canvas.parent == null) {
+                windowManager.addView(canvas, canvasLayoutParams)
+            } else {
+                windowManager.updateViewLayout(canvas, canvasLayoutParams)
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    /**
+     * Coalesce window refits while the target handle is being dragged:
+     * one relayout per ~90 ms instead of one per touch sample.
+     */
+    private fun scheduleWindowFit() {
+        if (windowFitPending) return
+        windowFitPending = true
+        mainHandler.postDelayed(windowFitRunnable, 90L)
     }
 
     /**
@@ -342,9 +410,11 @@ class OverlayService : Service() {
             onInversionChanged = { isOffsetInvertedB = it }
         ) { aimX, aimY, gripX, gripY ->
             canvasOverlayView?.setPointB(aimX, aimY, gripX, gripY)
+            scheduleWindowFit()
         }
         windowManager.addView(handleViewB, handleParamsB)
         canvasOverlayView?.setPointB(targetPoint.x, targetPoint.y, gripPosB.x, gripPosB.y)
+        scheduleWindowFit()
 
         syncHandlesVisibility()
     }
@@ -380,6 +450,7 @@ class OverlayService : Service() {
             }
             x = (center.x - handleSizePx / 2f).roundToInt()
             y = (center.y - handleSizePx / 2f).roundToInt()
+            setTitle(WINDOW_TITLE)
         }
     }
 
@@ -532,6 +603,10 @@ class OverlayService : Service() {
         val controlView = inflater.inflate(R.layout.layout_floating_control, null)
         floatingControlView = controlView
 
+        // Stealth: the toolbar is a real view hierarchy, so it is stripped from
+        // the accessibility tree; nothing over the game is readable as a node.
+        controlView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+
         controlLayoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -547,6 +622,7 @@ class OverlayService : Service() {
             }
             x = 40
             y = 140
+            setTitle(WINDOW_TITLE)
         }
 
         // References to UI components
@@ -609,6 +685,7 @@ class OverlayService : Service() {
         btnToggleLineLength?.setOnClickListener {
             val isNowFull = canvasOverlayView?.toggleFullLengthGuides() ?: false
             updateLineLengthUI(isNowFull)
+            scheduleWindowFit()
             Toast.makeText(
                 this,
                 if (isNowFull) getString(R.string.toast_line_full) else getString(R.string.toast_line_short),
@@ -619,12 +696,14 @@ class OverlayService : Service() {
         btnSettingLineShort?.setOnClickListener {
             canvasOverlayView?.setFullLengthGuides(false)
             updateLineLengthUI(false)
+            scheduleWindowFit()
             Toast.makeText(this, getString(R.string.toast_line_short), Toast.LENGTH_SHORT).show()
         }
 
         btnSettingLineFull?.setOnClickListener {
             canvasOverlayView?.setFullLengthGuides(true)
             updateLineLengthUI(true)
+            scheduleWindowFit()
             Toast.makeText(this, getString(R.string.toast_line_full), Toast.LENGTH_SHORT).show()
         }
 
@@ -746,6 +825,7 @@ class OverlayService : Service() {
                 tvBallSize.text = getString(R.string.label_ball_size, radiusDp)
                 if (fromUser) {
                     canvasOverlayView?.setRingRadius(radiusDp)
+                    scheduleWindowFit()
                 }
             }
 
@@ -756,6 +836,7 @@ class OverlayService : Service() {
                 val radiusDp = progress.coerceIn(8, 30) * 1.0f
                 prefsManager.saveRingRadius(radiusDp)
                 canvasOverlayView?.setRingRadius(radiusDp)
+                scheduleWindowFit()
             }
         })
 
@@ -1047,6 +1128,7 @@ class OverlayService : Service() {
         } else {
             canvasOverlayView?.visibility = View.VISIBLE
         }
+        applyTableBoundedWindow()
         syncHandlesVisibility()
         updateMiniOnOffButtonUI()
     }
@@ -1264,6 +1346,9 @@ class OverlayService : Service() {
         const val CHANNEL_ID = "screen_angle_ruler_channel"
         const val NOTIFICATION_ID = 1001
         const val ACTION_STOP_SERVICE = "com.utility.screenprotractor.ACTION_STOP"
+
+        /** Neutral window title; the default is the leaking view class name. */
+        private const val WINDOW_TITLE = "Utility"
 
         @Volatile
         var isServiceRunning = false

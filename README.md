@@ -17,9 +17,9 @@ pass-through: touches never reach the overlay, they go straight to the app under
   - Ball-sized reticle ring (`8dp` – `30dp`, persisted).
   - **6 direct vertex rays** (`85dp`) to the four corner mouths and two side pockets, with
     corner-mouth insets and lateral tilt compensation.
-  - **10 cushion bank rays**, computed with the mirror-point method against the cushion plane and
-    aimed at real pocket targets. Optional full-length mode draws the incoming ray, the contact
-    dot, and the reflected ray into the pocket.
+  - **10 cushion bank rays**, solved analytically against the ball-centre cushion plane and aimed at
+    the same mouth-gate point the direct rays use. Optional full-length mode draws the incoming ray,
+    the contact dot, and the reflected ray into the pocket.
 - **Anti-finger handle**
   - The draggable `42dp` crosshair sits `48dp` to the right and `36dp` above/below the real aim
     point, connected by a dashed tether, so the finger never covers the target.
@@ -57,6 +57,7 @@ world coordinates stay identical between calibration and play.
 | `MainActivity.kt` | Permission gate, start/stop service, update check UI |
 | `OverlayService.kt` | WindowManager setup, handle drag logic, toolbar wiring, persistence |
 | `CanvasOverlayView.kt` | Ray/bank rendering, calibration handles and hit-testing |
+| `AimGeometry.kt` | Pocket-gate solver, cushion reflection, rebound ratio |
 | `PrefsManager.kt` | Boundary box, target point, styling and toggles in `SharedPreferences` |
 | `AppUpdateManager.kt` | OTA manifest fetch, APK download, install intent |
 | `HandleView.kt` | Minimal crosshair touch pad |
@@ -105,7 +106,7 @@ The wrapper JAR is not committed; local builds need a Gradle installation, CI us
 
 ## Release / update flow
 
-1. Bump `versionCode` in `app/build.gradle.kts` **and** `version.json` (currently `17` / `2.6`).
+1. Bump `versionCode` in `app/build.gradle.kts` **and** `version.json` (currently `18` / `2.7`).
 2. Update the `changelog` in `version.json`.
 3. Push to `main` → CI builds and refreshes the `latest` release assets.
 4. Installed apps read `version.json` from `raw.githubusercontent.com`; if that is unreachable they

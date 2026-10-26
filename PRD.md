@@ -1,6 +1,6 @@
 # Product Requirements Document (PRD): Screen Angle Ruler Overlay
 
-**Status dokumen:** diselaraskan dengan implementasi **v2.6** (versionCode 17).
+**Status dokumen:** diselaraskan dengan implementasi **v2.7** (versionCode 18).
 Bagian yang sudah tidak berlaku ditandai di §8.
 
 ## 1. Ringkasan Produk
@@ -32,9 +32,11 @@ Bagian yang sudah tidak berlaku ditandai di §8.
 
 ### 3.1 Manajemen multi-window (`OverlayService`)
 
-- `CanvasOverlayView`: `MATCH_PARENT` saat kalibrasi, dipotong seukuran boundary box + `18dp`
-  saat bermain. Selalu `FLAG_NOT_TOUCHABLE` + `FLAG_NOT_FOCUSABLE`; touch diaktifkan hanya saat
-  kalibrasi. Alpha window `0.78`.
+- `CanvasOverlayView`: `MATCH_PARENT` saat kalibrasi; saat bermain dipotong seukuran boundary box
+  + `18dp` pada mode Full, atau hanya seukuran kapsul jangkauan garis (`85dp` + ring) pada mode
+  Short. Jendela dilepas dari `WindowManager` total saat overlay OFF. Selalu
+  `FLAG_NOT_TOUCHABLE` + `FLAG_NOT_FOCUSABLE`; touch diaktifkan hanya saat kalibrasi. Alpha window
+  `0.78`. Window tidak masuk accessibility tree dan memakai judul netral.
 - `HandleView` target: window `42dp` terpisah, selalu menerima sentuhan, digeser dengan offset
   anti-jari `48dp` horizontal dan `36dp` vertikal.
 - `FloatingControlView`: toolbar `WRAP_CONTENT` yang bisa di-drag, atau kapsul mini setelah
@@ -44,13 +46,14 @@ Bagian yang sudah tidak berlaku ditandai di §8.
 
 - Ruang koordinat: landscape (`max(w,h) × min(w,h)`); kanvas yang dipotong dikompensasi dengan
   translasi `(-winX, -winY)`.
-- **6 direct ray** dari titik target ke 6 mulut lubang:
-  - 4 sudut memakai inset `9.0dp` horizontal dan `11.2dp` vertikal ke pusat mulut lubang.
-  - 2 lubang tengah memakai kompensasi kemiringan (`tiltRatio`) dengan pergeseran maksimum
-    `6–9dp`.
-- **10 bank ray**: titik tujuan lubang dicerminkan terhadap bidang bantalan, titik pantul dicari
-  secara analitik, lalu digambar garis datang + garis pantul. Bantalan dimodelkan pada
-  `boundary box ± radius bola`. Ray tetap tampil ketika bola menempel bantalan.
+- **6 direct ray** dari titik target ke 6 mulut lubang. Titik tujuan tiap lubang diselesaikan oleh
+  `AimGeometry`: titik pada garis mulut yang memaksimalkan jarak bebas ke kedua bibir lubang
+  sebesar radius bola (gate solver), jadi sudut potong lebar otomatis menjauh dari bibir terdekat.
+  Tidak ada lagi inset tetap `9.0dp` / `11.2dp` maupun kompensasi kemiringan manual.
+- **10 bank ray**: titik gate lubang dicerminkan terhadap bidang pantul di garis pusat bola
+  (bantalan ± radius bola), titik pantul dicari analitik, lalu diulang satu iterasi dari titik
+  pantul. Validasi memakai segmen bantalan nyata (di antara mulut lubang), sehingga pantulan yang
+  jatuh di mulut lubang ditolak. Opsional koefisien rebound (sudut keluar = k × sudut masuk).
 - Panjang ray: **Short** (`85dp`) atau **Full** (sampai lubang/vertex, plus titik kontak bantalan).
 - Mode render tunggal: *single-point target*. Garis A–B dan mode Auto-Reflect / Manual 3-Point /
   Edge-Marker sudah dihapus.

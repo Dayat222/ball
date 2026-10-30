@@ -2,6 +2,7 @@ package com.utility.toolkit
 
 import kotlin.math.abs
 import kotlin.math.atan
+import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -10,30 +11,32 @@ import kotlin.math.tan
 /**
  * Analytical aiming solver for the six-pocket overlay.
  *
- * Coordinate space is the same pixel space as the calibrated boundary rect
- * (landscape). All maths run in Double and the solver allocates nothing per
- * frame, so the full 6 direct + 10 bank solve still fits in one vsync.
+ * All maths run in real table millimetres (9 ft playing surface, 2540 x 1270
+ * mm, ball radius 28.575 mm) and every result is projected back into the pixel
+ * space of the calibrated boundary rect. Pixel-relative ratios are gone: the
+ * jaw offset, the mouth width and the ball radius are physical constants, so a
+ * resize of the calibration rect rescales the whole model instead of re-tuning
+ * magic numbers.
  *
  * Model
  * -----
- * 1. The calibrated rectangle is treated as the cushion-nose playing surface.
- * 2. Pocket mouths follow real 9 ft proportions: a corner jaw tip sits
- *    [CORNER_JAW_RATIO] of the short side away from the corner along each rail;
- *    a side pocket mouth is [MIDDLE_HALF_RATIO] of the short side either side
- *    of the long-rail centre line.
- * 3. Every ray aims at the point inside the mouth that maximises the minimum
- *    clearance to the two jaw tips for the ball radius. This replaces the old
- *    fixed 9.0dp / 11.2dp inset and the hand-tuned tilt heuristic: a wide or
- *    angled cut is automatically bent away from the near jaw.
- * 4. A cushion bank mirrors that gate point across the ball-centre reflection
- *    line (nose +/- one ball radius) and intersects the incoming centre line,
- *    i.e. exact equal-angle geometry. [rebound] scales the outgoing angle
- *    (out = k * in) and the bounce point is re-solved by bisection, so a real
- *    "short" cushion can be dialled in without touching the closed-form mirror
- *    case at k = 1.
- *
- * Tuning: if a title uses deeper/shallower pockets than a real table, only the
- * two ratios below need to move. Everything else derives from them.
+ * 1. The calibrated rectangle is the cushion-nose playing surface.
+ * 2. Corner jaw tips sit [CORNER_JAW_MM] from the corner along each rail; a
+ *    side pocket mouth is [MIDDLE_HALF_MM] either side of the long-rail centre.
+ * 3. The ball radius is derived from the table scale (px per mm) times an
+ *    optional user correction factor, never typed in as a dp value.
+ * 4. Every ray aims at the point inside the mouth that maximises the minimum
+ *    clearance to the two jaw tips. Clearance is measured to the jaw *segment*
+ *    (point-to-segment distance), so it cannot be overestimated behind the
+ *    origin.
+ * 5. A shot is only feasible when the mouth still presents at least one ball
+ *    diameter to the incoming line: effective aperture = mouth length *
+ *    |cos(entry angle)|. Wide cuts that physically cannot drop are flagged
+ *    instead of being drawn as a guide.
+ * 6. A cushion bank mirrors that gate point across the ball-centre reflection
+ *    line (nose +/- one radius) and intersects the incoming centre line, i.e.
+ *    exact equal-angle geometry. [rebound] scales the outgoing angle
+ *    (out = k * in) and the bounce point is re-solved by bisection.
  */
 class AimGeometry {
 
@@ -43,31 +46,40 @@ class AimGeometry {
 
     enum class Axis { HORIZONTAL, VERTICAL }
 
-    /** Corner jaw-tip offset from the corner, as a fraction of the short side. */
-    private val cornerJawRatio = CORNER_JAW_RATIO
-    /** Half a side-pocket mouth, as a fraction of the short side. */
-    private val middleHalfRatio = MIDDLE_HALF_RATIO
-
     // Table frame (px)
     private var left = 0.0
     private var top = 0.0
     private var right = 0.0
     private var bottom = 0.0
 
-    // Mouth geometry (px)
+    // px per mm along each table axis
+    private var scaleX = 1.0
+    private var scaleY = 1.0
+
+    // Mouth geometry (px, for drawing)
     var cornerJawPx = 0.0
         private set
     var middleHalfPx = 0.0
         private set
     var mouthDepthPx = 0.0
         private set
+
+    /** Ball radius in px, derived from the table scale. */
     var ballRadius = 0.0
+        private set
+
+    /** Ball radius in mm, derived from the table scale. */
+    var ballRadiusMm = BALL_RADIUS_MM
+        private set
+
+    /** User fine-tune of the derived radius. 1.0 = real 57.15 mm ball. */
+    var scaleCorrection = 1.0
         private set
 
     /** Angle ratio of a cushion rebound. 1.0 = perfect specular mirror. */
     var rebound = 1.0
 
-    // jaw[i * 4 + 0..3] = x1, y1, x2, y2 for the two jaw tips of pocket i
+    // jaw[i * 4 + 0..3] = x1, y1, x2, y2 for the two jaw tips of pocket i (mm)
     private val jaw = DoubleArray(24)
 
     // Results of the last call (scratch, no allocation)
@@ -75,8 +87,15 @@ class AimGeometry {
         private set
     var targetY = 0.0
         private set
+
+    /** Jaw clearance at the gate point, in mm. */
     var targetClearance = 0.0
         private set
+
+    /** True when the mouth presents at least one ball diameter to this line. */
+    var gateFeasible = false
+        private set
+
     var hitX = 0.0
         private set
     var hitY = 0.0
@@ -84,36 +103,56 @@ class AimGeometry {
     var hitValid = false
         private set
 
+    /** Effective mouth width for the last gate, in mm (aperture * cos). */
+    var gateApertureMm = 0.0
+        private set
+
     /**
-     * Rebuild the pocket frame for the current boundary box and ball radius.
-     * Cheap enough to call once per frame.
+     * Rebuild the pocket frame for the current boundary box.
+     *
+     * @param ballScaleCorrection user fine-tune of the derived ball radius
+     *        (1.0 = a real 57.15 mm ball on a correctly calibrated table).
      */
-    fun configure(left: Float, top: Float, right: Float, bottom: Float, ballRadiusPx: Float) {
+    fun configure(
+        left: Float,
+        top: Float,
+        right: Float,
+        bottom: Float,
+        ballScaleCorrection: Float = 1.0f
+    ) {
         this.left = left.toDouble()
         this.top = top.toDouble()
         this.right = right.toDouble()
         this.bottom = bottom.toDouble()
-        this.ballRadius = ballRadiusPx.toDouble()
 
         val w = this.right - this.left
         val h = this.bottom - this.top
         if (w < 4.0 || h < 4.0) return
 
-        val shortSide = min(w, h)
-        cornerJawPx = shortSide * cornerJawRatio
-        middleHalfPx = shortSide * middleHalfRatio
-        mouthDepthPx = shortSide * MOUTH_DEPTH_RATIO
+        scaleX = w / TABLE_LENGTH_MM
+        scaleY = h / TABLE_WIDTH_MM
+        scaleCorrection = ballScaleCorrection.toDouble().coerceIn(0.5, 1.5)
 
-        val d = cornerJawPx
-        val m = middleHalfPx
-        val cx = (this.left + this.right) * 0.5
+        // One physical ball: average the two axis scales so a slightly
+        // mis-proportioned calibration does not produce an elliptical ball.
+        val pxPerMm = (scaleX + scaleY) * 0.5
+        ballRadiusMm = BALL_RADIUS_MM * scaleCorrection
+        ballRadius = ballRadiusMm * pxPerMm
 
-        putJaw(Pocket.TOP_LEFT, this.left + d, this.top, this.left, this.top + d)
-        putJaw(Pocket.TOP_CENTER, cx - m, this.top, cx + m, this.top)
-        putJaw(Pocket.TOP_RIGHT, this.right - d, this.top, this.right, this.top + d)
-        putJaw(Pocket.BOTTOM_LEFT, this.left + d, this.bottom, this.left, this.bottom - d)
-        putJaw(Pocket.BOTTOM_CENTER, cx - m, this.bottom, cx + m, this.bottom)
-        putJaw(Pocket.BOTTOM_RIGHT, this.right - d, this.bottom, this.right, this.bottom - d)
+        cornerJawPx = CORNER_JAW_MM * scaleX
+        middleHalfPx = MIDDLE_HALF_MM * scaleX
+        mouthDepthPx = MOUTH_DEPTH_MM * pxPerMm
+
+        val d = CORNER_JAW_MM
+        val m = MIDDLE_HALF_MM
+        val cx = TABLE_LENGTH_MM * 0.5
+
+        putJaw(Pocket.TOP_LEFT, d, 0.0, 0.0, d)
+        putJaw(Pocket.TOP_CENTER, cx - m, 0.0, cx + m, 0.0)
+        putJaw(Pocket.TOP_RIGHT, TABLE_LENGTH_MM - d, 0.0, TABLE_LENGTH_MM, d)
+        putJaw(Pocket.BOTTOM_LEFT, d, TABLE_WIDTH_MM, 0.0, TABLE_WIDTH_MM - d)
+        putJaw(Pocket.BOTTOM_CENTER, cx - m, TABLE_WIDTH_MM, cx + m, TABLE_WIDTH_MM)
+        putJaw(Pocket.BOTTOM_RIGHT, TABLE_LENGTH_MM - d, TABLE_WIDTH_MM, TABLE_LENGTH_MM, TABLE_WIDTH_MM - d)
     }
 
     private fun putJaw(pocket: Pocket, x1: Double, y1: Double, x2: Double, y2: Double) {
@@ -124,14 +163,20 @@ class AimGeometry {
         jaw[i + 3] = y2
     }
 
+    /** px -> mm along the table long axis. */
+    private fun toMmX(px: Double): Double = (px - left) / scaleX
+
+    /** px -> mm along the table short axis. */
+    private fun toMmY(px: Double): Double = (px - top) / scaleY
+
+    private fun toPxX(mm: Double): Double = left + mm * scaleX
+
+    private fun toPxY(mm: Double): Double = top + mm * scaleY
+
     /**
-     * Solve the pocket entry point seen from [ox], [oy]: the point on the mouth
-     * line that leaves the most room to both jaw tips. Fills [targetX] and
-     * [targetY]; [targetClearance] is the resulting jaw clearance in px.
-     *
-     * The clearance function is the perpendicular distance from a jaw tip to
-     * the ball-centre line, so clearance >= [ballRadius] means the ball passes
-     * the jaw without touching it.
+     * Solve the pocket entry point seen from [ox], [oy] (px). The gate point is
+     * the point on the mouth line that leaves the most room to both jaw tips;
+     * [targetClearance] is the resulting jaw clearance in mm.
      */
     fun gate(pocket: Pocket, ox: Double, oy: Double) {
         val i = pocket.ordinal * 4
@@ -142,10 +187,16 @@ class AimGeometry {
         val dx = bx - ax
         val dy = by - ay
 
-        if (abs(dx) < 1e-6 && abs(dy) < 1e-6) {
-            targetX = ax
-            targetY = ay
+        val oxm = toMmX(ox)
+        val oym = toMmY(oy)
+
+        val mouthLen = hypot(dx, dy)
+        if (mouthLen < 1e-6) {
+            targetX = toPxX(ax)
+            targetY = toPxY(ay)
             targetClearance = 0.0
+            gateFeasible = false
+            gateApertureMm = 0.0
             return
         }
 
@@ -155,7 +206,7 @@ class AimGeometry {
         val steps = 24
         for (s in 0..steps) {
             val lam = s.toDouble() / steps
-            val score = clearance(ox, oy, ax + dx * lam, ay + dy * lam, ax, ay, bx, by)
+            val score = clearance(oxm, oym, ax + dx * lam, ay + dy * lam, ax, ay, bx, by)
             if (score > bestScore) {
                 bestScore = score
                 bestLam = lam
@@ -167,23 +218,54 @@ class AimGeometry {
         repeat(16) {
             val m1 = hi - GOLDEN * (hi - lo)
             val m2 = lo + GOLDEN * (hi - lo)
-            val s1 = clearance(ox, oy, ax + dx * m1, ay + dy * m1, ax, ay, bx, by)
-            val s2 = clearance(ox, oy, ax + dx * m2, ay + dy * m2, ax, ay, bx, by)
+            val s1 = clearance(oxm, oym, ax + dx * m1, ay + dy * m1, ax, ay, bx, by)
+            val s2 = clearance(oxm, oym, ax + dx * m2, ay + dy * m2, ax, ay, bx, by)
             if (s2 > s1) lo = m1 else hi = m2
         }
 
         val lam = (lo + hi) * 0.5
-        targetX = ax + dx * lam
-        targetY = ay + dy * lam
-        targetClearance = clearance(ox, oy, targetX, targetY, ax, ay, bx, by)
+        val tx = ax + dx * lam
+        val ty = ay + dy * lam
+        targetClearance = clearance(oxm, oym, tx, ty, ax, ay, bx, by)
 
-        if (targetClearance < 0.0) {
-            targetX = (ax + bx) * 0.5
-            targetY = (ay + by) * 0.5
-            targetClearance = 0.0
+        // Entry-angle criterion: the mouth presents mouthLen * |cos| of opening
+        // to the incoming line. Less than one ball diameter cannot drop.
+        val vx = tx - oxm
+        val vy = ty - oym
+        val vlen = hypot(vx, vy)
+        if (vlen < 1e-6) {
+            targetX = toPxX(tx)
+            targetY = toPxY(ty)
+            gateFeasible = false
+            gateApertureMm = 0.0
+            return
         }
+        // Mouth normal, then |cos| of the angle between the ray and the normal.
+        val nx = -dy / mouthLen
+        val ny = dx / mouthLen
+        val cosEntry = abs((vx * nx + vy * ny) / vlen)
+        gateApertureMm = mouthLen * cosEntry
+
+        // A ball centre that starts behind the mouth line is not a pot. The
+        // mouth normal has no fixed orientation per pocket, so the table
+        // centre is used as the reference for "inside".
+        val refSide = (TABLE_LENGTH_MM * 0.5 - ax) * nx +
+            (TABLE_WIDTH_MM * 0.5 - ay) * ny
+        val side = (oxm - ax) * nx + (oym - ay) * ny
+        val minAperture = 2.0 * ballRadiusMm
+        gateFeasible = gateApertureMm >= minAperture &&
+            side * refSide > 0.0 &&
+            targetClearance >= ballRadiusMm
+
+        targetX = toPxX(tx)
+        targetY = toPxY(ty)
     }
 
+    /**
+     * Point-to-segment distance from the jaw tip [ax],[ay] to the ray
+     * origin -> target. Clamping the projection parameter stops the infinite
+     * line from reporting clearance to a jaw that is already behind the ball.
+     */
     private fun clearance(
         ox: Double, oy: Double,
         tx: Double, ty: Double,
@@ -192,10 +274,19 @@ class AimGeometry {
     ): Double {
         val vx = tx - ox
         val vy = ty - oy
-        val len = hypot(vx, vy)
-        if (len < 1e-3) return -1.0
-        val d1 = abs(vx * (ay - oy) - vy * (ax - ox)) / len
-        val d2 = abs(vx * (by - oy) - vy * (bx - ox)) / len
+        val len2 = vx * vx + vy * vy
+        if (len2 < 1e-9) return -1.0
+
+        val w1x = ax - ox
+        val w1y = ay - oy
+        val t1 = ((w1x * vx + w1y * vy) / len2).coerceIn(0.0, 1.0)
+        val d1 = hypot(w1x - vx * t1, w1y - vy * t1)
+
+        val w2x = bx - ox
+        val w2y = by - oy
+        val t2 = ((w2x * vx + w2y * vy) / len2).coerceIn(0.0, 1.0)
+        val d2 = hypot(w2x - vx * t2, w2y - vy * t2)
+
         return min(d1, d2)
     }
 
@@ -203,11 +294,12 @@ class AimGeometry {
      * Bounce point of the ball centre off one cushion.
      *
      * [axis] selects the rail direction, [plane] is the ball-centre reflection
-     * line (cushion nose offset by one radius), [side] is +1 when ball and
-     * target sit on the larger-coordinate side of the plane and -1 otherwise.
-     * [railMin]..[railMax] is the usable stretch of that rail in along-axis
-     * coordinates. The pocket gate already in [targetX]/[targetY] is used as
-     * the destination.
+     * line in px (cushion nose offset by one radius), [side] is +1 when ball
+     * and target sit on the larger-coordinate side of the plane and -1
+     * otherwise. [railMin]..[railMax] is the usable stretch of that rail in
+     * along-axis px. The pocket gate already in [targetX]/[targetY] is used as
+     * the destination. The solve runs in table mm; the hit point is projected
+     * back to px.
      */
     fun bankFrom(
         bx: Double,
@@ -220,15 +312,24 @@ class AimGeometry {
         railMin: Double,
         railMax: Double
     ): Boolean {
-        val alongBall = if (axis == Axis.HORIZONTAL) bx else by
-        val normBall = if (axis == Axis.HORIZONTAL) by else bx
-        val alongPocket = if (axis == Axis.HORIZONTAL) pocketX else pocketY
-        val normPocket = if (axis == Axis.HORIZONTAL) pocketY else pocketX
+        val horizontal = axis == Axis.HORIZONTAL
 
-        val planeD = plane.toDouble()
+        val alongBall = if (horizontal) toMmX(bx) else toMmY(by)
+        val normBall = if (horizontal) toMmY(by) else toMmX(bx)
+        val alongPocket = if (horizontal) toMmX(pocketX) else toMmY(pocketY)
+        val normPocket = if (horizontal) toMmY(pocketY) else toMmX(pocketX)
+
+        val planeMm = if (horizontal) {
+            (plane.toDouble() - top) / scaleY
+        } else {
+            (plane.toDouble() - left) / scaleX
+        }
+        val railMinMm = if (horizontal) toMmX(railMin) else toMmY(railMin)
+        val railMaxMm = if (horizontal) toMmX(railMax) else toMmY(railMax)
+
         val nBall = side * normBall
         val nPocket = side * normPocket
-        val c = side * planeD
+        val c = side * planeMm
 
         // Both the ball and the destination must sit in front of the plane.
         if (nPocket <= c + 0.5 || nBall < c - 0.5) {
@@ -252,9 +353,16 @@ class AimGeometry {
 
                 // theta = incidence angle measured from the cushion normal.
                 // f(theta) = remaining horizontal travel - tan(k * theta) term.
-                // f(0) = flat > 0, f(thetaMax) < 0, strictly decreasing: bisection.
+                // f(0) = flat > 0, strictly decreasing while it is defined.
                 var lo = 0.0
                 var hi = atan(flat / offset)
+                val fHi = flat - offset * tan(hi) - (nPocket - c) * tan(rebound * hi)
+                if (fHi >= 0.0) {
+                    // k * theta crosses the tangent asymptote before the flat
+                    // travel is consumed: no real bounce on this rail.
+                    hitValid = false
+                    return false
+                }
                 repeat(48) {
                     val mid = (lo + hi) * 0.5
                     val f = flat - offset * tan(mid) - (nPocket - c) * tan(rebound * mid)
@@ -264,29 +372,38 @@ class AimGeometry {
             }
         }
 
-        if (hitAlong < railMin || hitAlong > railMax) {
+        if (hitAlong < railMinMm || hitAlong > railMaxMm) {
             hitValid = false
             return false
         }
 
         hitValid = true
-        if (axis == Axis.HORIZONTAL) {
-            hitX = hitAlong
-            hitY = planeD
+        if (horizontal) {
+            hitX = toPxX(hitAlong)
+            hitY = plane.toDouble()
         } else {
-            hitX = planeD
-            hitY = hitAlong
+            hitX = plane.toDouble()
+            hitY = toPxY(hitAlong)
         }
         return true
     }
 
+    /** Radial depth the full-length guide runs past the jaw line, in px. */
+    fun mouthDepthPxFor(scale: Float): Float = mouthDepthPx.toFloat() * scale
+
     companion object {
-        /** 8.06 cm jaw offset on a 127 cm short side. */
-        const val CORNER_JAW_RATIO = 0.0635
-        /** 6.35 cm half mouth on a 127 cm short side. */
-        const val MIDDLE_HALF_RATIO = 0.0500
-        /** How far the guide may run past the jaw line, as a fraction of the short side. */
-        private const val MOUTH_DEPTH_RATIO = 0.0180
+        /** 9 ft playing surface, long axis. */
+        const val TABLE_LENGTH_MM = 2540.0
+        /** 9 ft playing surface, short axis. */
+        const val TABLE_WIDTH_MM = 1270.0
+        /** 2 1/4 in ball diameter. */
+        const val BALL_RADIUS_MM = 28.575
+        /** Corner jaw-tip offset from the corner along each rail. */
+        const val CORNER_JAW_MM = 80.6
+        /** Half a side-pocket mouth. */
+        const val MIDDLE_HALF_MM = 63.5
+        /** How far the full-length guide may run past the jaw line. */
+        const val MOUTH_DEPTH_MM = 22.9
 
         private const val GOLDEN = 0.6180339887498949
     }

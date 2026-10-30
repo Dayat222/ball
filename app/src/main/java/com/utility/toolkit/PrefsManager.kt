@@ -157,14 +157,15 @@ class PrefsManager(context: Context) {
     fun getBankLineColor(): Int = getSecondaryRayColor()
 
     /**
-     * Save and retrieve target ring radius.
+     * Fine-tune of the ball radius that is derived from the table scale.
+     * 1.0 = a real 57.15 mm ball on a correctly calibrated table.
      */
-    fun saveRingRadius(radius: Float) {
-        prefs.edit().putFloat(KEY_BALL_RADIUS, radius).apply()
+    fun saveBallScaleCorrection(value: Float) {
+        prefs.edit().putFloat(KEY_BALL_SCALE_CORRECTION, value).apply()
     }
 
-    fun getRingRadius(): Float {
-        return prefs.getFloat(KEY_BALL_RADIUS, 13.5f)
+    fun getBallScaleCorrection(): Float {
+        return prefs.getFloat(KEY_BALL_SCALE_CORRECTION, 1.0f)
     }
 
     /**
@@ -202,7 +203,6 @@ class PrefsManager(context: Context) {
 
     companion object {
         private const val PREFS_NAME = "toolkit_prefs"
-        private const val DEFAULT_MARGIN_RATIO = 0.08f
         const val DEFAULT_LINE_COLOR = 0xFF00E5FF.toInt() // Cyan #00E5FF
         const val DEFAULT_BANK_LINE_COLOR = 0xFFFFAB00.toInt() // Amber/Gold #FFAB00
 
@@ -225,7 +225,7 @@ class PrefsManager(context: Context) {
 
         private const val KEY_SHOW_BANK_GUIDES = "show_bank_guides"
         private const val KEY_FULL_LENGTH_GUIDES = "full_length_guides"
-        private const val KEY_BALL_RADIUS = "target_ring_radius"
+        private const val KEY_BALL_SCALE_CORRECTION = "ball_scale_correction"
         private const val KEY_BANK_REBOUND = "bank_rebound_ratio"
     }
 }

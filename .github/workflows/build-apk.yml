@@ -27,11 +27,42 @@ jobs:
         with:
           gradle-version: '8.4'
 
+      - name: Restore signing keystore & secrets
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > app/release.keystore
+          printf 'storePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$RELEASE_STORE_PASSWORD" "$RELEASE_KEY_ALIAS" "$RELEASE_KEY_PASSWORD" \
+            > keystore.properties
+
       - name: Build Release APK (R8 minified)
         run: gradle assembleRelease --stacktrace
 
       - name: Stage release asset
         run: cp app/build/outputs/apk/release/app-release.apk app-latest.apk
+
+      - name: Pin SHA-256 into version manifest
+        run: |
+          APK_SHA=$(sha256sum app-latest.apk | awk '{print $1}')
+          jq --arg sha "$APK_SHA" '.sha256 = $sha' version.json > version.json.tmp
+          mv version.json.tmp version.json
+
+      - name: Commit pinned manifest back to main
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add version.json
+          if git diff --cached --quiet; then
+            echo "No manifest change; skipping commit."
+          else
+            git commit -m "chore: pin release SHA-256 [skip ci]"
+            git push
+          fi
 
       - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4

@@ -11,3 +11,6 @@ local.properties
 app/build/
 build-output/
 gabungan_kode.txt
+gabungan_kode_terbaru.txt
+keystore.properties
+app/release.keystore

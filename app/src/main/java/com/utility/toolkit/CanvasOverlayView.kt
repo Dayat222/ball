@@ -53,8 +53,23 @@ class CanvasOverlayView @JvmOverloads constructor(
     var isFullLengthGuides: Boolean = false
         private set
 
-    var ringRadiusDp: Float = 13.5f
+    var ballScaleCorrection: Float = 1.0f
         private set
+
+    /**
+     * Ball radius in px, derived from the calibrated table scale and the
+     * user's fine-tune. Recomputed from the current boundary box so callers
+     * never read a stale value before the first frame is drawn.
+     */
+    val ballRadiusPx: Float
+        get() {
+            aim.configure(
+                boundaryBox.left, boundaryBox.top,
+                boundaryBox.right, boundaryBox.bottom,
+                ballScaleCorrection
+            )
+            return aim.ballRadius.toFloat()
+        }
 
     // Cushion rebound ratio: 1.0 = pure specular mirror, 0.90 = real cloth "short" bank.
     var bankRebound: Float = 1f
@@ -250,7 +265,7 @@ class CanvasOverlayView @JvmOverloads constructor(
 
         showBankGuides = prefsManager.getShowBankGuides()
         isFullLengthGuides = prefsManager.isFullLengthGuides()
-        ringRadiusDp = prefsManager.getRingRadius()
+        ballScaleCorrection = prefsManager.getBallScaleCorrection()
         bankRebound = prefsManager.getBankRebound()
     }
 
@@ -391,9 +406,13 @@ class CanvasOverlayView @JvmOverloads constructor(
         return isFullLengthGuides
     }
 
-    fun setRingRadius(radius: Float) {
-        ringRadiusDp = radius
-        prefsManager.saveRingRadius(radius)
+    /**
+     * Fine-tune of the ball radius that is derived from the table scale.
+     * 1.0 = a real 57.15 mm ball on a correctly calibrated table.
+     */
+    fun setBallScaleCorrection(correction: Float) {
+        ballScaleCorrection = correction.coerceIn(0.5f, 1.5f)
+        prefsManager.saveBallScaleCorrection(ballScaleCorrection)
         invalidate()
     }
 
@@ -763,7 +782,14 @@ class CanvasOverlayView @JvmOverloads constructor(
     private fun drawTargetAndRadialGuides(canvas: Canvas) {
         val bx = pointB.x
         val by = pointB.y
-        val ringRadius = ringRadiusDp * density
+        // Derive the ball ring from the real table scale, not a dp constant.
+        aim.rebound = bankRebound.toDouble()
+        aim.configure(
+            boundaryBox.left, boundaryBox.top,
+            boundaryBox.right, boundaryBox.bottom,
+            ballScaleCorrection
+        )
+        val ringRadius = aim.ballRadius.toFloat()
 
         // 1. Ball-Fit Ring: high-contrast hollow reticle matching ball size
         canvas.drawCircle(bx, by, ringRadius, aimShadowPaint)
@@ -772,9 +798,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         // 2. Micro centre pinpoint: double contrast dot
         canvas.drawCircle(bx, by, 2.5f * density, aimCenterShadowPaint)
         canvas.drawCircle(bx, by, 1.5f * density, aimCenterDotPaint)
-
-        aim.rebound = bankRebound.toDouble()
-        aim.configure(boundaryBox.left, boundaryBox.top, boundaryBox.right, boundaryBox.bottom, ringRadius)
 
         val startDist = ringRadius + (3f * density)
         val shortLen = 85f * density
@@ -802,7 +825,7 @@ class CanvasOverlayView @JvmOverloads constructor(
         val cx = boundaryBox.centerX()
 
         // Same mouth model the live rays use, so calibration and play agree.
-        aim.configure(boundaryBox.left, boundaryBox.top, boundaryBox.right, boundaryBox.bottom, ringRadiusDp * density)
+        aim.configure(boundaryBox.left, boundaryBox.top, boundaryBox.right, boundaryBox.bottom, ballScaleCorrection)
         val cornerMouthInset = aim.cornerJawPx.toFloat() * 0.5f
 
         drawVertexGuideRing(canvas, l + cornerMouthInset, t + cornerMouthInset)   // Top-Left

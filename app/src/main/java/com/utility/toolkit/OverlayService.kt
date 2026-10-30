@@ -281,7 +281,7 @@ class OverlayService : Service() {
         val screenW = kotlin.math.max(realSize.x, realSize.y)
         val screenH = kotlin.math.min(realSize.x, realSize.y)
         val pad = (18f * density).roundToInt()
-        val ballR = (canvas.ringRadiusDp * density).roundToInt()
+        val ballR = canvas.ballRadiusPx.roundToInt().coerceAtLeast(1)
 
         val winX: Int
         val winY: Int
@@ -826,17 +826,18 @@ class OverlayService : Service() {
             }
         })
 
-        // Ball Ring Size Slider Setup
-        val initialBallRadius = prefsManager.getRingRadius()
-        seekBallSize.progress = initialBallRadius.roundToInt().coerceIn(8, 30)
-        tvBallSize.text = getString(R.string.label_ball_size, initialBallRadius)
+        // Ball Scale Correction Slider Setup (percent of the table-derived ball)
+        val initialScalePct = (prefsManager.getBallScaleCorrection() * 100f)
+            .roundToInt().coerceIn(70, 120)
+        seekBallSize.progress = initialScalePct
+        tvBallSize.text = getString(R.string.label_ball_size, initialScalePct)
 
         seekBallSize.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val radiusDp = progress.coerceIn(8, 30) * 1.0f
-                tvBallSize.text = getString(R.string.label_ball_size, radiusDp)
+                val pct = progress.coerceIn(70, 120)
+                tvBallSize.text = getString(R.string.label_ball_size, pct)
                 if (fromUser) {
-                    canvasOverlayView?.setRingRadius(radiusDp)
+                    canvasOverlayView?.setBallScaleCorrection(pct / 100f)
                     applyTableBoundedWindow()
                 }
             }
@@ -844,10 +845,9 @@ class OverlayService : Service() {
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
 
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                val progress = seekBar?.progress ?: 14
-                val radiusDp = progress.coerceIn(8, 30) * 1.0f
-                prefsManager.saveRingRadius(radiusDp)
-                canvasOverlayView?.setRingRadius(radiusDp)
+                val pct = (seekBar?.progress ?: 100).coerceIn(70, 120)
+                prefsManager.saveBallScaleCorrection(pct / 100f)
+                canvasOverlayView?.setBallScaleCorrection(pct / 100f)
                 applyTableBoundedWindow()
             }
         })

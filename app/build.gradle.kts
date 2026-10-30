@@ -1,7 +1,18 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+
+// Signing secrets live outside version control: keystore.properties (local) or
+// env vars (CI). A hard-coded fallback would defeat the point of the leak fix.
+val keystoreProperties = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+fun ks(key: String, env: String): String? =
+    keystoreProperties.getProperty(key) ?: System.getenv(env)?.takeIf { it.isNotBlank() }
 
 android {
     namespace = "com.utility.toolkit"
@@ -20,9 +31,9 @@ android {
     signingConfigs {
         create("release") {
             storeFile = file("release.keystore")
-            storePassword = "REDACTED"
-            keyAlias = "key0"
-            keyPassword = "REDACTED"
+            storePassword = ks("storePassword", "RELEASE_STORE_PASSWORD")
+            keyAlias = ks("keyAlias", "RELEASE_KEY_ALIAS") ?: "key0"
+            keyPassword = ks("keyPassword", "RELEASE_KEY_PASSWORD")
         }
     }
 
@@ -38,7 +49,14 @@ android {
         }
         debug {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
+            // Sign with the release key when secrets are present (keeps debug
+            // installs in-place-updatable), else fall back to the default debug
+            // key so a fresh clone can still build without the keystore.
+            signingConfig = if (ks("storePassword", "RELEASE_STORE_PASSWORD") != null) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             applicationIdSuffix = ""
         }
     }
@@ -63,4 +81,6 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    testImplementation("junit:junit:4.13.2")
 }

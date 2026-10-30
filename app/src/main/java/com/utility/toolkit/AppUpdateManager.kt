@@ -21,6 +21,7 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 
 /**
  * In-App OTA Update Manager for seamless Over-The-Air application updates.
@@ -39,7 +40,8 @@ object AppUpdateManager {
         val remoteVersionName: String,
         val downloadUrl: String,
         val changelog: String,
-        val isUpdateAvailable: Boolean
+        val isUpdateAvailable: Boolean,
+        val sha256: String = ""
     )
 
     fun getInstalledVersionCode(context: Context): Long {
@@ -203,7 +205,8 @@ object AppUpdateManager {
                 remoteVersionName = remoteName,
                 downloadUrl = json.optString("downloadUrl", ""),
                 changelog = json.optString("changelog", "Pembaruan kestabilan dan perbaikan fitur."),
-                isUpdateAvailable = remoteCode > currentVersionCode
+                isUpdateAvailable = remoteCode > currentVersionCode,
+                sha256 = json.optString("sha256", "")
             )
         } catch (e: Exception) {
             null
@@ -277,6 +280,17 @@ object AppUpdateManager {
                     throw IllegalStateException("File unduhan kosong atau rusak.")
                 }
 
+                // Integrity check: reject the APK if the manifest pins an SHA-256
+                // that does not match what was actually downloaded.
+                val expectedSha = updateInfo.sha256.trim().lowercase()
+                if (expectedSha.isNotEmpty()) {
+                    val actualSha = sha256Hex(destFile)
+                    if (actualSha != expectedSha) {
+                        destFile.delete()
+                        throw IllegalStateException("Checksum APK tidak cocok. Pembaruan dibatalkan.")
+                    }
+                }
+
                 destFile.setReadable(true, false)
 
                 withContext(Dispatchers.Main) {
@@ -289,6 +303,21 @@ object AppUpdateManager {
                 }
             }
         }
+    }
+
+/**
+     * SHA-256 of a file, lowercase hex.
+     */
+    private fun sha256Hex(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { stream ->
+            val buffer = ByteArray(8192)
+            var bytesRead: Int
+            while (stream.read(buffer).also { bytesRead = it } != -1) {
+                digest.update(buffer, 0, bytesRead)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 
     /**

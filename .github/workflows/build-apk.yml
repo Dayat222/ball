@@ -34,9 +34,32 @@ jobs:
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
+          set -euo pipefail
           echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > app/release.keystore
+
+          # AGP 8.3.2 bundles a BouncyCastle that cannot parse PKCS12 written by
+          # a modern JDK: signing dies with "Tag number over 30 is not
+          # supported" inside KeystoreHelper.getCertificateInfo. JKS is read by
+          # the plain JVM provider, so normalise the container to JKS first.
+          # The key and certificate are untouched, only the store format changes,
+          # so the APK signature stays identical.
+          ALIAS="${RELEASE_KEY_ALIAS:-key0}"
+          KEYPASS="${RELEASE_KEY_PASSWORD:-$RELEASE_STORE_PASSWORD}"
+          keytool -importkeystore \
+            -srckeystore app/release.keystore \
+            -srcstorepass "$RELEASE_STORE_PASSWORD" \
+            -srcalias "$ALIAS" \
+            -srckeypass "$KEYPASS" \
+            -destkeystore app/release-jks.keystore \
+            -deststoretype JKS \
+            -deststorepass "$RELEASE_STORE_PASSWORD" \
+            -destalias "$ALIAS" \
+            -destkeypass "$KEYPASS" \
+            -noprompt
+          mv app/release-jks.keystore app/release.keystore
+
           printf 'storePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
-            "$RELEASE_STORE_PASSWORD" "$RELEASE_KEY_ALIAS" "$RELEASE_KEY_PASSWORD" \
+            "$RELEASE_STORE_PASSWORD" "$ALIAS" "$KEYPASS" \
             > keystore.properties
 
       - name: Build Release APK (R8 minified)

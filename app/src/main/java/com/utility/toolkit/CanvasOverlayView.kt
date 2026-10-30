@@ -40,6 +40,9 @@ class CanvasOverlayView @JvmOverloads constructor(
         HANDLE_TOP_CENTER, HANDLE_BOTTOM_CENTER, HANDLE_LEFT_CENTER, HANDLE_RIGHT_CENTER
     }
 
+    /** Which dimension drives the 2:1 lock during calibration. */
+    enum class Axis { WIDTH, HEIGHT }
+
     private val prefsManager = PrefsManager(context)
 
     // Calibration
@@ -54,6 +57,16 @@ class CanvasOverlayView @JvmOverloads constructor(
         private set
 
     var ballScaleCorrection: Float = 1.0f
+        private set
+
+    /** Pocket-mouth tuning against the hard-coded 9 ft table. 1.0 = real. */
+    var jawScale: Float = 1.0f
+        private set
+    var mouthScale: Float = 1.0f
+        private set
+
+    /** Ghost-ball marker for the white ball's required contact position. */
+    var showGhostBall: Boolean = true
         private set
 
     /**
@@ -125,6 +138,9 @@ class CanvasOverlayView @JvmOverloads constructor(
     private val density = resources.displayMetrics.density
     private val edgeHandleRadius = 14f * density
 
+    /** Playing-surface aspect: 1270 / 2540 mm. Height is half the width. */
+    private val TABLE_HEIGHT_PER_WIDTH = 0.5f
+
     // Paint: 6-Pocket Radial Short Lines from Target Ball (sixLinePaint)
     private val sixLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#00E5FF")
@@ -147,6 +163,28 @@ class CanvasOverlayView @JvmOverloads constructor(
     private val bankDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#FFAB00")
         style = Paint.Style.FILL
+    }
+
+    // Feasibility paints: a shot the mouth cannot accept is drawn dim, so a
+    // guide that looks available is one that can actually drop.
+    private val infeasibleLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * density
+        strokeCap = Paint.Cap.ROUND
+        color = Color.argb(90, 255, 64, 64)
+    }
+
+    // Ghost-ball marker: white ball centre at the moment of contact.
+    private val ghostRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1.6f * density
+        color = Color.argb(210, 255, 255, 255)
+    }
+
+    private val ghostShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 3f * density
+        color = Color.argb(150, 0, 0, 0)
     }
 
     var onCanvasSizeChanged: ((w: Int, h: Int) -> Unit)? = null
@@ -267,9 +305,41 @@ class CanvasOverlayView @JvmOverloads constructor(
         isFullLengthGuides = prefsManager.isFullLengthGuides()
         ballScaleCorrection = prefsManager.getBallScaleCorrection()
         bankRebound = prefsManager.getBankRebound()
+        jawScale = prefsManager.getJawScale()
+        mouthScale = prefsManager.getMouthScale()
+        showGhostBall = prefsManager.getShowGhostBall()
     }
 
     override fun getAccessibilityClassName(): CharSequence = "android.view.View"
+
+    /**
+     * A real playing surface is 2:1, so the calibration rectangle must be too.
+     * When both axis scales match, the jaw geometry and the ball radius share
+     * one scale and the whole millimetre model is exact. [lockAxis] decides
+     * which dimension drives the other:
+     *   WIDTH  — height follows width (better for hairline finger drags on the
+     *            side rails, which are the dominant calibration gesture),
+     *   HEIGHT — width follows height.
+     */
+    fun enforceTableRatio(w: Float, h: Float, lockAxis: Axis = Axis.WIDTH) {
+        if (boundaryBox.width() <= 1f || boundaryBox.height() <= 1f) return
+        when (lockAxis) {
+            Axis.WIDTH -> {
+                val ratioH = boundaryBox.width() * TABLE_HEIGHT_PER_WIDTH
+                val cy = boundaryBox.centerY()
+                boundaryBox.top = cy - ratioH / 2f
+                boundaryBox.bottom = cy + ratioH / 2f
+            }
+            Axis.HEIGHT -> {
+                val ratioW = boundaryBox.height() / TABLE_HEIGHT_PER_WIDTH
+                val cx = boundaryBox.centerX()
+                boundaryBox.left = cx - ratioW / 2f
+                boundaryBox.right = cx + ratioW / 2f
+            }
+        }
+        clampBoundaryBox(w, h)
+        invalidate()
+    }
 
     /**
      * Requirement 2: Auto-clamp boundaryBox to prevent overflowing screen edges in Landscape mode.
@@ -426,6 +496,25 @@ class CanvasOverlayView @JvmOverloads constructor(
         invalidate()
     }
 
+    /** Pocket-mouth tuning; both are multipliers on the real-table constants. */
+    fun setJawScale(value: Float) {
+        jawScale = value.coerceIn(0.5f, 2.0f)
+        prefsManager.saveJawScale(jawScale)
+        invalidate()
+    }
+
+    fun setMouthScale(value: Float) {
+        mouthScale = value.coerceIn(0.5f, 2.0f)
+        prefsManager.saveMouthScale(mouthScale)
+        invalidate()
+    }
+
+    fun setShowGhostBall(show: Boolean) {
+        showGhostBall = show
+        prefsManager.saveShowGhostBall(show)
+        invalidate()
+    }
+
     fun setPointB(aimX: Float, aimY: Float, gripX: Float = aimX, gripY: Float = aimY) {
         pointB.set(aimX, aimY)
         gripB.set(gripX, gripY)
@@ -519,6 +608,16 @@ class CanvasOverlayView @JvmOverloads constructor(
         AimGeometry.Pocket.BOTTOM_RIGHT
     )
 
+    // Corner pockets a two-cushion bank can reach from the opposite half.
+    private val TOP_END_POCKETS = arrayOf(
+        AimGeometry.Pocket.TOP_LEFT,
+        AimGeometry.Pocket.TOP_RIGHT
+    )
+    private val BOTTOM_END_POCKETS = arrayOf(
+        AimGeometry.Pocket.BOTTOM_LEFT,
+        AimGeometry.Pocket.BOTTOM_RIGHT
+    )
+
     /**
      * One direct ray: ball centre -> gate point of the last solved pocket.
      * Short mode stops at 85dp, Full mode runs through the mouth.
@@ -528,7 +627,8 @@ class CanvasOverlayView @JvmOverloads constructor(
         bx: Float,
         by: Float,
         startDist: Float,
-        shortLen: Float
+        shortLen: Float,
+        paint: Paint
     ) {
         val tx = aim.targetX.toFloat()
         val ty = aim.targetY.toFloat()
@@ -547,8 +647,18 @@ class CanvasOverlayView @JvmOverloads constructor(
             by + uy * startDist,
             bx + ux * end,
             by + uy * end,
-            sixLinePaint
+            paint
         )
+
+        // Ghost ball: where the white ball must sit at contact. The contact
+        // centre is offset from the object ball by two radii along the line of
+        // centres, i.e. opposite the shot direction.
+        if (showGhostBall) {
+            val gx = bx - ux * 2f * aim.ballRadius.toFloat()
+            val gy = by - uy * 2f * aim.ballRadius.toFloat()
+            canvas.drawCircle(gx, gy, aim.ballRadius.toFloat(), ghostShadowPaint)
+            canvas.drawCircle(gx, gy, aim.ballRadius.toFloat(), ghostRingPaint)
+        }
     }
 
     /**
@@ -614,6 +724,117 @@ class CanvasOverlayView @JvmOverloads constructor(
             sideSeg0, sideSeg1, Float.NaN, Float.NaN,
             startDist, shortLen
         )
+
+        // Two-cushion banks. Same unfolding maths, one extra rail per path.
+        drawDoubleBanks(canvas, bx, by, ballR, startDist)
+    }
+
+    /**
+     * Two-rail banks: long rail then side rail into the far corner pockets.
+     * [AimGeometry.bankFrom2] rejects any path whose contact leaves the real
+     * cushion segment, so these only draw when both bounces are legal.
+     */
+    private fun drawDoubleBanks(
+        canvas: Canvas,
+        bx: Float,
+        by: Float,
+        ballR: Float,
+        startDist: Float
+    ) {
+        val l = boundaryBox.left
+        val r = boundaryBox.right
+        val t = boundaryBox.top
+        val b = boundaryBox.bottom
+        val cx = boundaryBox.centerX()
+        val jaw = aim.cornerJawPx.toFloat()
+        val mouth = aim.middleHalfPx.toFloat()
+
+        val longA0 = l + jaw + ballR
+        val longA1 = cx - mouth - ballR
+        val longB0 = cx + mouth + ballR
+        val longB1 = r - jaw - ballR
+        val side0 = t + jaw + ballR
+        val side1 = b - jaw - ballR
+
+        // (long rail plane, side rail plane, target pockets on the far end)
+        val pairs = arrayOf(
+            DoublePair(t + ballR, r - ballR, longA0, longA1, side0, side1, TOP_END_POCKETS),
+            DoublePair(t + ballR, l + ballR, longB0, longB1, side0, side1, TOP_END_POCKETS),
+            DoublePair(b - ballR, r - ballR, longA0, longA1, side0, side1, BOTTOM_END_POCKETS),
+            DoublePair(b - ballR, l + ballR, longB0, longB1, side0, side1, BOTTOM_END_POCKETS)
+        )
+
+        for (p in pairs) {
+            for (pocket in p.pockets) {
+                aim.gate(pocket, bx.toDouble(), by.toDouble())
+                if (!aim.bankFrom2(
+                        bx.toDouble(), by.toDouble(),
+                        aim.targetX, aim.targetY,
+                        AimGeometry.Axis.HORIZONTAL, p.longPlane.toDouble(),
+                        p.longMin.toDouble(), p.longMax.toDouble(),
+                        AimGeometry.Axis.VERTICAL, p.sidePlane.toDouble(),
+                        side0.toDouble(), side1.toDouble()
+                    )
+                ) continue
+
+                // Re-thread the entry from the second contact and re-solve once,
+                // mirroring the one-cushion seeding.
+                aim.gate(pocket, aim.hit2X, aim.hit2Y)
+                if (!aim.bankFrom2(
+                        bx.toDouble(), by.toDouble(),
+                        aim.targetX, aim.targetY,
+                        AimGeometry.Axis.HORIZONTAL, p.longPlane.toDouble(),
+                        p.longMin.toDouble(), p.longMax.toDouble(),
+                        AimGeometry.Axis.VERTICAL, p.sidePlane.toDouble(),
+                        side0.toDouble(), side1.toDouble()
+                    )
+                ) continue
+
+                drawDoubleBankPath(canvas, bx, by, startDist)
+            }
+        }
+    }
+
+    private class DoublePair(
+        val longPlane: Float,
+        val sidePlane: Float,
+        val longMin: Float,
+        val longMax: Float,
+        val sideMin: Float,
+        val sideMax: Float,
+        val pockets: Array<AimGeometry.Pocket>
+    )
+
+    private fun drawDoubleBankPath(
+        canvas: Canvas,
+        bx: Float,
+        by: Float,
+        startDist: Float
+    ) {
+        val h1x = aim.hitX.toFloat()
+        val h1y = aim.hitY.toFloat()
+        val h2x = aim.hit2X.toFloat()
+        val h2y = aim.hit2Y.toFloat()
+        val gx = aim.targetX.toFloat()
+        val gy = aim.targetY.toFloat()
+
+        val d1 = hypot(h1x - bx, h1y - by)
+        if (d1 < 1f) return
+
+        val ux = (h1x - bx) / d1
+        val uy = (h1y - by) / d1
+        val fromX = if (d1 > startDist) bx + ux * startDist else bx
+        val fromY = if (d1 > startDist) by + uy * startDist else by
+
+        bankRayPath.reset()
+        bankRayPath.moveTo(fromX, fromY)
+        bankRayPath.lineTo(h1x, h1y)
+        bankRayPath.lineTo(h2x, h2y)
+        bankRayPath.lineTo(gx, gy)
+        canvas.drawPath(bankRayPath, bankLinePaint)
+
+        canvas.drawCircle(h1x, h1y, 3f * density, bankDotPaint)
+        canvas.drawCircle(h2x, h2y, 2.5f * density, bankDotPaint)
     }
 
     private fun drawBankSet(
@@ -784,6 +1005,8 @@ class CanvasOverlayView @JvmOverloads constructor(
         val by = pointB.y
         // Derive the ball ring from the real table scale, not a dp constant.
         aim.rebound = bankRebound.toDouble()
+        aim.jawScale = jawScale.toDouble()
+        aim.mouthScale = mouthScale.toDouble()
         aim.configure(
             boundaryBox.left, boundaryBox.top,
             boundaryBox.right, boundaryBox.bottom,
@@ -805,7 +1028,8 @@ class CanvasOverlayView @JvmOverloads constructor(
         // 3. Six direct pocket rays
         for (pocket in allPockets) {
             aim.gate(pocket, bx.toDouble(), by.toDouble())
-            drawDirectRay(canvas, bx, by, startDist, shortLen)
+            if (!aim.gateFeasible) continue
+            drawDirectRay(canvas, bx, by, startDist, shortLen, sixLinePaint)
         }
 
         // 4. Ten cushion bank rays
@@ -825,6 +1049,8 @@ class CanvasOverlayView @JvmOverloads constructor(
         val cx = boundaryBox.centerX()
 
         // Same mouth model the live rays use, so calibration and play agree.
+        aim.jawScale = jawScale.toDouble()
+        aim.mouthScale = mouthScale.toDouble()
         aim.configure(boundaryBox.left, boundaryBox.top, boundaryBox.right, boundaryBox.bottom, ballScaleCorrection)
         val cornerMouthInset = aim.cornerJawPx.toFloat() * 0.5f
 
@@ -947,6 +1173,13 @@ class CanvasOverlayView @JvmOverloads constructor(
                         }
                         DragTarget.NONE -> Unit
                     }
+                    // Keep the calibrated rectangle on the real 2:1 surface.
+                    val lock = when (activeDragTarget) {
+                        DragTarget.HANDLE_TOP_CENTER, DragTarget.HANDLE_BOTTOM_CENTER ->
+                            Axis.HEIGHT
+                        else -> Axis.WIDTH
+                    }
+                    enforceTableRatio(screenW, screenH, lock)
                     invalidate()
                     return true
                 }

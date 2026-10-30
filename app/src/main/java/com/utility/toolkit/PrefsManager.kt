@@ -180,6 +180,35 @@ class PrefsManager(context: Context) {
     }
 
     /**
+     * Pocket-mouth tuning against the hard-coded 9 ft table.
+     * 1.0 = real table proportions.
+     */
+    fun saveJawScale(value: Float) {
+        prefs.edit().putFloat(KEY_JAW_SCALE, value).apply()
+    }
+
+    fun getJawScale(): Float {
+        return prefs.getFloat(KEY_JAW_SCALE, 1.0f)
+    }
+
+    fun saveMouthScale(value: Float) {
+        prefs.edit().putFloat(KEY_MOUTH_SCALE, value).apply()
+    }
+
+    fun getMouthScale(): Float {
+        return prefs.getFloat(KEY_MOUTH_SCALE, 1.0f)
+    }
+
+    /** Ghost-ball contact marker visibility. */
+    fun saveShowGhostBall(show: Boolean) {
+        prefs.edit().putBoolean(KEY_SHOW_GHOST, show).apply()
+    }
+
+    fun getShowGhostBall(): Boolean {
+        return prefs.getBoolean(KEY_SHOW_GHOST, true)
+    }
+
+    /**
      * Save and retrieve full length guideline toggle (panjang garis sampai ke 6 lubang).
      */
     fun saveFullLengthGuides(isFull: Boolean) {
@@ -227,5 +256,8 @@ class PrefsManager(context: Context) {
         private const val KEY_FULL_LENGTH_GUIDES = "full_length_guides"
         private const val KEY_BALL_SCALE_CORRECTION = "ball_scale_correction"
         private const val KEY_BANK_REBOUND = "bank_rebound_ratio"
+        private const val KEY_JAW_SCALE = "jaw_scale"
+        private const val KEY_MOUTH_SCALE = "mouth_scale"
+        private const val KEY_SHOW_GHOST = "show_ghost_ball"
     }
 }

@@ -653,6 +653,12 @@ class OverlayService : Service() {
         val seekOpacity = controlView.findViewById<SeekBar>(R.id.seekOpacity)
         val tvBallSize = controlView.findViewById<TextView>(R.id.tvBallSizeValue)
         val seekBallSize = controlView.findViewById<SeekBar>(R.id.seekBallSize)
+        val tvJaw = controlView.findViewById<TextView>(R.id.tvJawValue)
+        val seekJaw = controlView.findViewById<SeekBar>(R.id.seekJaw)
+        val tvMouth = controlView.findViewById<TextView>(R.id.tvMouthValue)
+        val seekMouth = controlView.findViewById<SeekBar>(R.id.seekMouth)
+        val tvRebound = controlView.findViewById<TextView>(R.id.tvReboundValue)
+        val seekRebound = controlView.findViewById<SeekBar>(R.id.seekRebound)
 
         // 1. Dragging toolbar
         setupDraggableBar(btnDrag, controlView)
@@ -851,6 +857,77 @@ class OverlayService : Service() {
                 applyTableBoundedWindow()
             }
         })
+
+        // Corner jaw offset (% of the real 9 ft jaw tip offset)
+        val jawPct = (prefsManager.getJawScale() * 100f).roundToInt().coerceIn(50, 200)
+        seekJaw.progress = jawPct
+        tvJaw.text = getString(R.string.label_jaw, jawPct)
+        seekJaw.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                tvJaw.text = getString(R.string.label_jaw, progress)
+                if (fromUser) canvasOverlayView?.setJawScale(progress / 100f)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                canvasOverlayView?.setJawScale((seekBar?.progress ?: 100) / 100f)
+            }
+        })
+
+        // Side pocket mouth half-width (% of the real 9 ft mouth)
+        val mouthPct = (prefsManager.getMouthScale() * 100f).roundToInt().coerceIn(50, 200)
+        seekMouth.progress = mouthPct
+        tvMouth.text = getString(R.string.label_mouth, mouthPct)
+        seekMouth.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                tvMouth.text = getString(R.string.label_mouth, progress)
+                if (fromUser) canvasOverlayView?.setMouthScale(progress / 100f)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                canvasOverlayView?.setMouthScale((seekBar?.progress ?: 100) / 100f)
+            }
+        })
+
+        // Cushion rebound (outgoing angle = k * incoming); 100% = mirror
+        val reboundPct = (prefsManager.getBankRebound() * 100f).roundToInt().coerceIn(70, 100)
+        seekRebound.progress = reboundPct
+        tvRebound.text = getString(R.string.label_rebound, reboundPct)
+        seekRebound.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                tvRebound.text = getString(R.string.label_rebound, progress)
+                if (fromUser) canvasOverlayView?.setBankRebound(progress / 100f)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                canvasOverlayView?.setBankRebound((seekBar?.progress ?: 100) / 100f)
+            }
+        })
+
+        // Ghost-ball marker toggle
+        val btnGhostOn = controlView.findViewById<TextView>(R.id.btnGhostOn)
+        val btnGhostOff = controlView.findViewById<TextView>(R.id.btnGhostOff)
+        fun updateGhostUI(on: Boolean) {
+            if (on) {
+                btnGhostOn?.setBackgroundResource(R.drawable.bg_control_btn_active)
+                btnGhostOn?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+                btnGhostOff?.setBackgroundResource(R.drawable.bg_control_btn)
+                btnGhostOff?.setTextColor(Color.WHITE)
+            } else {
+                btnGhostOn?.setBackgroundResource(R.drawable.bg_control_btn)
+                btnGhostOn?.setTextColor(Color.WHITE)
+                btnGhostOff?.setBackgroundResource(R.drawable.bg_control_btn_active)
+                btnGhostOff?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+            }
+        }
+        updateGhostUI(prefsManager.getShowGhostBall())
+        btnGhostOn?.setOnClickListener {
+            canvasOverlayView?.setShowGhostBall(true)
+            updateGhostUI(true)
+        }
+        btnGhostOff?.setOnClickListener {
+            canvasOverlayView?.setShowGhostBall(false)
+            updateGhostUI(false)
+        }
 
         // 8. Feature 2: Line Color Picker (Preset Swatches & Hue Spectrum Slider)
         val density = resources.displayMetrics.density

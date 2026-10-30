@@ -1,7 +1,7 @@
 {
-  "versionCode": 21,
-  "versionName": "3.1.0",
+  "versionCode": 22,
+  "versionName": "3.2.0",
   "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-latest.apk",
   "sha256": "",
-  "changelog": "Versi 3.1.0:\n- KEAMANAN: menandatangani ulang APK dengan keystore baru setelah keystore lama terlanjur bocor ke publik. Konsekuensi: karena tanda tangan berubah, instalasi v3.0.1 yang lama TIDAK bisa di-update in-place. Pengguna wajib uninstall versi lama lalu install ulang versi ini.\n- Verifikasi integritas APK (SHA-256) sebelum dipasang, dipin otomatis oleh build CI ke version.json.\n- Hapus kode mati dan rapikan solver geometri (migrasi selesai ke ruang milimeter)."
+  "changelog": "Versi 3.2.0 — akurasi garis pandu:\n- Garis ke lubang yang mustahil dimasukkan tidak lagi digambar. Solver sudah menghitung kelayakan tembakan (bukaan mulut, clearance bibir lubang, sudut masuk); sekarang hasilnya benar-benar dipakai untuk menyaring garis.\n- Ghost ball: ring kedua menandai posisi kontak bola putih, jadi garis menunjukkan ke mana harus membidik, bukan hanya jalur bola target. Bisa dimatikan di Settings.\n- Tuning geometri lubang: slider Corner Jaw dan Side Mouth (50-200%) untuk menyesuaikan model mulut terhadap tabel game yang tidak persis 9 ft.\n- Slider Bank Rebound (70-100%): garis pantul kini bisa disetel untuk kain nyata yang memantul lebih pendek dari cermin sempurna.\n- Kalibrasi dikunci ke rasio meja 2:1, sehingga skala sumbu X dan Y selalu sama dan seluruh model milimeter menjadi eksak.\n- Bank dua bantalan ditambahkan untuk keempat sudut, memakai geometri lipat (unfolding) yang eksak.\n- Solver sekarang menolak menghitung saat kotak kalibrasi kolaps, alih-alih memakai geometri lubang lama yang sudah basi.\n\nCatatan: v3.1.0 sudah memakai keystore baru. Update dari v3.1.0 bisa langsung menimpa; hanya pengguna v3.0.1 ke bawah yang perlu uninstall sekali."
 }

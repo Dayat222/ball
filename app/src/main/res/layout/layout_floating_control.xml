@@ -196,6 +196,116 @@
                 android:progressTint="@color/cyan_accent"
                 android:thumbTint="@color/cyan_accent" />
 
+            <!-- Corner Jaw Offset Slider -->
+            <TextView
+                android:id="@+id/tvJawValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Corner Jaw: 100%"
+                android:textColor="@color/yellow_accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <SeekBar
+                android:id="@+id/seekJaw"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:max="200"
+                android:min="50"
+                android:progress="100"
+                android:progressTint="@color/yellow_accent"
+                android:thumbTint="@color/yellow_accent" />
+
+            <!-- Side Mouth Half-Width Slider -->
+            <TextView
+                android:id="@+id/tvMouthValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Side Mouth: 100%"
+                android:textColor="@color/yellow_accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <SeekBar
+                android:id="@+id/seekMouth"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:max="200"
+                android:min="50"
+                android:progress="100"
+                android:progressTint="@color/yellow_accent"
+                android:thumbTint="@color/yellow_accent" />
+
+            <!-- Cushion Rebound Slider -->
+            <TextView
+                android:id="@+id/tvReboundValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Bank Rebound: 100%"
+                android:textColor="@color/yellow_accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <SeekBar
+                android:id="@+id/seekRebound"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:max="100"
+                android:min="70"
+                android:progress="100"
+                android:progressTint="@color/yellow_accent"
+                android:thumbTint="@color/yellow_accent" />
+
+            <!-- Ghost Ball Toggle -->
+            <TextView
+                android:id="@+id/tvGhostTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Ghost Ball (contact point)"
+                android:textColor="@color/cyan_accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/btnGhostOff"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/bg_control_btn"
+                    android:gravity="center"
+                    android:text="OFF"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/btnGhostOn"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="4dp"
+                    android:background="@drawable/bg_control_btn_active"
+                    android:gravity="center"
+                    android:text="ON"
+                    android:textColor="@color/cyan_accent"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
             <!-- Guideline Length Selector (Short vs Full) -->
             <TextView
                 android:id="@+id/tvLineLengthTitle"

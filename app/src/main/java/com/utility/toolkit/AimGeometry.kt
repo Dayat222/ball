@@ -79,6 +79,22 @@ class AimGeometry {
     /** Angle ratio of a cushion rebound. 1.0 = perfect specular mirror. */
     var rebound = 1.0
 
+    /**
+     * Tuning of the pocket mouth against the hard-coded 9 ft table. A game
+     * table is not always a faithful 9 ft replica, so the jaw offset and the
+     * side-mouth half width can be scaled independently. 1.0 = real table.
+     */
+    var jawScale = 1.0
+    var mouthScale = 1.0
+
+    /**
+     * False until [configure] has built a consistent frame. Guards every solve
+     * so a collapsed boundary box cannot leave the previous frame's jaw array
+     * in place and report nonsense geometry as a valid aim.
+     */
+    var frameValid = false
+        private set
+
     // jaw[i * 4 + 0..3] = x1, y1, x2, y2 for the two jaw tips of pocket i (mm)
     private val jaw = DoubleArray(24)
 
@@ -101,6 +117,12 @@ class AimGeometry {
     var hitY = 0.0
         private set
     var hitValid = false
+        private set
+
+    /** Second cushion contact for a two-rail bank. */
+    var hit2X = 0.0
+        private set
+    var hit2Y = 0.0
         private set
 
     /** Effective mouth width for the last gate, in mm (aperture * cos). */
@@ -127,7 +149,10 @@ class AimGeometry {
 
         val w = this.right - this.left
         val h = this.bottom - this.top
-        if (w < 4.0 || h < 4.0) return
+        if (w < 4.0 || h < 4.0) {
+            frameValid = false
+            return
+        }
 
         scaleX = w / TABLE_LENGTH_MM
         scaleY = h / TABLE_WIDTH_MM
@@ -139,12 +164,12 @@ class AimGeometry {
         ballRadiusMm = BALL_RADIUS_MM * scaleCorrection
         ballRadius = ballRadiusMm * pxPerMm
 
-        cornerJawPx = CORNER_JAW_MM * scaleX
-        middleHalfPx = MIDDLE_HALF_MM * scaleX
+        cornerJawPx = CORNER_JAW_MM * jawScale.coerceIn(0.5, 2.0) * scaleX
+        middleHalfPx = MIDDLE_HALF_MM * mouthScale.coerceIn(0.5, 2.0) * scaleX
         mouthDepthPx = MOUTH_DEPTH_MM * pxPerMm
 
-        val d = CORNER_JAW_MM
-        val m = MIDDLE_HALF_MM
+        val d = CORNER_JAW_MM * jawScale.coerceIn(0.5, 2.0)
+        val m = MIDDLE_HALF_MM * mouthScale.coerceIn(0.5, 2.0)
         val cx = TABLE_LENGTH_MM * 0.5
 
         putJaw(Pocket.TOP_LEFT, d, 0.0, 0.0, d)
@@ -153,6 +178,8 @@ class AimGeometry {
         putJaw(Pocket.BOTTOM_LEFT, d, TABLE_WIDTH_MM, 0.0, TABLE_WIDTH_MM - d)
         putJaw(Pocket.BOTTOM_CENTER, cx - m, TABLE_WIDTH_MM, cx + m, TABLE_WIDTH_MM)
         putJaw(Pocket.BOTTOM_RIGHT, TABLE_LENGTH_MM - d, TABLE_WIDTH_MM, TABLE_LENGTH_MM, TABLE_WIDTH_MM - d)
+
+        frameValid = true
     }
 
     private fun putJaw(pocket: Pocket, x1: Double, y1: Double, x2: Double, y2: Double) {
@@ -179,6 +206,14 @@ class AimGeometry {
      * [targetClearance] is the resulting jaw clearance in mm.
      */
     fun gate(pocket: Pocket, ox: Double, oy: Double) {
+        if (!frameValid) {
+            targetX = ox
+            targetY = oy
+            targetClearance = 0.0
+            gateFeasible = false
+            gateApertureMm = 0.0
+            return
+        }
         val i = pocket.ordinal * 4
         val ax = jaw[i]
         val ay = jaw[i + 1]
@@ -312,6 +347,10 @@ class AimGeometry {
         railMin: Double,
         railMax: Double
     ): Boolean {
+        if (!frameValid || side == 0 || rebound <= 0.0) {
+            hitValid = false
+            return false
+        }
         val horizontal = axis == Axis.HORIZONTAL
 
         val alongBall = if (horizontal) toMmX(bx) else toMmY(by)
@@ -390,6 +429,83 @@ class AimGeometry {
 
     /** Radial depth the full-length guide runs past the jaw line, in px. */
     fun mouthDepthPxFor(scale: Float): Float = mouthDepthPx.toFloat() * scale
+
+    /**
+     * Two-cushion bank: ball -> [axis1] rail -> [axis2] rail -> gate.
+     *
+     * Classic billiard unfolding. Reflecting the gate across rail2 and then
+     * that image across rail1 turns the double bounce into a single straight
+     * line, so both contact points are plane crossings of that line. Because
+     * the second crossing happens in a space already reflected across rail1,
+     * its real contact is the crossing point reflected back across rail1.
+     *
+     * This is exact equal-angle geometry. [rebound] (the cloth "short" ratio)
+     * is deliberately ignored here: a two-rail path already accumulates its own
+     * error and mixing a non-unit mirror with unfolding needs an iterative
+     * solve that is not worth it for a secondary guide.
+     *
+     * Results: [hitX]/[hitY] first contact, [hit2X]/[hit2Y] second contact.
+     */
+    fun bankFrom2(
+        bx: Double,
+        by: Double,
+        pocketX: Double,
+        pocketY: Double,
+        axis1: Axis,
+        plane1: Double,
+        railMin1: Double,
+        railMax1: Double,
+        axis2: Axis,
+        plane2: Double,
+        railMin2: Double,
+        railMax2: Double
+    ): Boolean {
+        hitValid = false
+        if (!frameValid) return false
+        if (axis1 == axis2 && abs(plane1 - plane2) < 1e-6) return false
+
+        // Unfold: mirror the gate across rail2, then across rail1.
+        var gx = pocketX
+        var gy = pocketY
+        if (axis2 == Axis.VERTICAL) gx = 2.0 * plane2 - gx else gy = 2.0 * plane2 - gy
+        if (axis1 == Axis.VERTICAL) gx = 2.0 * plane1 - gx else gy = 2.0 * plane1 - gy
+
+        val dx = gx - bx
+        val dy = gy - by
+        if (abs(dx) < 1e-9 && abs(dy) < 1e-9) return false
+
+        fun crossT(axis: Axis, plane: Double): Double? =
+            if (axis == Axis.HORIZONTAL) {
+                if (abs(dy) < 1e-12) null else (plane - by) / dy
+            } else {
+                if (abs(dx) < 1e-12) null else (plane - bx) / dx
+            }
+
+        val t1 = crossT(axis1, plane1) ?: return false
+        val t2 = crossT(axis2, plane2) ?: return false
+        if (t1 <= 1e-6 || t2 <= t1 + 1e-6 || t2 >= 1.0) return false
+
+        val p1x = bx + dx * t1
+        val p1y = by + dy * t1
+
+        // Undo the rail1 reflection to get the real second contact.
+        val q2x = bx + dx * t2
+        val q2y = by + dy * t2
+        val p2x = if (axis1 == Axis.VERTICAL) 2.0 * plane1 - q2x else q2x
+        val p2y = if (axis1 == Axis.HORIZONTAL) 2.0 * plane1 - q2y else q2y
+
+        val along1 = if (axis1 == Axis.HORIZONTAL) p1x else p1y
+        val along2 = if (axis2 == Axis.HORIZONTAL) p2x else p2y
+        if (along1 < railMin1 || along1 > railMax1) return false
+        if (along2 < railMin2 || along2 > railMax2) return false
+
+        hitX = p1x
+        hitY = p1y
+        hit2X = p2x
+        hit2Y = p2y
+        hitValid = true
+        return true
+    }
 
     companion object {
         /** 9 ft playing surface, long axis. */

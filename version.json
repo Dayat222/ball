@@ -1,7 +1,7 @@
 {
-  "versionCode": 20,
-  "versionName": "3.0.1",
+  "versionCode": 21,
+  "versionName": "3.1.0",
   "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-latest.apk",
   "sha256": "",
-  "changelog": "Versi 3.0.1:\n- Mode Short: garis pantul tidak lagi memendek saat titik bola dekat bantalan. Kaki pantul sekarang selalu digambar penuh 85dp dari titik kontak, terlepas dari jarak bola ke bantalan, sehingga garis tetap panjang dan bisa dipakai sebagai acuan arah sejajar. Kaki datang boleh memendek secara alami karena jarak bola ke bantalan.\n- Titik kontak bantalan kini ikut ditandai pada mode Short ketika pantulan tercapai, supaya arah datang dan arah pantul jelas.\n- Jendela overlay mode Short menyesuaikan: lebih besar hanya ketika Bank ON (agar kaki pantul 85dp tidak terpotong), tetap kecil ketika Bank OFF. Ukuran tetap selama drag, jadi tidak ada lagi garis patah-patah.\n- Update ini memakai identitas yang sama dengan v3.0 (com.utility.toolkit, keystore yang sama), jadi bisa dipasang langsung menimpa v3.0 tanpa uninstall."
+  "changelog": "Versi 3.1.0:\n- KEAMANAN: menandatangani ulang APK dengan keystore baru setelah keystore lama terlanjur bocor ke publik. Konsekuensi: karena tanda tangan berubah, instalasi v3.0.1 yang lama TIDAK bisa di-update in-place. Pengguna wajib uninstall versi lama lalu install ulang versi ini.\n- Verifikasi integritas APK (SHA-256) sebelum dipasang, dipin otomatis oleh build CI ke version.json.\n- Hapus kode mati dan rapikan solver geometri (migrasi selesai ke ruang milimeter)."
 }

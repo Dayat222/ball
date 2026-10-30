@@ -308,7 +308,7 @@ object AppUpdateManager {
 /**
      * SHA-256 of a file, lowercase hex.
      */
-    private fun sha256Hex(file: File): String {
+    internal fun sha256Hex(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().use { stream ->
             val buffer = ByteArray(8192)

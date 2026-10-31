@@ -287,7 +287,9 @@ class AimGeometry {
         val refSide = (TABLE_LENGTH_MM * 0.5 - ax) * nx +
             (TABLE_WIDTH_MM * 0.5 - ay) * ny
         val side = (oxm - ax) * nx + (oym - ay) * ny
-        val minAperture = 2.0 * ballRadiusMm
+        val isMiddle = pocket == Pocket.TOP_CENTER || pocket == Pocket.BOTTOM_CENTER
+        // Middle pockets require a wider safety threshold due to sharp jaw rattle.
+        val minAperture = if (isMiddle) 2.12 * ballRadiusMm else 2.0 * ballRadiusMm
         gateFeasible = gateApertureMm >= minAperture &&
             side * refSide > 0.0 &&
             targetClearance >= ballRadiusMm
@@ -505,6 +507,56 @@ class AimGeometry {
         hit2Y = p2y
         hitValid = true
         return true
+    }
+
+    /**
+     * Calculates the ghost-ball centre for [pocket] including Cut-Induced Throw (CIT)
+     * compensation when the cue ball position ([cx], [cy]) is known.
+     * If the cue ball is not tracked, falls back to the specular 2R line.
+     *
+     * @return Pair(ghostX, ghostY) in pixels.
+     */
+    fun ghostBall(
+        bx: Float,
+        by: Float,
+        cx: Float? = null,
+        cy: Float? = null,
+        targetAimX: Double = targetX,
+        targetAimY: Double = targetY
+    ): Pair<Float, Float> {
+        val dx = (targetAimX - bx).toFloat()
+        val dy = (targetAimY - by).toFloat()
+        val dist = hypot(dx, dy)
+        if (dist < 1e-4f) return Pair(bx, by)
+
+        var sx = dx / dist
+        var sy = dy / dist
+
+        if (cx != null && cy != null) {
+            val inDx = bx - cx
+            val inDy = by - cy
+            val inDist = hypot(inDx, inDy)
+            if (inDist > 1e-4f) {
+                val inUx = inDx / inDist
+                val inUy = inDy / inDist
+                val sinCut = inUx * sy - inUy * sx
+                val cosCut = inUx * sx + inUy * sy
+
+                if (cosCut > 0.0) {
+                    val maxThrowRad = (1.8 * Math.PI / 180.0).toFloat()
+                    val throwRad = maxThrowRad * (2f * sinCut * cosCut.toFloat())
+                    val cosT = kotlin.math.cos(-throwRad)
+                    val sinT = kotlin.math.sin(-throwRad)
+                    val rotX = sx * cosT - sy * sinT
+                    val rotY = sx * sinT + sy * cosT
+                    sx = rotX
+                    sy = rotY
+                }
+            }
+        }
+
+        val r = ballRadius.toFloat()
+        return Pair(bx - sx * 2f * r, by - sy * 2f * r)
     }
 
     companion object {

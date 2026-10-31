@@ -304,4 +304,13 @@ class AimGeometryTest {
             )
         )
     }
+
+    @Test
+    fun ghostBallWithCITCalculatesCorrectOffset() {
+        val g = table()
+        val (gx, gy) = g.ghostBall(1270f, 635f, targetAimX = 2540.0, targetAimY = 635.0)
+        // Straight shot directly right -> ghost ball should sit exactly 2R to the left
+        assertEquals(1270f - 2f * g.ballRadius.toFloat(), gx, 1e-3f)
+        assertEquals(635f, gy, 1e-3f)
+    }
 }

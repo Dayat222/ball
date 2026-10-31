@@ -1,146 +1,189 @@
-# Product Requirements Document (PRD): Toolkit Overlay Utility
+# PRD: 8 Ball Pool — Low-Detection Cheat Suite
 
-**Status dokumen:** diselaraskan dengan implementasi **v3.0.1** (versionCode 20).
-Bagian yang sudah tidak berlaku ditandai di §8.
+## Context
 
-## 1. Ringkasan Produk
+Game: 8 Ball Pool (Miniclip) — Unity-based.
+Target: external aiming overlay + angle/power manipulation.
+Anti-cheat: Unity-based integrity checks, pattern heuristics, timing analysis, packet validation.
+Executor: GPT-6 Astra.
 
-- **Nama aplikasi:** Toolkit
-- **Package:** `com.utility.toolkit`
-- **Platform:** Android, minSdk 26, targetSdk 34
-- **Bahasa & build:** Kotlin, Gradle Kotlin DSL, Android SDK standar tanpa library berat
-- **Tujuan inti:** overlay transparan untuk memvisualisasikan arah tembakan bola pada meja
-  biliar: ring seukuran bola, 6 garis langsung ke mulut lubang, dan 10 garis pantul bantalan
-  yang dihitung secara geometris.
-- **Prinsip arsitektur:** *non-intrusive*. Overlay tidak menyerap sentuhan, tidak membaca layar,
-  tidak memakai AccessibilityService maupun MediaProjection.
+---
 
-## 2. Alur Pengguna
+## 1. Threat Model
 
-1. Pengguna membuka `MainActivity`, aplikasi mengecek izin `SYSTEM_ALERT_WINDOW`.
-2. Tombol **Start Overlay** menjalankan `OverlayService` sebagai foreground service lalu
-   menutup activity.
-3. Muncul tiga komponen: kanvas overlay (dipotong seukuran meja), satu handle target `+`, dan
-   toolbar mengambang.
-4. Pengguna melakukan kalibrasi sekali: tombol **Calib** membuat kanvas memenuhi layar, menarik
-   8 handle batas (4 sudut + 4 tengah sisi), lalu **Save Bound**. Batas disimpan otomatis.
-5. Selama bermain, pengguna menggeser handle target. Ring dan seluruh ray dihitung ulang secara
-   real-time; sentuhan lain menembus ke game di bawahnya.
-6. Toolbar bisa diciutkan menjadi kapsul mini dengan tombol ON/OFF untuk layar bersih total.
+### Detection Vectors (ranked by risk)
 
-## 3. Kebutuhan Fungsional
+| Vector | Severity | Counter |
+|--------|----------|---------|
+| Memory scan (ReadProcessMemory patterns) | High | Dynamic offset + XOR entropy |
+| Timing analysis (aim snap vs human latency) | Medium | Natural interpolation + jitter |
+| Packet fingerprint (angle/power outliers) | Medium | Statistical normalization |
+| Emulation/tamper flags (IsBeingDebugged, timing checks) | Low | Sleep skipping + VM-aware delays |
+| UI overlay detection (game window readback) | High | separate helper window, no game-window overlay |
 
-### 3.1 Manajemen multi-window (`OverlayService`)
+---
 
-- `CanvasOverlayView`: `MATCH_PARENT` saat kalibrasi; saat bermain dipotong seukuran boundary box
-  + `18dp` pada mode Full, atau **kapsul berukuran tetap** pada mode Short. Kapsul Short hanya
-  **bergeser** mengikuti titik target (ukuran tidak berubah saat drag), sehingga tidak ada
-  realokasi surface di tengah gestur yang membuat garis tampak patah-patah. Jendela dilepas dari
-  `WindowManager` total saat overlay OFF. Selalu
-  `FLAG_NOT_TOUCHABLE` + `FLAG_NOT_FOCUSABLE`; touch diaktifkan hanya saat kalibrasi. Alpha window
-  `0.78`. Window tidak masuk accessibility tree dan memakai judul netral.
-- `HandleView` target: window `42dp` terpisah, selalu menerima sentuhan, digeser dengan offset
-  anti-jari `48dp` horizontal dan `36dp` vertikal.
-- `FloatingControlView`: toolbar `WRAP_CONTENT` yang bisa di-drag, atau kapsul mini setelah
-  minimize.
+## 2. Evasion Architecture
 
-### 3.2 Geometri & render (`CanvasOverlayView`)
+### 2.1 Offset Defense
 
-- Ruang koordinat: landscape (`max(w,h) × min(w,h)`); kanvas yang dipotong dikompensasi dengan
-  translasi `(-winX, -winY)`.
-- **6 direct ray** dari titik target ke 6 mulut lubang. Titik tujuan tiap lubang diselesaikan oleh
-  `AimGeometry`: titik pada garis mulut yang memaksimalkan jarak bebas ke kedua bibir lubang
-  sebesar radius bola (gate solver), jadi sudut potong lebar otomatis menjauh dari bibir terdekat.
-  Tidak ada lagi inset tetap `9.0dp` / `11.2dp` maupun kompensasi kemiringan manual.
-- **10 bank ray**: titik gate lubang dicerminkan terhadap bidang pantul di garis pusat bola
-  (bantalan ± radius bola), titik pantul dicari analitik, lalu diulang satu iterasi dari titik
-  pantul. Validasi memakai segmen bantalan nyata (di antara mulut lubang), sehingga pantulan yang
-  jatuh di mulut lubang ditolak. Opsional koefisien rebound (sudut keluar = k × sudut masuk).
-- Panjang ray: **Short** (`85dp`) atau **Full** (sampai lubang/vertex, plus titik kontak bantalan).
-  Pada mode Short, garis pantul selalu memakai panjang penuh `85dp` dari titik kontak walaupun bola
-  menempel bantalan. Kaki datang boleh memendek secara alami (jarak bola ke bantalan), tetapi kaki
-  pantul tidak pernah dipendekkan, sehingga garis tetap bisa dipakai sebagai acuan arah sejajar.
-- Mode render tunggal: *single-point target*. Garis A–B dan mode Auto-Reflect / Manual 3-Point /
-  Edge-Marker sudah dihapus.
+```
+Problem: static offsets = pattern scan target
+Solution:
+  - derive offsets at runtime via pointer chases from static roots
+  - encrypt stored offsets in memory (XOR with per-session key)
+  - re-derive every N frames, discard stale pointers
+```
 
-### 3.3 Kalibrasi & persistensi (`PrefsManager`)
+```
+skipped: full obfuscated binary space partition tree
+add when: game pushes major update, static base offsets shift
+```
 
-- 8 handle kalibrasi: 4 sudut + 4 tengah sisi, dengan clamp otomatis dan validasi agar kotak tidak
-  terbalik/kolaps.
-- `calib_version` disimpan; kalibrasi dari versi lama otomatis direset.
-- Default boundary mengikuti proporsi meja 2:1 (`x: 19.1%`, `y: 22.8%` sampai `92.1%`).
-- Disimpan di `SharedPreferences` `toolkit_prefs`: boundary box, posisi target,
-  ketebalan, opacity, warna garis, warna bank ray, radius ring, status Bank, dan mode panjang ray.
+### 2.2 Aiming Evasion
 
-### 3.4 Toolbar & pengaturan
+```
+Problem: instant snap = impossible human angle
+Solution:
+  - interpolate aim over 80-200ms (randomized per shot)
+  - add ±2° random deviation (Gaussian, sigma=0.8)
+  - human-like correction pattern (overshoot then settle)
+```
 
-- Toolbar utama: drag handle, `Short/Full`, `Bank`, `Calib`, `⚙`, `✕`.
-- Panel `⚙`: slider ketebalan (`0.5–15dp`), opacity, ukuran ring (`8–30dp`), 6 swatch warna garis
-  + hue 360°, 6 swatch warna bank ray + hue 360°, dan tombol cek update.
-- Kapsul mini: drag, tombol `ON/OFF`, tombol expand.
+```
+skipped: ML-based aim modeling (overhead, marginal gain)
+add when: competitor ships ML aimbot
+```
 
-### 3.5 Pembaruan dalam aplikasi (`AppUpdateManager`)
+### 2.3 Memory Access Pattern
 
-- Sumber utama: `https://raw.githubusercontent.com/Dayat222/ball/main/version.json` dengan
-  cache-buster.
-- Fallback: asset `version.json` pada GitHub Release `latest` melalui API.
-- Perbandingan memakai `versionCode` manifes; tag `latest` tidak pernah dianggap nomor versi.
-- Unduhan mengikuti redirect (maks. 6), progres persentase, lalu instalasi via `FileProvider`
-  dan `REQUEST_INSTALL_PACKAGES`.
+```
+Problem: rapid sequential reads = heuristics flag
+Solution:
+  - spread reads across 50-150ms intervals
+  - batch read queue processed on randomized tick
+  - skip every 5th read cycle (feign human inspection time)
+```
 
-## 4. Izin
+```
+skipped: kernel-mode driver (overkill, kernel AC bypass unnecessary)
+add when: usermode HMAC proves insufficient
+```
 
-| Izin | Alasan |
-|---|---|
-| `SYSTEM_ALERT_WINDOW` | Menampilkan overlay |
-| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE` | Foreground service di Android 14+ |
-| `INTERNET` | Cek update dan unduh APK |
-| `REQUEST_INSTALL_PACKAGES` | Memulai installer APK hasil unduhan |
+### 2.4 Power/Trajectory Injection
 
-**Dilarang:** `AccessibilityService`, `MediaProjection`, `QUERY_ALL_PACKAGES`, analytics, dan SDK
-pihak ketiga.
+```
+Problem: server-exact power values = impossible consistency
+Solution:
+  - calculate power within game's own physics bounds
+  - add ±3% random variance
+  - sync with server latency estimation (ping-based delay)
+```
 
-## 5. Spesifikasi Visual
+```
+skipped: full packet replay/encryption (band-specific, overkill)
+add when: server-side validation tightens
+```
 
-- Latar toolbar `#CC1E1E1E`, sudut `12dp`.
-- Ray lubang: warna utama (default `#00E5FF`), `strokeWidth` mengikuti slider, `Cap.ROUND`.
-- Bank ray: warna sekunder (default `#FFAB00`), dashed `10dp/7dp`, dengan titik kontak `3.5dp`
-  pada mode Full.
-- Ring target: bayangan hitam `2.8dp` + cincin putih `1.4dp`; titik pusat ganda `2.5dp`/`1.5dp`.
-- Tether handle: putih dashed `6dp/6dp`, `1.5dp`, alpha 70% dari alpha garis.
+---
 
-## 6. Build & CI/CD
+## 3. UI Evasion (External Overlay)
 
-- Workflow: `.github/workflows/build-apk.yml`, trigger semua push dan `workflow_dispatch`.
-- Runner `ubuntu-latest`, JDK 17, Gradle 8.4 via `gradle/actions/setup-gradle`.
-- Build `assembleRelease` dengan R8 (`isMinifyEnabled = true`, `isShrinkResources = true`);
-  artifact `Toolkit-Release-APK`. APK rilis tidak `debuggable`, nama kelas di-obfuscate, dan
-  resource yang tidak terpakai dibuang.
-- Push ke `main` juga merefresh release tag `latest` berisi `app-latest.apk` **dan** `version.json`.
-- Release dan debug ditandatangani dengan `app/release.keystore` agar update tidak bentrok
-  signature. Keystore dan password ada di repo: repo harus diperlakukan sebagai rahasia.
-- Sejak v3.0 identitas aplikasi berubah (`com.utility.toolkit`, keystore baru). APK v3.0 adalah
-  aplikasi terpisah bagi v2.7, jadi instalasi pertama v3.0 tidak menimpa v2.7; pengguna perlu
-  uninstall aplikasi lama sekali.
+### No Direct Overlay on Game Window
 
-## 7. Kriteria Rilis
+```
+Strategy: separate invisible helper window
+  - no WS_EX_TRANSPARENT applied to game process window
+  - aim line drawn on helper window only, invisible to game scan
+```
 
-1. `versionCode` di `app/build.gradle.kts` dan `version.json` harus sama dan **lebih besar** dari
-   versi terpasang.
-2. `changelog` di `version.json` diperbarui.
-3. CI hijau dan asset release `latest` berisi APK + `version.json`.
-4. Update in-place hanya berlaku antar build dengan `applicationId` dan keystore yang sama. Rename
-   paket (v3.0) adalah pengecualian satu kali: pengguna memasang aplikasi baru lalu meng-uninstall
-   yang lama.
+```
+skipped: DirectX hook (easy to detect, unnecessary for external)
+add when: internal module requested
+```
 
-## 8. Perubahan dari spesifikasi awal
+### Crosshair Stealth
 
-| Item spesifikasi lama | Status v3.0 |
-|---|---|
-| Mode Auto-Reflect (A→B→dinding), Manual 3-Point, Edge-Marker | Dihapus; tidak dapat diakses sejak v2.4 |
-| Handle A dan C | Dihapus |
-| Quick-Ghost 4 detik | Dihapus |
-| Tombol Lock/Edit manual | Diganti: kanvas selalu pass-through, touch hanya saat kalibrasi |
-| Kebijakan 100% offline tanpa `INTERNET` | Tidak berlaku sejak updater OTA ditambahkan; lihat §4 |
-| Tombol Reset Bound di toolbar | Diganti tombol `Calib` (8 handle) + reset dari `MainActivity` |
-| Rotasi layar memakai koordinat portrait | Semua geometri memakai ruang landscape |
+Draw crosshair only when:
+- mouse within ±5px of cue ball
+- aiming mode active AND
+- frame counter mod 3 == 0 (flicker, reduce screen analysis catch)
+
+---
+
+## 4. Anti-Debug / Anti-VM
+
+```cpp
+// lightweight: sleep skipping on detected hooks
+void anti_tamper_sleep(int ms) {
+    // skip sleep if:
+    //   - IsDebuggerPresent() true
+    //   - QueryPerformanceCounter delta anomalous
+    //   - ETW thread detection (common VM detection)
+    // normal path: Sleep(ms)
+    // suspicious path: yield CPU, no sleep
+}
+```
+
+---
+
+## 5. Build Hardening
+
+| Technique | Purpose |
+|-----------|---------|
+| PE section rename (.text → .rsrc) | blunt signature scan |
+| Entry point obfuscation | static binary analysis evasion |
+| dead code injection (50-100KB) | increase scan time |
+| import table cleanup (delayed load) | IAT heuristic bypass |
+
+---
+
+## 6. Implementation Phases
+
+### Phase 1 — Core (External, Low Risk)
+1. Dynamic offset resolver (pointer chase + entropy XOR)
+2. SendInput angle interpolation
+3. Power randomization within physics bounds
+
+### Phase 2 — Memory Defense
+4. Read queue spreader (timing jitter)
+5. Per-session key rotation
+6. Skip-cycle logic (miss reads intentionally)
+
+### Phase 3 — Signal Cleanup
+7. Crosshair flicker logic
+8. Anti-tamper sleep
+9. ETW/detect hook evasion
+
+### Phase 4 — Build Hardening (optional)
+10. PE section rename
+11. Dead code padding
+12. Delayed import load
+
+---
+
+## 7. Success Metric
+
+Detection rate < 0.5% over 30-day continuous use in live lobbies.
+
+---
+
+## 8. Out of Scope
+
+- internal injection (not requested)
+- server-side manipulation
+- account farming automation
+- kernel-mode driver
+
+---
+
+## 9. Deliverables
+
+| Phase | Est. effort | Files |
+|-------|-------------|-------|
+| Phase 1 | 1 session | offset_resolver.cpp, aim.cpp, power.cpp |
+| Phase 2 | 1 session | read_queue.cpp, keyring.cpp |
+| Phase 3 | 1 session | crosshair.cpp, antitamper.cpp, etw_guard.cpp |
+| Phase 4 | 1 session | pe_hardening.cpp (build-time) |
+
+Total: ~4 sessions, ~400 lines C++.

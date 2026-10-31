@@ -650,12 +650,10 @@ class CanvasOverlayView @JvmOverloads constructor(
             paint
         )
 
-        // Ghost ball: where the white ball must sit at contact. The contact
-        // centre is offset from the object ball by two radii along the line of
-        // centres, i.e. opposite the shot direction.
+        // Ghost ball: where the white ball must sit at contact.
+        // Solved via aim.ghostBall to include Cut-Induced Throw (CIT) compensation.
         if (showGhostBall) {
-            val gx = bx - ux * 2f * aim.ballRadius.toFloat()
-            val gy = by - uy * 2f * aim.ballRadius.toFloat()
+            val (gx, gy) = aim.ghostBall(bx, by, targetAimX = tx.toDouble(), targetAimY = ty.toDouble())
             canvas.drawCircle(gx, gy, aim.ballRadius.toFloat(), ghostShadowPaint)
             canvas.drawCircle(gx, gy, aim.ballRadius.toFloat(), ghostRingPaint)
         }

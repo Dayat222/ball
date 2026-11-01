@@ -230,6 +230,21 @@ class CanvasOverlayView @JvmOverloads constructor(
         color = Color.argb(220, 255, 255, 255)
     }
 
+    // Crosshair alignment reticle for precision concentric centering on target ball
+    private val aimCrosshairShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.argb((220 * 0.85f).roundToInt(), 0, 0, 0)
+        strokeWidth = 2.4f * density
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private val aimCrosshairPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.argb(220, 255, 255, 255)
+        strokeWidth = 1.2f * density
+        strokeCap = Paint.Cap.ROUND
+    }
+
     // Paint: Boundary Box Active Calibration Highlight
     private val boundaryCalibPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#FFE082")
@@ -450,6 +465,8 @@ class CanvasOverlayView @JvmOverloads constructor(
         aimCenterShadowPaint.color = Color.argb(shadowAlpha, 0, 0, 0)
         aimRingPaint.color = Color.argb(currentAlpha, 255, 255, 255)
         aimCenterDotPaint.color = Color.argb(currentAlpha, 255, 255, 255)
+        aimCrosshairShadowPaint.color = Color.argb(shadowAlpha, 0, 0, 0)
+        aimCrosshairPaint.color = Color.argb(currentAlpha, 255, 255, 255)
 
         invalidate()
     }
@@ -1016,7 +1033,23 @@ class CanvasOverlayView @JvmOverloads constructor(
         canvas.drawCircle(bx, by, ringRadius, aimShadowPaint)
         canvas.drawCircle(bx, by, ringRadius, aimRingPaint)
 
-        // 2. Micro centre pinpoint: double contrast dot
+        // 2. Concentric Crosshair tick marks: visual alignment guide extending through ball edge
+        val armInner = ringRadius * 0.45f
+        val armOuter = ringRadius * 1.25f
+
+        // Horizontal crosshair ticks (Left & Right)
+        canvas.drawLine(bx - armOuter, by, bx - armInner, by, aimCrosshairShadowPaint)
+        canvas.drawLine(bx - armOuter, by, bx - armInner, by, aimCrosshairPaint)
+        canvas.drawLine(bx + armInner, by, bx + armOuter, by, aimCrosshairShadowPaint)
+        canvas.drawLine(bx + armInner, by, bx + armOuter, by, aimCrosshairPaint)
+
+        // Vertical crosshair ticks (Top & Bottom)
+        canvas.drawLine(bx, by - armOuter, bx, by - armInner, aimCrosshairShadowPaint)
+        canvas.drawLine(bx, by - armOuter, bx, by - armInner, aimCrosshairPaint)
+        canvas.drawLine(bx, by + armInner, bx, by + armOuter, aimCrosshairShadowPaint)
+        canvas.drawLine(bx, by + armInner, bx, by + armOuter, aimCrosshairPaint)
+
+        // 3. Micro centre pinpoint: double contrast dot
         canvas.drawCircle(bx, by, 2.5f * density, aimCenterShadowPaint)
         canvas.drawCircle(bx, by, 1.5f * density, aimCenterDotPaint)
 

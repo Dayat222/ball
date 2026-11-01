@@ -1,7 +1,7 @@
 {
-  "versionCode": 23,
-  "versionName": "3.3.0",
+  "versionCode": 24,
+  "versionName": "3.4.0",
   "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-latest.apk",
-  "sha256": "a167586567466ff245c40a588febed32c061872e07ee72a17a40d996613c9b86",
-  "changelog": "Versi 3.3.0 — penyempurnaan akurasi tembakan:\n- Cut-Induced Throw (CIT): ghost-ball kini mengompensasi gesekan bola-ke-bola (ball friction) sehingga tembakan potong sudut miring masuk sempurna ke tengah saku tanpa menyerempet bibir.\n- Middle pocket safety: toleransi bukaan kantong samping diperketat (2.12R) untuk menghindari efek pentalan tajam bibir kantong (jaw rattle).\n- C++ Suite update: sinkronisasi formula CIT pada solver PC."
+  "sha256": "",
+  "changelog": "Versi 3.4.0 — mekanisme kemudahan penempatan titik acuan bola target:\n- Concentric Crosshair Reticle: reticle cincin target kini dilengkapi dengan garis silang presisi (4-way alignment ticks) yang menjulur melewati tepi bola, memudahkan centering visual titik acuan tepat di tengah bola target.\n- Extended Ball Scale Slider: jangkauan slider ukuran bola diperluas menjadi 50% - 160% (dari sebelumnya 70% - 120%), sehingga ukuran ring dapat disesuaikan 100% presisi mengikuti ukuran bola di resolusi layar Anda."
 }

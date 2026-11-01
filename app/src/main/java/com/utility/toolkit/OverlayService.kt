@@ -834,13 +834,13 @@ class OverlayService : Service() {
 
         // Ball Scale Correction Slider Setup (percent of the table-derived ball)
         val initialScalePct = (prefsManager.getBallScaleCorrection() * 100f)
-            .roundToInt().coerceIn(70, 120)
+            .roundToInt().coerceIn(50, 160)
         seekBallSize.progress = initialScalePct
         tvBallSize.text = getString(R.string.label_ball_size, initialScalePct)
 
         seekBallSize.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val pct = progress.coerceIn(70, 120)
+                val pct = progress.coerceIn(50, 160)
                 tvBallSize.text = getString(R.string.label_ball_size, pct)
                 if (fromUser) {
                     canvasOverlayView?.setBallScaleCorrection(pct / 100f)

@@ -22,8 +22,8 @@ android {
         applicationId = "com.utility.toolkit"
         minSdk = 26
         targetSdk = 34
-        versionCode = 25
-        versionName = "3.5.0"
+        versionCode = 26
+        versionName = "3.6.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

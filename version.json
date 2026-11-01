@@ -2,6 +2,6 @@
   "versionCode": 26,
   "versionName": "3.6.0",
   "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-latest.apk",
-  "sha256": "",
+  "sha256": "f33938918fe076e77130aa6d7c804d9f77f36156010a0fe31d1585a373d5207a",
   "changelog": "Versi 3.6.0 — pembaruan penuh ukuran bola target & reticle:\n- Extended Ball Scale (50% - 160%): jangkauan slider ukuran bola kini sepenuhnya aktif dari 50% hingga 160% dengan penyimpanan permanen.\n- Concentric 4-Way Crosshair Reticle: garis bidik silang 4 arah untuk memudahkan centering titik acuan tepat di tengah bola target.\n- Ghost Ball Cleanup: hanya menampilkan 1 lingkaran bayangan ke lubang terbaik dengan garis putus-putus (dashed) di lapisan bawah."
 }

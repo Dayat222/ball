@@ -851,7 +851,7 @@ class OverlayService : Service() {
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
 
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                val pct = (seekBar?.progress ?: 100).coerceIn(70, 120)
+                val pct = (seekBar?.progress ?: 100).coerceIn(50, 160)
                 prefsManager.saveBallScaleCorrection(pct / 100f)
                 canvasOverlayView?.setBallScaleCorrection(pct / 100f)
                 applyTableBoundedWindow()

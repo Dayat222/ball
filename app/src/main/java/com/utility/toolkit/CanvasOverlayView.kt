@@ -503,7 +503,7 @@ class CanvasOverlayView @JvmOverloads constructor(
      * 1.0 = a real 57.15 mm ball on a correctly calibrated table.
      */
     fun setBallScaleCorrection(correction: Float) {
-        ballScaleCorrection = correction.coerceIn(0.5f, 1.5f)
+        ballScaleCorrection = correction.coerceIn(0.5f, 1.6f)
         prefsManager.saveBallScaleCorrection(ballScaleCorrection)
         invalidate()
     }

@@ -175,16 +175,19 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     // Ghost-ball marker: white ball centre at the moment of contact.
+    // Styled as a dashed translucent white ring to clearly distinguish from solid target ball
     private val ghostRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 1.6f * density
-        color = Color.argb(210, 255, 255, 255)
+        strokeWidth = 1.8f * density
+        color = Color.argb(220, 255, 255, 255)
+        pathEffect = DashPathEffect(floatArrayOf(6f * density, 4f * density), 0f)
     }
 
     private val ghostShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = 3f * density
-        color = Color.argb(150, 0, 0, 0)
+        strokeWidth = 3.2f * density
+        color = Color.argb(160, 0, 0, 0)
+        pathEffect = DashPathEffect(floatArrayOf(6f * density, 4f * density), 0f)
     }
 
     var onCanvasSizeChanged: ((w: Int, h: Int) -> Unit)? = null
@@ -467,6 +470,8 @@ class CanvasOverlayView @JvmOverloads constructor(
         aimCenterDotPaint.color = Color.argb(currentAlpha, 255, 255, 255)
         aimCrosshairShadowPaint.color = Color.argb(shadowAlpha, 0, 0, 0)
         aimCrosshairPaint.color = Color.argb(currentAlpha, 255, 255, 255)
+        ghostShadowPaint.color = Color.argb(shadowAlpha, 0, 0, 0)
+        ghostRingPaint.color = Color.argb(currentAlpha, 255, 255, 255)
 
         invalidate()
     }
@@ -636,6 +641,25 @@ class CanvasOverlayView @JvmOverloads constructor(
     )
 
     /**
+     * Determines the most natural / feasible pocket target for the current ball position.
+     * Selects the feasible pocket with the shortest distance to the mouth.
+     */
+    private fun findBestPocket(bx: Float, by: Float): AimGeometry.Pocket? {
+        var best: AimGeometry.Pocket? = null
+        var bestDist = Double.MAX_VALUE
+        for (pocket in allPockets) {
+            aim.gate(pocket, bx.toDouble(), by.toDouble())
+            if (!aim.gateFeasible) continue
+            val d = hypot(aim.targetX - bx, aim.targetY - by)
+            if (d < bestDist) {
+                bestDist = d
+                best = pocket
+            }
+        }
+        return best
+    }
+
+    /**
      * One direct ray: ball centre -> gate point of the last solved pocket.
      * Short mode stops at 85dp, Full mode runs through the mouth.
      */
@@ -666,14 +690,6 @@ class CanvasOverlayView @JvmOverloads constructor(
             by + uy * end,
             paint
         )
-
-        // Ghost ball: where the white ball must sit at contact.
-        // Solved via aim.ghostBall to include Cut-Induced Throw (CIT) compensation.
-        if (showGhostBall) {
-            val (gx, gy) = aim.ghostBall(bx, by, targetAimX = tx.toDouble(), targetAimY = ty.toDouble())
-            canvas.drawCircle(gx, gy, aim.ballRadius.toFloat(), ghostShadowPaint)
-            canvas.drawCircle(gx, gy, aim.ballRadius.toFloat(), ghostRingPaint)
-        }
     }
 
     /**
@@ -1029,11 +1045,24 @@ class CanvasOverlayView @JvmOverloads constructor(
         )
         val ringRadius = aim.ballRadius.toFloat()
 
-        // 1. Ball-Fit Ring: high-contrast hollow reticle matching ball size
+        // 1. Ghost Ball (rendered FIRST underneath target so target ring & crosshair stay 100% crisp on top)
+        if (showGhostBall) {
+            val bestPocket = findBestPocket(bx, by)
+            if (bestPocket != null) {
+                aim.gate(bestPocket, bx.toDouble(), by.toDouble())
+                if (aim.gateFeasible) {
+                    val (gx, gy) = aim.ghostBall(bx, by, targetAimX = aim.targetX, targetAimY = aim.targetY)
+                    canvas.drawCircle(gx, gy, ringRadius, ghostShadowPaint)
+                    canvas.drawCircle(gx, gy, ringRadius, ghostRingPaint)
+                }
+            }
+        }
+
+        // 2. Ball-Fit Ring: high-contrast hollow reticle matching ball size
         canvas.drawCircle(bx, by, ringRadius, aimShadowPaint)
         canvas.drawCircle(bx, by, ringRadius, aimRingPaint)
 
-        // 2. Concentric Crosshair tick marks: visual alignment guide extending through ball edge
+        // 3. Concentric Crosshair tick marks: visual alignment guide extending through ball edge
         val armInner = ringRadius * 0.45f
         val armOuter = ringRadius * 1.25f
 
@@ -1049,14 +1078,14 @@ class CanvasOverlayView @JvmOverloads constructor(
         canvas.drawLine(bx, by + armInner, bx, by + armOuter, aimCrosshairShadowPaint)
         canvas.drawLine(bx, by + armInner, bx, by + armOuter, aimCrosshairPaint)
 
-        // 3. Micro centre pinpoint: double contrast dot
+        // 4. Micro centre pinpoint: double contrast dot
         canvas.drawCircle(bx, by, 2.5f * density, aimCenterShadowPaint)
         canvas.drawCircle(bx, by, 1.5f * density, aimCenterDotPaint)
 
         val startDist = ringRadius + (3f * density)
         val shortLen = 85f * density
 
-        // 3. Six direct pocket rays
+        // 5. Six direct pocket rays
         for (pocket in allPockets) {
             aim.gate(pocket, bx.toDouble(), by.toDouble())
             if (!aim.gateFeasible) continue

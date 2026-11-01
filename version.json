@@ -1,7 +1,7 @@
 {
-  "versionCode": 24,
-  "versionName": "3.4.0",
+  "versionCode": 25,
+  "versionName": "3.5.0",
   "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-latest.apk",
-  "sha256": "6f92a7b38a04e424398236f1d720d10bcb48b252af2799224bf33c1b1e9a94be",
-  "changelog": "Versi 3.4.0 — mekanisme kemudahan penempatan titik acuan bola target:\n- Concentric Crosshair Reticle: reticle cincin target kini dilengkapi dengan garis silang presisi (4-way alignment ticks) yang menjulur melewati tepi bola, memudahkan centering visual titik acuan tepat di tengah bola target.\n- Extended Ball Scale Slider: jangkauan slider ukuran bola diperluas menjadi 50% - 160% (dari sebelumnya 70% - 120%), sehingga ukuran ring dapat disesuaikan 100% presisi mengikuti ukuran bola di resolusi layar Anda."
+  "sha256": "",
+  "changelog": "Versi 3.5.0 — perbaikan visual lingkaran titik acuan dan ghost ball:\n- Single Best-Pocket Ghost Ball: ghost ball kini hanya merender 1 lingkaran bayangan ke lubang target paling optimal (menghilangkan tumpukan 6 lingkaran acak yang membuat visual kacau/tidak beraturan).\n- Dashed Contrast Ring: lingkaran ghost ball menggunakan garis putus-putus (dashed) berbayang agar kontras dan mudah dibedakan dari cincin utama bola target.\n- Z-Order Layering: ghost ball dirender di lapisan bawah, sehingga reticle dan 4-way crosshair bola target tetap tajam, bulat sempurna, dan 100% jelas terlihat."
 }

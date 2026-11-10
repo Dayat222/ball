@@ -2,6 +2,6 @@
   "versionCode": 30,
   "versionName": "4.0.0",
   "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-latest.apk",
-  "sha256": "",
+  "sha256": "29ea0d3c2e9db8f6f9660ba46f17a06ca9a66ca035b5a90c7c8953efdc0b502a",
   "changelog": "Versi 4.0.0 — Zero-Touch Auto-Ball Vision (MediaProjection + Magnetic Snap):\n- Auto-Ball Vision Detector: deteksi otomatis posisi seluruh bola di atas meja beserta bola putih (Cue Ball) menggunakan estimasi warna karpet adaptif & radial circle gradient.\n- Magnetic Auto-Snap (Point B & Point C): cincin target dan cincin bola putih otomatis mengunci tepat ke titik pusat bola terdekat secara real-time tanpa perlu menggeser penuh secara manual.\n- Self-Occlusion Immunity: terintegrasi dengan FLAG_SECURE sehingga tangkapan layar komputer-visi bersih 100% dari garis overlay sendiri."
 }

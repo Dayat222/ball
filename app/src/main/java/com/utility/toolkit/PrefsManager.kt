@@ -299,6 +299,51 @@ class PrefsManager(context: Context) {
     }
 
     /**
+     * Stealth Mode: FLAG_SECURE / Screenshot & Recording Cloak.
+     * When enabled, overlay windows set FLAG_SECURE so MediaProjection / screen
+     * capture APIs used by client telemetry cannot record the overlay lines.
+     */
+    fun saveStealthHideCapture(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_STEALTH_HIDE_CAPTURE, enabled).apply()
+    }
+
+    fun getStealthHideCapture(): Boolean {
+        return prefs.getBoolean(KEY_STEALTH_HIDE_CAPTURE, true)
+    }
+
+    /**
+     * Launcher Disguise Mode:
+     * 0 = Default ("Toolkit"), 1 = "Calculator", 2 = "System Notes"
+     */
+    fun saveLauncherDisguiseMode(mode: Int) {
+        prefs.edit().putInt(KEY_LAUNCHER_DISGUISE, mode.coerceIn(0, 2)).apply()
+    }
+
+    fun getLauncherDisguiseMode(): Int {
+        return prefs.getInt(KEY_LAUNCHER_DISGUISE, 0).coerceIn(0, 2)
+    }
+
+    /**
+     * Randomized per-session Window Title token so WindowManager dumps never see a
+     * static window name across sessions.
+     */
+    fun getOrGenerateWindowToken(): String {
+        val existing = prefs.getString(KEY_STEALTH_WIN_TOKEN, null)
+        if (!existing.isNullOrBlank()) return existing
+        val pool = arrayOf(" SurfaceView", "InputMethod", "StatusBar", "NavigationBar", "Toast", "AssistOverlay")
+        val picked = pool[(Math.random() * pool.size).toInt().coerceIn(0, pool.size - 1)]
+        prefs.edit().putString(KEY_STEALTH_WIN_TOKEN, picked).apply()
+        return picked
+    }
+
+    fun rotateWindowToken(): String {
+        val pool = arrayOf("SurfaceView", "InputMethod", "StatusBar", "NavigationBar", "Toast", "AssistOverlay", "DisplayOverlay")
+        val picked = pool[(Math.random() * pool.size).toInt().coerceIn(0, pool.size - 1)]
+        prefs.edit().putString(KEY_STEALTH_WIN_TOKEN, picked).apply()
+        return picked
+    }
+
+    /**
      * Save and retrieve full length guideline toggle (panjang garis sampai ke 6 lubang).
      */
     fun saveFullLengthGuides(isFull: Boolean) {
@@ -363,5 +408,9 @@ class PrefsManager(context: Context) {
         private const val KEY_SHOW_TRIPLE_BANK = "show_triple_bank"
         private const val KEY_SPIN_X = "cue_spin_x"
         private const val KEY_SPIN_Y = "cue_spin_y"
+
+        private const val KEY_STEALTH_HIDE_CAPTURE = "stealth_hide_capture"
+        private const val KEY_LAUNCHER_DISGUISE = "launcher_disguise_mode"
+        private const val KEY_STEALTH_WIN_TOKEN = "stealth_win_token"
     }
 }

@@ -80,6 +80,8 @@ class OverlayService : Service() {
     // State Tracking
     private var isCanvasHidden = false
     private var isCalibrationActive = false
+    private var stealthHideCapture = true
+    private var activeWindowTitle = "SurfaceView"
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -90,6 +92,8 @@ class OverlayService : Service() {
 
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         prefsManager = PrefsManager(this)
+        stealthHideCapture = prefsManager.getStealthHideCapture()
+        activeWindowTitle = prefsManager.rotateWindowToken()
 
         val density = resources.displayMetrics.density
         handleSizePx = (42f * density).roundToInt()
@@ -250,6 +254,8 @@ class OverlayService : Service() {
         val canvas = canvasOverlayView ?: return
         val density = resources.displayMetrics.density
 
+        val secureBit = if (stealthHideCapture) WindowManager.LayoutParams.FLAG_SECURE else 0
+
         if (isCalibrationActive) {
             // Saat kalibrasi aktif, gunakan layar penuh agar pengguna bebas menarik 8 titik kalibrasi
             canvasLayoutParams.width = WindowManager.LayoutParams.MATCH_PARENT
@@ -260,11 +266,12 @@ class OverlayService : Service() {
             canvasLayoutParams.gravity = Gravity.TOP or Gravity.LEFT
             canvasLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                    secureBit
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 canvasLayoutParams.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             }
-            canvasLayoutParams.setTitle(WINDOW_TITLE)
+            canvasLayoutParams.setTitle(activeWindowTitle)
             canvas.setWindowOffset(0f, 0f)
             pushCanvasLayout(canvas)
             return
@@ -328,12 +335,19 @@ class OverlayService : Service() {
             winY = (canvas.pointB.y.roundToInt() - size / 2).coerceIn(0, (screenH - size).coerceAtLeast(0))
         }
 
-        // Nothing to do when the window already sits exactly there.
+        val desiredFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                secureBit
+
+        // Nothing to do when the window already sits exactly there with identical flags.
         if (canvas.parent != null &&
             canvasLayoutParams.x == winX &&
             canvasLayoutParams.y == winY &&
             canvasLayoutParams.width == winW &&
-            canvasLayoutParams.height == winH
+            canvasLayoutParams.height == winH &&
+            canvasLayoutParams.flags == desiredFlags
         ) {
             return
         }
@@ -344,14 +358,11 @@ class OverlayService : Service() {
         canvasLayoutParams.y = winY
         canvasLayoutParams.alpha = 0.78f
         canvasLayoutParams.gravity = Gravity.TOP or Gravity.LEFT
-        canvasLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+        canvasLayoutParams.flags = desiredFlags
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             canvasLayoutParams.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
-        canvasLayoutParams.setTitle(WINDOW_TITLE)
+        canvasLayoutParams.setTitle(activeWindowTitle)
 
         canvas.setWindowOffset(winX.toFloat(), winY.toFloat())
         pushCanvasLayout(canvas)
@@ -490,13 +501,15 @@ class OverlayService : Service() {
     }
 
     private fun createHandleLayoutParams(center: PointF): WindowManager.LayoutParams {
+        val secureBit = if (stealthHideCapture) WindowManager.LayoutParams.FLAG_SECURE else 0
         return WindowManager.LayoutParams(
             handleSizePx,
             handleSizePx,
             getOverlayWindowType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                    secureBit,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.LEFT
@@ -505,7 +518,7 @@ class OverlayService : Service() {
             }
             x = (center.x - handleSizePx / 2f).roundToInt()
             y = (center.y - handleSizePx / 2f).roundToInt()
-            setTitle(WINDOW_TITLE)
+            setTitle(activeWindowTitle)
         }
     }
 
@@ -664,13 +677,16 @@ class OverlayService : Service() {
         // the accessibility tree; nothing over the game is readable as a node.
         controlView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
 
+        val secureBit = if (stealthHideCapture) WindowManager.LayoutParams.FLAG_SECURE else 0
+
         controlLayoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             getOverlayWindowType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                    secureBit,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.LEFT
@@ -679,7 +695,7 @@ class OverlayService : Service() {
             }
             x = 40
             y = 140
-            setTitle(WINDOW_TITLE)
+            setTitle(activeWindowTitle)
         }
 
         // References to UI components
@@ -1126,6 +1142,36 @@ class OverlayService : Service() {
             applyTableBoundedWindow()
         }
 
+        // Stealth Cloak (Anti-Screenshot / FLAG_SECURE) Toggle
+        val btnStealthCaptureOn = controlView.findViewById<TextView>(R.id.btnStealthCaptureOn)
+        val btnStealthCaptureOff = controlView.findViewById<TextView>(R.id.btnStealthCaptureOff)
+        fun updateStealthCaptureUI(on: Boolean) {
+            if (on) {
+                btnStealthCaptureOn?.setBackgroundResource(R.drawable.bg_control_btn_active)
+                btnStealthCaptureOn?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+                btnStealthCaptureOff?.setBackgroundResource(R.drawable.bg_control_btn)
+                btnStealthCaptureOff?.setTextColor(Color.WHITE)
+            } else {
+                btnStealthCaptureOn?.setBackgroundResource(R.drawable.bg_control_btn)
+                btnStealthCaptureOn?.setTextColor(Color.WHITE)
+                btnStealthCaptureOff?.setBackgroundResource(R.drawable.bg_control_btn_active)
+                btnStealthCaptureOff?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+            }
+        }
+        updateStealthCaptureUI(stealthHideCapture)
+        btnStealthCaptureOn?.setOnClickListener {
+            stealthHideCapture = true
+            prefsManager.saveStealthHideCapture(true)
+            updateStealthCaptureUI(true)
+            applyStealthFlagsToAllWindows()
+        }
+        btnStealthCaptureOff?.setOnClickListener {
+            stealthHideCapture = false
+            prefsManager.saveStealthHideCapture(false)
+            updateStealthCaptureUI(false)
+            applyStealthFlagsToAllWindows()
+        }
+
         // 8. Feature 2: Line Color Picker (Preset Swatches & Hue Spectrum Slider)
         val density = resources.displayMetrics.density
         val btnColorWhite = controlView.findViewById<View>(R.id.btnColorWhite)
@@ -1454,6 +1500,37 @@ class OverlayService : Service() {
 
     private fun updateAllHandlesColor(color: Int) {
         handleViewB?.updateColor(color)
+    }
+
+    /**
+     * Dynamically toggles WindowManager.LayoutParams.FLAG_SECURE across all live
+     * overlay windows (canvas, floating handles, and control toolbar) and rotates
+     * the randomized window title token.
+     */
+    private fun applyStealthFlagsToAllWindows() {
+        activeWindowTitle = prefsManager.rotateWindowToken()
+        applyTableBoundedWindow()
+
+        val handleFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                (if (stealthHideCapture) WindowManager.LayoutParams.FLAG_SECURE else 0)
+
+        fun updateWindow(view: View?, params: WindowManager.LayoutParams) {
+            if (view == null || view.parent == null) return
+            params.flags = handleFlags
+            params.setTitle(activeWindowTitle)
+            try {
+                windowManager.updateViewLayout(view, params)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        updateWindow(handleViewB, handleParamsB)
+        updateWindow(handleViewC, handleParamsC)
+        updateWindow(handleViewO, handleParamsO)
+        updateWindow(floatingControlView, controlLayoutParams)
     }
 
     private fun repositionHandlesToAimPoints() {

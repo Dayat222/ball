@@ -14,16 +14,22 @@ val keystoreProperties = Properties().apply {
 fun ks(key: String, env: String): String? =
     keystoreProperties.getProperty(key) ?: System.getenv(env)?.takeIf { it.isNotBlank() }
 
+// Optional dynamic package ID override (-PcustomAppId=com.xxx.yyy or env CUSTOM_APP_ID)
+// for polymorphic stealth builds while keeping the default ID for in-place OTA updates.
+val customAppId = (project.findProperty("customAppId") as? String)?.takeIf { it.isNotBlank() }
+    ?: System.getenv("CUSTOM_APP_ID")?.takeIf { it.isNotBlank() }
+    ?: "com.utility.toolkit"
+
 android {
     namespace = "com.utility.toolkit"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.utility.toolkit"
+        applicationId = customAppId
         minSdk = 26
         targetSdk = 34
-        versionCode = 28
-        versionName = "3.8.0"
+        versionCode = 29
+        versionName = "3.9.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

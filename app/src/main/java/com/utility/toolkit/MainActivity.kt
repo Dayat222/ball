@@ -1,6 +1,9 @@
 package com.utility.toolkit
 
+import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -8,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -32,6 +36,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Stealth: prevent screenshots/MediaProjection of the dashboard window itself
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_SECURE,
+            WindowManager.LayoutParams.FLAG_SECURE
+        )
+
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -40,6 +51,7 @@ class MainActivity : AppCompatActivity() {
         binding.tvCurrentVersion.text = "Versi Terpasang: v${AppUpdateManager.getInstalledVersionName(this)}"
 
         setupClickListeners()
+        setupStealthDisguiseControls()
         checkUpdateSilently()
     }
 
@@ -210,5 +222,97 @@ class MainActivity : AppCompatActivity() {
             binding.btnStopOverlay.visibility = View.GONE
             binding.btnStartOverlay.text = getString(R.string.btn_start_overlay)
         }
+        updateStealthStatusSummary()
+    }
+
+    private fun setupStealthDisguiseControls() {
+        updateDisguiseButtonsUI(prefsManager.getLauncherDisguiseMode())
+
+        binding.btnDisguiseDefault.setOnClickListener {
+            applyLauncherDisguise(0)
+        }
+        binding.btnDisguiseCalc.setOnClickListener {
+            applyLauncherDisguise(1)
+        }
+        binding.btnDisguiseNotes.setOnClickListener {
+            applyLauncherDisguise(2)
+        }
+    }
+
+    /**
+     * Switches the active launcher component between the default MainActivity
+     * and one of the camouflaged `<activity-alias>` entries without killing the app.
+     */
+    private fun applyLauncherDisguise(mode: Int) {
+        val clamped = mode.coerceIn(0, 2)
+        prefsManager.saveLauncherDisguiseMode(clamped)
+        updateDisguiseButtonsUI(clamped)
+
+        val pkg = packageName
+        val compDefault = ComponentName(pkg, "com.utility.toolkit.MainActivity")
+        val compCalc = ComponentName(pkg, "com.utility.toolkit.AliasCalculator")
+        val compNotes = ComponentName(pkg, "com.utility.toolkit.AliasNotes")
+
+        val pm = packageManager
+        try {
+            pm.setComponentEnabledSetting(
+                compDefault,
+                if (clamped == 0) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP
+            )
+            pm.setComponentEnabledSetting(
+                compCalc,
+                if (clamped == 1) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP
+            )
+            pm.setComponentEnabledSetting(
+                compNotes,
+                if (clamped == 2) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP
+            )
+            val label = when (clamped) {
+                1 -> "Calculator"
+                2 -> "System Notes"
+                else -> "Toolkit"
+            }
+            Toast.makeText(this, "Identitas Launcher diubah ke: $label", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Gagal mengubah alias: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+        updateStealthStatusSummary()
+    }
+
+    private fun updateDisguiseButtonsUI(mode: Int) {
+        val activeColor = ContextCompat.getColor(this, R.color.cyan_accent)
+        val inactiveText = ContextCompat.getColor(this, R.color.text_secondary)
+        val inactiveStroke = ContextCompat.getColor(this, R.color.surface_card_border)
+
+        val buttons = listOf(
+            binding.btnDisguiseDefault to 0,
+            binding.btnDisguiseCalc to 1,
+            binding.btnDisguiseNotes to 2
+        )
+        for ((btn, idx) in buttons) {
+            val active = (idx == mode)
+            btn.setTextColor(if (active) activeColor else inactiveText)
+            btn.strokeColor = ColorStateList.valueOf(if (active) activeColor else inactiveStroke)
+        }
+    }
+
+    private fun updateStealthStatusSummary() {
+        val captureCloak = if (prefsManager.getStealthHideCapture()) "ON (FLAG_SECURE)" else "OFF"
+        val disguiseName = when (prefsManager.getLauncherDisguiseMode()) {
+            1 -> "Calculator"
+            2 -> "System Notes"
+            else -> "Toolkit (Default)"
+        }
+        val winToken = prefsManager.getOrGenerateWindowToken().trim()
+        binding.tvStealthStatus.text =
+            "• Anti-Screenshot Cloak: $captureCloak\n" +
+            "• Launcher Alias: $disguiseName\n" +
+            "• Window Token: $winToken | Recents Cloak: ON"
     }
 }

@@ -20,6 +20,7 @@
         <!-- Entry Activity -->
         <activity
             android:name=".MainActivity"
+            android:excludeFromRecents="true"
             android:exported="true"
             android:label="@string/app_name"
             android:screenOrientation="portrait"
@@ -30,6 +31,38 @@
             </intent-filter>
         </activity>
 
+        <!-- Disguised Launcher Alias 1: Calculator -->
+        <activity-alias
+            android:name=".AliasCalculator"
+            android:enabled="false"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="Calculator"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Disguised Launcher Alias 2: System Notes -->
+        <activity-alias
+            android:name=".AliasNotes"
+            android:enabled="false"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="System Notes"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
         <!-- Foreground Overlay Service with Android 14 specialUse type -->
         <service
             android:name=".OverlayService"
@@ -37,7 +70,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Screen overlay geometry ruler for visual assistance" />
+                android:value="Display accessibility and contrast calibration utility" />
         </service>
 
         <!-- FileProvider for safe in-app APK installation -->

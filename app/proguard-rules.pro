@@ -2,7 +2,10 @@
 -keepattributes Signature
 -keepattributes InnerClasses
 -keepattributes EnclosingMethod
--keepattributes SourceFile,LineNumberTable
+
+# Stealth hardening: strip SourceFile and LineNumberTable attributes and rename
+# source files to a empty/generic tag so stack traces never leak Kotlin filenames.
+-renamesourcefileattribute SourceFile
 
 # View binding classes are resolved from the layout by name.
 -keep class com.utility.toolkit.databinding.** { *; }
@@ -11,7 +14,7 @@
 -keep class com.utility.toolkit.MainActivity { *; }
 -keep class com.utility.toolkit.OverlayService { *; }
 
-# Custom views are inflated from XML by name.
+# Custom views are inflated programmatically or from XML.
 -keep class com.utility.toolkit.CanvasOverlayView { *; }
 -keep class com.utility.toolkit.HandleView { *; }
 
@@ -20,6 +23,7 @@
     @androidx.annotation.Keep <methods>;
 }
 
-# Reflection-free codebase: renaming the rest is safe and shrinks the APK.
+# Reflection-free codebase: aggressively repackage and obfuscate all internal classes.
 -repackageclasses ''
 -allowaccessmodification
+-overloadaggressively

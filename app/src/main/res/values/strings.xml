@@ -15,10 +15,10 @@
     <string name="btn_reset_calibration">Reset Calibration</string>
 
     <!-- Foreground Service -->
-    <string name="notification_channel_name">Utility Service</string>
+    <string name="notification_channel_name">Display Service</string>
     <string name="notification_channel_desc">Overlay service notification</string>
-    <string name="notification_title">Utility Active</string>
-    <string name="notification_text">Floating overlay is running. Tap to open settings.</string>
+    <string name="notification_title">Display Calibration</string>
+    <string name="notification_text">Tap to open configuration.</string>
     <string name="notification_action_stop">Stop</string>
 
     <!-- Overlay Controls -->
@@ -45,6 +45,9 @@
     <string name="label_cue_mode">Cue Ball &amp; Deflection (Handle C)</string>
     <string name="label_obstacle_mode">Obstacle / Blocker (Handle O)</string>
     <string name="label_triple_bank">3-Cushion Banks (3-Rail)</string>
+    <string name="label_stealth_capture">Stealth Cloak (Anti-Screenshot)</string>
+    <string name="label_stealth_card_title">Stealth &amp; Anti-Detection Hardening</string>
+    <string name="label_stealth_card_desc">Samarkan nama &amp; ikon aplikasi di launcher, sembunyikan dari Recent Apps, dan aktifkan proteksi anti-screenshot (FLAG_SECURE) pada seluruh jendela overlay.</string>
     <string name="label_line_color">Line Color</string>
     <string name="label_bank_line_color">Bank Ray Color</string>
     <string name="label_hue">Spectrum Hue: %1$d°</string>

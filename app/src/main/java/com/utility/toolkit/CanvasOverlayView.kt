@@ -89,6 +89,10 @@ class CanvasOverlayView @JvmOverloads constructor(
     var spinY: Float = 0f
         private set
 
+    /** Vision-detected ball candidates on the table (when Auto-Vision is active). */
+    var detectedBalls: List<BallVisionDetector.DetectedBall> = emptyList()
+        private set
+
     /**
      * Ball radius in px, derived from the calibrated table scale and the
      * user's fine-tune. Recomputed from the current boundary box so callers
@@ -401,6 +405,14 @@ class CanvasOverlayView @JvmOverloads constructor(
         color = Color.parseColor("#E040FB")
     }
 
+    // Paint: Vision Auto-Detected Ball Candidate Rings
+    private val visionCandidatePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.parseColor("#8800E5FF")
+        strokeWidth = 1.2f * density
+        pathEffect = DashPathEffect(floatArrayOf(3f * density, 4f * density), 0f)
+    }
+
     init {
         // Stealth: keep the overlay out of the accessibility tree. Another app
         // holding AccessibilityService can enumerate overlay windows and would
@@ -694,6 +706,11 @@ class CanvasOverlayView @JvmOverloads constructor(
         pointO.set(aimX, aimY)
         gripO.set(gripX, gripY)
         hasGripO = (GeometryUtils.distance(aimX, aimY, gripX, gripY) > 5f)
+        invalidate()
+    }
+
+    fun setDetectedBalls(balls: List<BallVisionDetector.DetectedBall>) {
+        detectedBalls = balls
         invalidate()
     }
 
@@ -1364,6 +1381,15 @@ class CanvasOverlayView @JvmOverloads constructor(
             ballScaleCorrection
         )
         val ringRadius = aim.ballRadius.toFloat()
+
+        // 0a. Vision-detected ball markers (subtle radar rings on detected balls)
+        if (detectedBalls.isNotEmpty()) {
+            for (db in detectedBalls) {
+                if (hypot(db.x - bx, db.y - by) > ringRadius * 0.6f) {
+                    canvas.drawCircle(db.x, db.y, ringRadius * 0.88f, visionCandidatePaint)
+                }
+            }
+        }
 
         // 0. Obstacle / Blocker Ball (Point O)
         if (showObstacle) {

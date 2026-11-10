@@ -1,11 +1,13 @@
 package com.utility.toolkit
 
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -34,6 +36,24 @@ class MainActivity : AppCompatActivity() {
         updateUIState()
     }
 
+    // MediaProjection permission launcher for Zero-Touch Auto-Ball Vision
+    private val mediaProjectionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK && result.data != null) {
+            prefsManager.saveAutoSnapEnabled(true)
+            val serviceIntent = Intent(this, OverlayService::class.java).apply {
+                action = OverlayService.ACTION_START_VISION
+                putExtra(OverlayService.EXTRA_RESULT_CODE, result.resultCode)
+                putExtra(OverlayService.EXTRA_RESULT_DATA, result.data)
+            }
+            ContextCompat.startForegroundService(this, serviceIntent)
+            finish()
+        } else {
+            Toast.makeText(this, "Izin tangkapan layar dibatalkan", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -53,6 +73,11 @@ class MainActivity : AppCompatActivity() {
         setupClickListeners()
         setupStealthDisguiseControls()
         checkUpdateSilently()
+
+        if (intent?.getBooleanExtra(EXTRA_REQUEST_VISION, false) == true) {
+            intent.removeExtra(EXTRA_REQUEST_VISION)
+            requestAutoVisionCapture()
+        }
     }
 
     override fun onResume() {
@@ -71,6 +96,20 @@ class MainActivity : AppCompatActivity() {
             if (hasOverlayPermission()) {
                 startOverlayService()
                 finish()
+            } else {
+                Toast.makeText(
+                    this,
+                    R.string.toast_permission_needed,
+                    Toast.LENGTH_SHORT
+                ).show()
+                requestOverlayPermission()
+            }
+        }
+
+        // Start with Auto-Ball Vision Button
+        binding.btnStartAutoVision.setOnClickListener {
+            if (hasOverlayPermission()) {
+                requestAutoVisionCapture()
             } else {
                 Toast.makeText(
                     this,
@@ -178,6 +217,15 @@ class MainActivity : AppCompatActivity() {
     private fun startOverlayService() {
         val serviceIntent = Intent(this, OverlayService::class.java)
         ContextCompat.startForegroundService(this, serviceIntent)
+    }
+
+    private fun requestAutoVisionCapture() {
+        try {
+            val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            mediaProjectionLauncher.launch(mpManager.createScreenCaptureIntent())
+        } catch (e: Exception) {
+            Toast.makeText(this, "Gagal meminta izin layar: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun updateUIState() {
@@ -314,5 +362,9 @@ class MainActivity : AppCompatActivity() {
             "• Anti-Screenshot Cloak: $captureCloak\n" +
             "• Launcher Alias: $disguiseName\n" +
             "• Window Token: $winToken | Recents Cloak: ON"
+    }
+
+    companion object {
+        const val EXTRA_REQUEST_VISION = "com.utility.toolkit.EXTRA_REQUEST_VISION"
     }
 }

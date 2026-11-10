@@ -151,6 +151,21 @@
                     app:cornerRadius="10dp" />
 
                 <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnStartAutoVision"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="10dp"
+                    android:text="Start with Auto-Ball Vision (Zero-Touch)"
+                    android:textAllCaps="false"
+                    android:textColor="@color/yellow_accent"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    app:cornerRadius="10dp"
+                    app:strokeColor="@color/yellow_accent"
+                    app:strokeWidth="1.5dp" />
+
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnStopOverlay"
                     android:layout_width="match_parent"
                     android:layout_height="48dp"

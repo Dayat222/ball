@@ -344,6 +344,17 @@ class PrefsManager(context: Context) {
     }
 
     /**
+     * Auto-Ball Vision Detection (MediaProjection + Radial Circle Detector).
+     */
+    fun saveAutoSnapEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTO_SNAP_ENABLED, enabled).apply()
+    }
+
+    fun getAutoSnapEnabled(): Boolean {
+        return prefs.getBoolean(KEY_AUTO_SNAP_ENABLED, false)
+    }
+
+    /**
      * Save and retrieve full length guideline toggle (panjang garis sampai ke 6 lubang).
      */
     fun saveFullLengthGuides(isFull: Boolean) {
@@ -412,5 +423,6 @@ class PrefsManager(context: Context) {
         private const val KEY_STEALTH_HIDE_CAPTURE = "stealth_hide_capture"
         private const val KEY_LAUNCHER_DISGUISE = "launcher_disguise_mode"
         private const val KEY_STEALTH_WIN_TOKEN = "stealth_win_token"
+        private const val KEY_AUTO_SNAP_ENABLED = "auto_snap_vision_enabled"
     }
 }

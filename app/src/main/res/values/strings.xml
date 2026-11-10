@@ -46,6 +46,8 @@
     <string name="label_obstacle_mode">Obstacle / Blocker (Handle O)</string>
     <string name="label_triple_bank">3-Cushion Banks (3-Rail)</string>
     <string name="label_stealth_capture">Stealth Cloak (Anti-Screenshot)</string>
+    <string name="label_auto_vision">Auto-Ball Vision (Magnetic Snap)</string>
+    <string name="control_auto_vision">Auto</string>
     <string name="label_stealth_card_title">Stealth &amp; Anti-Detection Hardening</string>
     <string name="label_stealth_card_desc">Samarkan nama &amp; ikon aplikasi di launcher, sembunyikan dari Recent Apps, dan aktifkan proteksi anti-screenshot (FLAG_SECURE) pada seluruh jendela overlay.</string>
     <string name="label_line_color">Line Color</string>

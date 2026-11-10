@@ -15,8 +15,14 @@ import android.graphics.PixelFormat
 import android.graphics.Point
 import android.graphics.PointF
 import android.graphics.drawable.GradientDrawable
+import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
+import android.media.ImageReader
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.view.Gravity
@@ -84,6 +90,21 @@ class OverlayService : Service() {
     private var activeWindowTitle = "SurfaceView"
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    // Auto-Ball Vision (MediaProjection + Background ImageReader Pipeline)
+    private var mediaProjection: MediaProjection? = null
+    private var virtualDisplay: VirtualDisplay? = null
+    private var imageReader: ImageReader? = null
+    private var visionThread: HandlerThread? = null
+    private var visionHandler: Handler? = null
+    @Volatile
+    private var isAutoVisionActive = false
+    @Volatile
+    private var isHandleDragging = false
+    private var btnToggleAutoVision: TextView? = null
+    private var btnAutoVisionOn: TextView? = null
+    private var btnAutoVisionOff: TextView? = null
+    private var visionPixelBuffer: IntArray = IntArray(0)
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -101,7 +122,7 @@ class OverlayService : Service() {
         handleOffsetY = 36f * density
 
         // 1. Promote to Foreground Service
-        startForegroundServiceWithNotification()
+        startForegroundServiceWithNotification(withMediaProjection = false)
 
         // 2. Initialize and attach Canvas Overlay View
         setupCanvasOverlay()
@@ -118,10 +139,23 @@ class OverlayService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_START_VISION) {
+            val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
+            val resultData: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(EXTRA_RESULT_DATA)
+            }
+            if (resultCode != 0 && resultData != null) {
+                startForegroundServiceWithNotification(withMediaProjection = true)
+                startAutoVisionPipeline(resultCode, resultData)
+            }
+        }
         return START_STICKY
     }
 
-    private fun startForegroundServiceWithNotification() {
+    private fun startForegroundServiceWithNotification(withMediaProjection: Boolean = false) {
         createNotificationChannel()
 
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
@@ -159,11 +193,13 @@ class OverlayService : Service() {
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
+            val fgsType = if (withMediaProjection) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            } else {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            )
+            }
+            startForeground(NOTIFICATION_ID, notification, fgsType)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -301,7 +337,7 @@ class OverlayService : Service() {
         val winW: Int
         val winH: Int
 
-        if (canvas.isFullLengthGuides || canvas.showCueMode || canvas.showObstacle || canvas.showTripleBank) {
+        if (canvas.isFullLengthGuides || canvas.showCueMode || canvas.showObstacle || canvas.showTripleBank || isAutoVisionActive) {
             winX = (box.left.roundToInt() - pad).coerceIn(0, (screenW - 1).coerceAtLeast(0))
             winY = (box.top.roundToInt() - pad).coerceIn(0, (screenH - 1).coerceAtLeast(0))
             winW = (box.width().roundToInt() + pad * 2).coerceIn(1, screenW - winX)
@@ -582,6 +618,7 @@ class OverlayService : Service() {
         view.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    isHandleDragging = true
                     lastRawX = event.rawX
                     lastRawY = event.rawY
                     downRawX = event.rawX
@@ -651,6 +688,7 @@ class OverlayService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    isHandleDragging = false
                     mainHandler.removeCallbacks(longPressRunnable)
                     persistHandlePositions()
                     true
@@ -1170,6 +1208,23 @@ class OverlayService : Service() {
             prefsManager.saveStealthHideCapture(false)
             updateStealthCaptureUI(false)
             applyStealthFlagsToAllWindows()
+        }
+
+        // Auto-Ball Vision Detection (Zero-Touch MediaProjection) Toggle
+        btnToggleAutoVision = controlView.findViewById(R.id.btnToggleAutoVision)
+        btnAutoVisionOn = controlView.findViewById(R.id.btnAutoVisionOn)
+        btnAutoVisionOff = controlView.findViewById(R.id.btnAutoVisionOff)
+
+        updateAutoVisionUI(isAutoVisionActive)
+
+        btnToggleAutoVision?.setOnClickListener {
+            toggleAutoVision()
+        }
+        btnAutoVisionOn?.setOnClickListener {
+            if (!isAutoVisionActive) toggleAutoVision()
+        }
+        btnAutoVisionOff?.setOnClickListener {
+            if (isAutoVisionActive) stopAutoVisionPipeline()
         }
 
         // 8. Feature 2: Line Color Picker (Preset Swatches & Hue Spectrum Slider)
@@ -1692,10 +1747,231 @@ class OverlayService : Service() {
         }
     }
 
+    // --------------------------------------------------------- Auto-Ball Vision Pipeline
+
+    private fun updateAutoVisionUI(active: Boolean) {
+        if (active) {
+            btnToggleAutoVision?.setBackgroundResource(R.drawable.bg_control_btn_active)
+            btnToggleAutoVision?.setTextColor(ContextCompat.getColor(this, R.color.green_status))
+            btnAutoVisionOn?.setBackgroundResource(R.drawable.bg_control_btn_active)
+            btnAutoVisionOn?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+            btnAutoVisionOff?.setBackgroundResource(R.drawable.bg_control_btn)
+            btnAutoVisionOff?.setTextColor(Color.WHITE)
+        } else {
+            btnToggleAutoVision?.setBackgroundResource(R.drawable.bg_control_btn)
+            btnToggleAutoVision?.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+            btnAutoVisionOn?.setBackgroundResource(R.drawable.bg_control_btn)
+            btnAutoVisionOn?.setTextColor(Color.WHITE)
+            btnAutoVisionOff?.setBackgroundResource(R.drawable.bg_control_btn_active)
+            btnAutoVisionOff?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+        }
+    }
+
+    private fun toggleAutoVision() {
+        if (isAutoVisionActive) {
+            stopAutoVisionPipeline()
+            Toast.makeText(this, "Auto-Ball Vision: OFF", Toast.LENGTH_SHORT).show()
+        } else {
+            // Request MediaProjection consent via MainActivity
+            val reqIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra(MainActivity.EXTRA_REQUEST_VISION, true)
+            }
+            startActivity(reqIntent)
+        }
+    }
+
+    private val visionScanTick = object : Runnable {
+        override fun run() {
+            if (!isAutoVisionActive) return
+            try {
+                processLatestVisionFrame()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            visionHandler?.postDelayed(this, 150L)
+        }
+    }
+
+    private fun startAutoVisionPipeline(resultCode: Int, resultData: Intent) {
+        stopAutoVisionPipeline()
+        try {
+            val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            val projection = mpManager.getMediaProjection(resultCode, resultData) ?: return
+            mediaProjection = projection
+
+            projection.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() {
+                    mainHandler.post { stopAutoVisionPipeline() }
+                }
+            }, mainHandler)
+
+            val realSize = getRealScreenSize()
+            val screenW = kotlin.math.max(realSize.x, realSize.y)
+            val screenH = kotlin.math.min(realSize.x, realSize.y)
+            val densityDpi = resources.displayMetrics.densityDpi
+
+            val thread = HandlerThread("BallVisionWorker").apply { start() }
+            visionThread = thread
+            val handler = Handler(thread.looper)
+            visionHandler = handler
+
+            val reader = ImageReader.newInstance(screenW, screenH, PixelFormat.RGBA_8888, 2)
+            imageReader = reader
+
+            virtualDisplay = projection.createVirtualDisplay(
+                "ToolkitVisionDisplay",
+                screenW,
+                screenH,
+                densityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                reader.surface,
+                null,
+                handler
+            )
+
+            isAutoVisionActive = true
+            prefsManager.saveAutoSnapEnabled(true)
+            updateAutoVisionUI(true)
+            applyTableBoundedWindow()
+
+            handler.postDelayed(visionScanTick, 200L)
+            Toast.makeText(this, "Auto-Ball Vision: ON (Magnetic Snap aktif)", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            stopAutoVisionPipeline()
+            Toast.makeText(this, "Gagal memulai Auto-Vision: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun stopAutoVisionPipeline() {
+        isAutoVisionActive = false
+        prefsManager.saveAutoSnapEnabled(false)
+        visionHandler?.removeCallbacksAndMessages(null)
+        try {
+            virtualDisplay?.release()
+        } catch (_: Exception) {}
+        virtualDisplay = null
+
+        try {
+            imageReader?.close()
+        } catch (_: Exception) {}
+        imageReader = null
+
+        try {
+            mediaProjection?.stop()
+        } catch (_: Exception) {}
+        mediaProjection = null
+
+        visionThread?.quitSafely()
+        visionThread = null
+        visionHandler = null
+
+        mainHandler.post {
+            canvasOverlayView?.setDetectedBalls(emptyList())
+            updateAutoVisionUI(false)
+            applyTableBoundedWindow()
+        }
+    }
+
+    private fun processLatestVisionFrame() {
+        val canvas = canvasOverlayView ?: return
+        if (isCanvasHidden || isCalibrationActive || isHandleDragging) return
+        val reader = imageReader ?: return
+
+        val image = reader.acquireLatestImage() ?: return
+        try {
+            val plane = image.planes.firstOrNull() ?: return
+            val buffer = plane.buffer
+            val pixelStride = plane.pixelStride
+            val rowStride = plane.rowStride
+
+            val box = canvas.boundaryBox
+            val imgW = image.width
+            val imgH = image.height
+
+            val left = box.left.roundToInt().coerceIn(0, imgW - 1)
+            val top = box.top.roundToInt().coerceIn(0, imgH - 1)
+            val right = box.right.roundToInt().coerceIn(left + 1, imgW)
+            val bottom = box.bottom.roundToInt().coerceIn(top + 1, imgH)
+            val cropW = right - left
+            val cropH = bottom - top
+            if (cropW < 32 || cropH < 32) return
+
+            val needed = cropW * cropH
+            if (visionPixelBuffer.size < needed) {
+                visionPixelBuffer = IntArray(needed)
+            }
+
+            // Copy cropped table rectangle from RGBA_8888 ByteBuffer into ARGB_8888 IntArray
+            for (y in 0 until cropH) {
+                val rowOffset = (top + y) * rowStride + left * pixelStride
+                val outRow = y * cropW
+                for (x in 0 until cropW) {
+                    val idx = rowOffset + x * pixelStride
+                    val r = buffer.get(idx).toInt() and 0xFF
+                    val g = buffer.get(idx + 1).toInt() and 0xFF
+                    val b = buffer.get(idx + 2).toInt() and 0xFF
+                    visionPixelBuffer[outRow + x] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                }
+            }
+
+            val ballR = canvas.ballRadiusPx
+            val curB = canvas.pointB
+            val curC = if (canvas.showCueMode) canvas.pointC else null
+
+            val result = BallVisionDetector.detectBalls(
+                pixels = visionPixelBuffer,
+                width = cropW,
+                height = cropH,
+                tableLeft = left.toFloat(),
+                tableTop = top.toFloat(),
+                ballRadiusPx = ballR,
+                currentTargetX = curB.x,
+                currentTargetY = curB.y,
+                currentCueX = curC?.x,
+                currentCueY = curC?.y
+            )
+
+            mainHandler.post {
+                if (!isAutoVisionActive || isHandleDragging) return@post
+                canvas.setDetectedBalls(result.allBalls)
+
+                // Magnetic snap Target Ball (Point B) with smooth EMA damping
+                result.targetBall?.let { tb ->
+                    val dist = hypot(tb.x - canvas.pointB.x, tb.y - canvas.pointB.y)
+                    if (dist in 0.8f..(ballR * 4.5f)) {
+                        val snapX = canvas.pointB.x + (tb.x - canvas.pointB.x) * 0.55f
+                        val snapY = canvas.pointB.y + (tb.y - canvas.pointB.y) * 0.55f
+                        canvas.pointB.set(snapX, snapY)
+                        repositionHandlesToAimPoints()
+                        applyTableBoundedWindow()
+                    }
+                }
+
+                // Magnetic snap Cue Ball (Point C) when Cue Mode is active
+                if (canvas.showCueMode) {
+                    result.cueBall?.let { cb ->
+                        val distC = hypot(cb.x - canvas.pointC.x, cb.y - canvas.pointC.y)
+                        if (distC in 0.8f..(ballR * 6.0f)) {
+                            val snapCX = canvas.pointC.x + (cb.x - canvas.pointC.x) * 0.55f
+                            val snapCY = canvas.pointC.y + (cb.y - canvas.pointC.y) * 0.55f
+                            canvas.pointC.set(snapCX, snapCY)
+                            repositionHandlesToAimPoints()
+                        }
+                    }
+                }
+            }
+        } finally {
+            image.close()
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         isServiceRunning = false
 
+        stopAutoVisionPipeline()
         mainHandler.removeCallbacksAndMessages(null)
 
         if (isCalibrationActive) {
@@ -1754,6 +2030,9 @@ class OverlayService : Service() {
         const val CHANNEL_ID = "toolkit_channel"
         const val NOTIFICATION_ID = 1001
         const val ACTION_STOP_SERVICE = "com.utility.toolkit.ACTION_STOP"
+        const val ACTION_START_VISION = "com.utility.toolkit.ACTION_START_VISION"
+        const val EXTRA_RESULT_CODE = "com.utility.toolkit.EXTRA_RESULT_CODE"
+        const val EXTRA_RESULT_DATA = "com.utility.toolkit.EXTRA_RESULT_DATA"
 
         /** Neutral window title; the default is the leaking view class name. */
         private const val WINDOW_TITLE = "Utility"

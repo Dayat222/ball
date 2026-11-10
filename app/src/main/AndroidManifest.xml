@@ -2,10 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permissions: Overlay, foreground service, internet check, and in-app package installer -->
+    <!-- Permissions: Overlay, foreground service, MediaProjection vision, internet check, and in-app package installer -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
@@ -63,11 +64,11 @@
             </intent-filter>
         </activity-alias>
 
-        <!-- Foreground Overlay Service with Android 14 specialUse type -->
+        <!-- Foreground Overlay Service with Android 14 specialUse + mediaProjection types -->
         <service
             android:name=".OverlayService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="specialUse|mediaProjection">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Display accessibility and contrast calibration utility" />

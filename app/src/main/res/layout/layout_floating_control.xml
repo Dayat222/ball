@@ -66,6 +66,22 @@
                 android:textSize="12sp"
                 android:textStyle="bold" />
 
+            <!-- Auto-Vision Magnetic Snap Button -->
+            <TextView
+                android:id="@+id/btnToggleAutoVision"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/bg_control_btn"
+                android:gravity="center"
+                android:minWidth="44dp"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:text="@string/control_auto_vision"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
             <!-- Calibration Mode Toggle Button -->
             <TextView
                 android:id="@+id/btnToggleCalibrate"
@@ -543,6 +559,50 @@
                     android:gravity="center"
                     android:text="ON"
                     android:textColor="@color/cyan_accent"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- Auto-Ball Vision Detection Toggle -->
+            <TextView
+                android:id="@+id/tvAutoVisionTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/label_auto_vision"
+                android:textColor="@color/yellow_accent"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/btnAutoVisionOff"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/bg_control_btn_active"
+                    android:gravity="center"
+                    android:text="OFF"
+                    android:textColor="@color/cyan_accent"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/btnAutoVisionOn"
+                    android:layout_width="0dp"
+                    android:layout_height="32dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="4dp"
+                    android:background="@drawable/bg_control_btn"
+                    android:gravity="center"
+                    android:text="ON (Auto-Snap)"
+                    android:textColor="@color/text_primary"
                     android:textSize="12sp"
                     android:textStyle="bold" />
             </LinearLayout>

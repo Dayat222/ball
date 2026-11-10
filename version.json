@@ -2,6 +2,6 @@
   "versionCode": 29,
   "versionName": "3.9.0",
   "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-latest.apk",
-  "sha256": "",
+  "sha256": "dab3cf19eba41b63e3ddeecfb996bfc8ebfb1a85ee76f34ec10929d16d2ec53a",
   "changelog": "Versi 3.9.0 — Stealth & Anti-Detection Hardening:\n- Anti-Screenshot & MediaProjection Cloak (FLAG_SECURE): melindungi seluruh jendela overlay, handle, dan dashboard agar tidak terekam oleh screenshot/screen-capture anti-cheat.\n- Launcher Identity Disguise: penyamaran instan nama & entri aplikasi di launcher menjadi 'Calculator' atau 'System Notes' tanpa mematikan sesi overlay.\n- Dynamic Window Token & Recents Cloak: merotasi token judul jendela menjadi nama komponen sistem Android (SurfaceView/InputMethod/StatusBar) dan menyembunyikan aplikasi dari daftar Recent Apps.\n- R8 Bytecode Hardening & Polymorphic Build ID: penghapusan atribut nama file sumber (SourceFile/LineNumberTable) dan dukungan randomisasi applicationId pada pipeline CI."
 }

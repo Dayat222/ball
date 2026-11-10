@@ -80,6 +80,20 @@ class AimGeometry {
     var rebound = 1.0
 
     /**
+     * Horizontal sidespin (English) in [-1.0, 1.0].
+     * -1.0 = full left English, +1.0 = full right English.
+     * Modifies cushion rebound angle (running vs check English) and Spin-Induced Throw (SIT).
+     */
+    var spinX = 0.0
+
+    /**
+     * Vertical spin (Top/Back) in [-1.0, 1.0].
+     * -1.0 = full draw/backspin, 0.0 = stun, +1.0 = full follow/topspin.
+     * Drives the post-impact cue ball deflection path from the 90-degree tangent line.
+     */
+    var spinY = 0.0
+
+    /**
      * Tuning of the pocket mouth against the hard-coded 9 ft table. A game
      * table is not always a faithful 9 ft replica, so the jaw offset and the
      * side-mouth half width can be scaled independently. 1.0 = real table.
@@ -125,6 +139,32 @@ class AimGeometry {
     var hit2Y = 0.0
         private set
 
+    /** Third cushion contact for a three-rail bank. */
+    var hit3X = 0.0
+        private set
+    var hit3Y = 0.0
+        private set
+
+    /** Post-impact cue-ball deflection trajectory (stun tangent + follow/draw curve). */
+    var deflectStartX = 0.0
+        private set
+    var deflectStartY = 0.0
+        private set
+    var deflectCtrlX = 0.0
+        private set
+    var deflectCtrlY = 0.0
+        private set
+    var deflectEndX = 0.0
+        private set
+    var deflectEndY = 0.0
+        private set
+    var deflectTangentEndX = 0.0
+        private set
+    var deflectTangentEndY = 0.0
+        private set
+    var deflectValid = false
+        private set
+
     /** Effective mouth width for the last gate, in mm (aperture * cos). */
     var gateApertureMm = 0.0
         private set
@@ -156,7 +196,7 @@ class AimGeometry {
 
         scaleX = w / TABLE_LENGTH_MM
         scaleY = h / TABLE_WIDTH_MM
-        scaleCorrection = ballScaleCorrection.toDouble().coerceIn(0.5, 1.5)
+        scaleCorrection = ballScaleCorrection.toDouble().coerceIn(0.5, 1.6)
 
         // One physical ball: average the two axis scales so a slightly
         // mis-proportioned calibration does not produce an elliptical ball.
@@ -392,21 +432,31 @@ class AimGeometry {
             } else {
                 val sigma = if (alongPocket >= alongBall) 1.0 else -1.0
 
+                // English (sidespin) angle shift on cushion bounce.
+                // Determine whether +along is to the right of the incoming normal:
+                // - Horizontal rail: normal points -side * Y. Right of (0, -side) is (side, 0).
+                // - Vertical rail: normal points -side * X. Right of (-side, 0) is (0, -side).
+                val rightAlongSign = if (horizontal) side.toDouble() else -side.toDouble()
+                val spinShiftAlong = spinX.coerceIn(-1.0, 1.0) * MAX_SPIN_BANK_SHIFT_RAD * rightAlongSign
+                val signedSpinShift = sigma * spinShiftAlong
+
+                fun outAngle(theta: Double): Double =
+                    (rebound * theta + signedSpinShift).coerceIn(-MAX_OUT_ANGLE_RAD, MAX_OUT_ANGLE_RAD)
+
                 // theta = incidence angle measured from the cushion normal.
-                // f(theta) = remaining horizontal travel - tan(k * theta) term.
-                // f(0) = flat > 0, strictly decreasing while it is defined.
+                // f(theta) = remaining horizontal travel - tan(outAngle(theta)) term.
                 var lo = 0.0
                 var hi = atan(flat / offset)
-                val fHi = flat - offset * tan(hi) - (nPocket - c) * tan(rebound * hi)
+                val fHi = flat - offset * tan(hi) - (nPocket - c) * tan(outAngle(hi))
                 if (fHi >= 0.0) {
-                    // k * theta crosses the tangent asymptote before the flat
+                    // Outgoing angle crosses the tangent asymptote before the flat
                     // travel is consumed: no real bounce on this rail.
                     hitValid = false
                     return false
                 }
                 repeat(48) {
                     val mid = (lo + hi) * 0.5
-                    val f = flat - offset * tan(mid) - (nPocket - c) * tan(rebound * mid)
+                    val f = flat - offset * tan(mid) - (nPocket - c) * tan(outAngle(mid))
                     if (f > 0.0) lo = mid else hi = mid
                 }
                 hitAlong = alongBall + sigma * offset * tan((lo + hi) * 0.5)
@@ -510,9 +560,248 @@ class AimGeometry {
     }
 
     /**
+     * Three-cushion bank: ball -> [axis1] rail -> [axis2] rail -> [axis3] rail -> gate.
+     *
+     * Unfolds the pocket gate across rail3, rail2, and rail1 in sequence so the
+     * triple bounce collapses into one straight segment in thrice-reflected space.
+     * Each crossing parameter t1 < t2 < t3 is then folded back across the preceding
+     * planes to recover the real contact points [hitX]/[hitY], [hit2X]/[hit2Y],
+     * and [hit3X]/[hit3Y] in pixels.
+     */
+    fun bankFrom3(
+        bx: Double,
+        by: Double,
+        pocketX: Double,
+        pocketY: Double,
+        axis1: Axis,
+        plane1: Double,
+        railMin1: Double,
+        railMax1: Double,
+        axis2: Axis,
+        plane2: Double,
+        railMin2: Double,
+        railMax2: Double,
+        axis3: Axis,
+        plane3: Double,
+        railMin3: Double,
+        railMax3: Double
+    ): Boolean {
+        hitValid = false
+        if (!frameValid) return false
+        if (axis1 == axis2 && abs(plane1 - plane2) < 1e-6) return false
+        if (axis2 == axis3 && abs(plane2 - plane3) < 1e-6) return false
+
+        // Unfold: mirror gate across rail3 -> rail2 -> rail1.
+        var gx = pocketX
+        var gy = pocketY
+        if (axis3 == Axis.VERTICAL) gx = 2.0 * plane3 - gx else gy = 2.0 * plane3 - gy
+        if (axis2 == Axis.VERTICAL) gx = 2.0 * plane2 - gx else gy = 2.0 * plane2 - gy
+        if (axis1 == Axis.VERTICAL) gx = 2.0 * plane1 - gx else gy = 2.0 * plane1 - gy
+
+        val dx = gx - bx
+        val dy = gy - by
+        if (abs(dx) < 1e-9 && abs(dy) < 1e-9) return false
+
+        // Plane2 in unfolded space is reflected across rail1.
+        val unfoldedPlane2 = if (axis1 == axis2) 2.0 * plane1 - plane2 else plane2
+        // Plane3 in unfolded space is reflected across rail2 then rail1.
+        var unfoldedPlane3 = if (axis2 == axis3) 2.0 * plane2 - plane3 else plane3
+        if (axis1 == axis3) unfoldedPlane3 = 2.0 * plane1 - unfoldedPlane3
+
+        fun crossT(axis: Axis, plane: Double): Double? =
+            if (axis == Axis.HORIZONTAL) {
+                if (abs(dy) < 1e-12) null else (plane - by) / dy
+            } else {
+                if (abs(dx) < 1e-12) null else (plane - bx) / dx
+            }
+
+        val t1 = crossT(axis1, plane1) ?: return false
+        val t2 = crossT(axis2, unfoldedPlane2) ?: return false
+        val t3 = crossT(axis3, unfoldedPlane3) ?: return false
+        if (t1 <= 1e-6 || t2 <= t1 + 1e-6 || t3 <= t2 + 1e-6 || t3 >= 1.0) return false
+
+        // Contact 1 (real space)
+        val p1x = bx + dx * t1
+        val p1y = by + dy * t1
+
+        // Contact 2: fold back across rail1
+        val q2x = bx + dx * t2
+        val q2y = by + dy * t2
+        val p2x = if (axis1 == Axis.VERTICAL) 2.0 * plane1 - q2x else q2x
+        val p2y = if (axis1 == Axis.HORIZONTAL) 2.0 * plane1 - q2y else q2y
+
+        // Contact 3: fold back across rail1, then rail2
+        val q3x = bx + dx * t3
+        val q3y = by + dy * t3
+        val r3x = if (axis1 == Axis.VERTICAL) 2.0 * plane1 - q3x else q3x
+        val r3y = if (axis1 == Axis.HORIZONTAL) 2.0 * plane1 - q3y else q3y
+        val p3x = if (axis2 == Axis.VERTICAL) 2.0 * plane2 - r3x else r3x
+        val p3y = if (axis2 == Axis.HORIZONTAL) 2.0 * plane2 - r3y else r3y
+
+        val along1 = if (axis1 == Axis.HORIZONTAL) p1x else p1y
+        val along2 = if (axis2 == Axis.HORIZONTAL) p2x else p2y
+        val along3 = if (axis3 == Axis.HORIZONTAL) p3x else p3y
+        if (along1 < railMin1 || along1 > railMax1) return false
+        if (along2 < railMin2 || along2 > railMax2) return false
+        if (along3 < railMin3 || along3 > railMax3) return false
+
+        hitX = p1x
+        hitY = p1y
+        hit2X = p2x
+        hit2Y = p2y
+        hit3X = p3x
+        hit3Y = p3y
+        hitValid = true
+        return true
+    }
+
+    /**
+     * Checks whether an obstacle ball at ([obsX], [obsY]) blocks the travelling
+     * ball path from ([startX], [startY]) to ([endX], [endY]).
+     *
+     * Since both balls have radius [ballRadius], a collision occurs when the
+     * centre-to-segment distance is strictly less than 2 * [ballRadius] (minus a
+     * small epsilon so touching endpoints do not self-trigger).
+     */
+    fun isPathObstructed(
+        startX: Double,
+        startY: Double,
+        endX: Double,
+        endY: Double,
+        obsX: Double,
+        obsY: Double
+    ): Boolean {
+        if (!frameValid) return false
+        val vx = endX - startX
+        val vy = endY - startY
+        val len2 = vx * vx + vy * vy
+        if (len2 < 1e-6) return false
+
+        val wx = obsX - startX
+        val wy = obsY - startY
+        val t = ((wx * vx + wy * vy) / len2).coerceIn(0.0, 1.0)
+        // Ignore if the obstacle is basically at the start or end point itself
+        if (t <= 1e-3 || t >= 0.999) return false
+
+        val closestX = startX + vx * t
+        val closestY = startY + vy * t
+        val dist = hypot(obsX - closestX, obsY - closestY)
+        return dist < (2.0 * ballRadius * 0.96)
+    }
+
+    /**
+     * Computes the post-impact cue-ball deflection path after striking the target
+     * ball at ([bx], [by]) from cue ball ([cx], [cy]) towards ([targetAimX], [targetAimY]).
+     *
+     * Physics:
+     * 1. At impact, the cue ball is at the ghost-ball position `G`.
+     * 2. The line of centres unit vector is `S = normalize(B - G)`.
+     * 3. The 90-degree stun tangent direction `T` is perpendicular to `S`, chosen
+     *    on the same side as the incoming cue ball velocity `I = normalize(G - C)`.
+     * 4. With stun (`spinY == 0`), the cue ball slides purely along `T`.
+     * 5. With topspin (`spinY > 0`), the cue ball curves forward from `T` toward `S`.
+     *    With backspin (`spinY < 0`), the cue ball draws backward from `T` toward `-S`
+     *    (or straight back along `-I` on a dead-straight shot).
+     *
+     * Populates [deflectStartX]..[deflectTangentEndY] and sets [deflectValid].
+     */
+    fun solveCueDeflection(
+        bx: Double,
+        by: Double,
+        cx: Double,
+        cy: Double,
+        targetAimX: Double = targetX,
+        targetAimY: Double = targetY,
+        guideLengthPx: Double = ballRadius * 5.5
+    ): Boolean {
+        deflectValid = false
+        if (!frameValid) return false
+
+        val (gxF, gyF) = ghostBall(
+            bx.toFloat(), by.toFloat(),
+            cx.toFloat(), cy.toFloat(),
+            targetAimX, targetAimY
+        )
+        val gx = gxF.toDouble()
+        val gy = gyF.toDouble()
+
+        // Line of centres from ghost ball to target ball
+        val sDx = bx - gx
+        val sDy = by - gy
+        val sLen = hypot(sDx, sDy)
+        if (sLen < 1e-4) return false
+        val sx = sDx / sLen
+        val sy = sDy / sLen
+
+        // Incoming cue ball vector C -> G
+        val inDx = gx - cx
+        val inDy = gy - cy
+        val inLen = hypot(inDx, inDy)
+        if (inLen < 1e-4) return false
+        val ix = inDx / inLen
+        val iy = inDy / inLen
+
+        // Must hit the front hemisphere of the ghost ball (cosCut > 0.05)
+        val cosCut = ix * sx + iy * sy
+        if (cosCut <= 0.05) return false
+
+        // Two candidate normals to S: N1 = (-sy, sx), N2 = (sy, -sx).
+        // Pick the one with positive dot product with incoming vector I.
+        val cross = ix * (-sy) + iy * sx
+        val tx: Double
+        val ty: Double
+        if (abs(cross) < 1e-3) {
+            // Almost dead-straight shot: tangent component is minimal
+            tx = -sy
+            ty = sx
+        } else if (cross > 0.0) {
+            tx = -sy
+            ty = sx
+        } else {
+            tx = sy
+            ty = -sx
+        }
+
+        val sinCut = abs(cross).coerceIn(0.0, 1.0)
+        val syClamped = spinY.coerceIn(-1.0, 1.0)
+
+        deflectStartX = gx
+        deflectStartY = gy
+
+        // Pure stun tangent line endpoint
+        val stunScale = sinCut.coerceAtLeast(0.22)
+        deflectTangentEndX = gx + tx * guideLengthPx * stunScale
+        deflectTangentEndY = gy + ty * guideLengthPx * stunScale
+
+        // Initial tangent departure (control point of quadratic Bezier)
+        val ctrlDist = guideLengthPx * 0.42 * stunScale
+        deflectCtrlX = gx + tx * ctrlDist
+        deflectCtrlY = gy + ty * ctrlDist
+
+        // Final asymptotic direction combines tangent carry (tx, ty) and longitudinal spin (sx, sy)
+        val tangentWeight = sinCut * (1.0 - 0.35 * abs(syClamped))
+        val forwardWeight = syClamped * (0.45 + 0.55 * cosCut)
+        var endVx = tx * tangentWeight + sx * forwardWeight
+        var endVy = ty * tangentWeight + sy * forwardWeight
+        val endVLen = hypot(endVx, endVy)
+        if (endVLen < 1e-4) {
+            endVx = tx
+            endVy = ty
+        } else {
+            endVx /= endVLen
+            endVy /= endVLen
+        }
+
+        deflectEndX = deflectCtrlX + endVx * (guideLengthPx * 0.68)
+        deflectEndY = deflectCtrlY + endVy * (guideLengthPx * 0.68)
+        deflectValid = true
+        return true
+    }
+
+    /**
      * Calculates the ghost-ball centre for [pocket] including Cut-Induced Throw (CIT)
-     * compensation when the cue ball position ([cx], [cy]) is known.
-     * If the cue ball is not tracked, falls back to the specular 2R line.
+     * and Spin-Induced Throw (SIT) compensation when the cue ball position ([cx], [cy])
+     * or horizontal sidespin [spinX] is active.
      *
      * @return Pair(ghostX, ghostY) in pixels.
      */
@@ -532,6 +821,8 @@ class AimGeometry {
         var sx = dx / dist
         var sy = dy / dist
 
+        var totalThrowRad = 0f
+
         if (cx != null && cy != null) {
             val inDx = bx - cx
             val inDy = by - cy
@@ -543,16 +834,26 @@ class AimGeometry {
                 val cosCut = inUx * sx + inUy * sy
 
                 if (cosCut > 0.0) {
-                    val maxThrowRad = (1.8 * Math.PI / 180.0).toFloat()
-                    val throwRad = maxThrowRad * (2f * sinCut * cosCut.toFloat())
-                    val cosT = kotlin.math.cos(-throwRad)
-                    val sinT = kotlin.math.sin(-throwRad)
-                    val rotX = sx * cosT - sy * sinT
-                    val rotY = sx * sinT + sy * cosT
-                    sx = rotX
-                    sy = rotY
+                    val maxCitRad = (1.8 * Math.PI / 180.0).toFloat()
+                    totalThrowRad += maxCitRad * (2f * sinCut * cosCut.toFloat())
                 }
             }
+        }
+
+        // Spin-Induced Throw (SIT): sidespin gears the object ball in the opposite
+        // rotational sense. Compensate the ghost-ball aim point accordingly.
+        if (abs(spinX) > 1e-3) {
+            val maxSitRad = MAX_SIT_THROW_RAD.toFloat()
+            totalThrowRad += (-spinX.toFloat() * maxSitRad)
+        }
+
+        if (abs(totalThrowRad) > 1e-6f) {
+            val cosT = kotlin.math.cos(-totalThrowRad)
+            val sinT = kotlin.math.sin(-totalThrowRad)
+            val rotX = sx * cosT - sy * sinT
+            val rotY = sx * sinT + sy * cosT
+            sx = rotX
+            sy = rotY
         }
 
         val r = ballRadius.toFloat()
@@ -572,6 +873,13 @@ class AimGeometry {
         const val MIDDLE_HALF_MM = 63.5
         /** How far the full-length guide may run past the jaw line. */
         const val MOUTH_DEPTH_MM = 22.9
+
+        /** Max cushion rebound angle shift at full sidespin (~12 degrees). */
+        const val MAX_SPIN_BANK_SHIFT_RAD = 12.0 * Math.PI / 180.0
+        /** Max Spin-Induced Throw (SIT) angle at full English (~2.2 degrees). */
+        const val MAX_SIT_THROW_RAD = 2.2 * Math.PI / 180.0
+        /** Asymptote clamp for outgoing cushion angle (~84 degrees). */
+        private const val MAX_OUT_ANGLE_RAD = 84.0 * Math.PI / 180.0
 
         private const val GOLDEN = 0.6180339887498949
     }

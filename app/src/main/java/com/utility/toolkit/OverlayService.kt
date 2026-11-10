@@ -50,13 +50,19 @@ class OverlayService : Service() {
     private var canvasOverlayView: CanvasOverlayView? = null
     private lateinit var canvasLayoutParams: WindowManager.LayoutParams
 
-    // Independent Floating Handle (Grip Pad)
+    // Independent Floating Handles (Grip Pads)
     private var handleViewB: HandleView? = null
     private lateinit var handleParamsB: WindowManager.LayoutParams
+    private var handleViewC: HandleView? = null
+    private lateinit var handleParamsC: WindowManager.LayoutParams
+    private var handleViewO: HandleView? = null
+    private lateinit var handleParamsO: WindowManager.LayoutParams
     private var handleSizePx = 0
     private var handleOffsetX = 48f
     private var handleOffsetY = 36f
     private var isOffsetInvertedB = false
+    private var isOffsetInvertedC = false
+    private var isOffsetInvertedO = false
 
     // Floating Control Bar
     private var floatingControlView: View? = null
@@ -288,7 +294,7 @@ class OverlayService : Service() {
         val winW: Int
         val winH: Int
 
-        if (canvas.isFullLengthGuides) {
+        if (canvas.isFullLengthGuides || canvas.showCueMode || canvas.showObstacle || canvas.showTripleBank) {
             winX = (box.left.roundToInt() - pad).coerceIn(0, (screenW - 1).coerceAtLeast(0))
             winY = (box.top.roundToInt() - pad).coerceIn(0, (screenH - 1).coerceAtLeast(0))
             winW = (box.width().roundToInt() + pad * 2).coerceIn(1, screenW - winX)
@@ -402,10 +408,12 @@ class OverlayService : Service() {
         val screenH = kotlin.math.min(realSize.x, realSize.y).toFloat()
 
         val targetPoint = prefsManager.getTargetPoint(screenW, screenH)
+        val cuePoint = prefsManager.getCuePoint(screenW, screenH)
+        val obstaclePoint = prefsManager.getObstaclePoint(screenW, screenH)
         val initialAlpha = prefsManager.getLineAlpha()
         val initialColor = prefsManager.getLineColor()
 
-        // Target Ball Handle (Point B)
+        // 1. Target Ball Handle (Point B)
         handleViewB = HandleView(this, "B").apply {
             updateColor(initialColor)
             updateHandleAlpha(initialAlpha)
@@ -423,8 +431,46 @@ class OverlayService : Service() {
         }
         windowManager.addView(handleViewB, handleParamsB)
         canvasOverlayView?.setPointB(targetPoint.x, targetPoint.y, gripPosB.x, gripPosB.y)
-        applyTableBoundedWindow()
 
+        // 2. Cue Ball Handle (Point C - Spin & Deflection)
+        handleViewC = HandleView(this, "C").apply {
+            updateColor(Color.parseColor("#00E676"))
+            updateHandleAlpha(initialAlpha)
+        }
+        val gripPosC = calculateGripFromAim(cuePoint, isOffsetInvertedC)
+        handleParamsC = createHandleLayoutParams(gripPosC)
+        setupHandleTouchListener(
+            handleViewC!!,
+            handleParamsC,
+            initialInverted = isOffsetInvertedC,
+            onInversionChanged = { isOffsetInvertedC = it }
+        ) { aimX, aimY, gripX, gripY ->
+            canvasOverlayView?.setPointC(aimX, aimY, gripX, gripY)
+            applyTableBoundedWindow()
+        }
+        windowManager.addView(handleViewC, handleParamsC)
+        canvasOverlayView?.setPointC(cuePoint.x, cuePoint.y, gripPosC.x, gripPosC.y)
+
+        // 3. Obstacle / Blocker Ball Handle (Point O)
+        handleViewO = HandleView(this, "O").apply {
+            updateColor(Color.parseColor("#FF1744"))
+            updateHandleAlpha(initialAlpha)
+        }
+        val gripPosO = calculateGripFromAim(obstaclePoint, isOffsetInvertedO)
+        handleParamsO = createHandleLayoutParams(gripPosO)
+        setupHandleTouchListener(
+            handleViewO!!,
+            handleParamsO,
+            initialInverted = isOffsetInvertedO,
+            onInversionChanged = { isOffsetInvertedO = it }
+        ) { aimX, aimY, gripX, gripY ->
+            canvasOverlayView?.setPointO(aimX, aimY, gripX, gripY)
+            applyTableBoundedWindow()
+        }
+        windowManager.addView(handleViewO, handleParamsO)
+        canvasOverlayView?.setPointO(obstaclePoint.x, obstaclePoint.y, gripPosO.x, gripPosO.y)
+
+        applyTableBoundedWindow()
         syncHandlesVisibility()
     }
 
@@ -604,6 +650,8 @@ class OverlayService : Service() {
     private fun persistHandlePositions() {
         val canvas = canvasOverlayView ?: return
         prefsManager.saveTargetPoint(canvas.pointB)
+        prefsManager.saveCuePoint(canvas.pointC)
+        prefsManager.saveObstaclePoint(canvas.pointO)
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -929,6 +977,155 @@ class OverlayService : Service() {
             updateGhostUI(false)
         }
 
+        // Cue Ball & Deflection Physics Mode Toggle (Handle C)
+        val btnCueOn = controlView.findViewById<TextView>(R.id.btnCueOn)
+        val btnCueOff = controlView.findViewById<TextView>(R.id.btnCueOff)
+        fun updateCueModeUI(on: Boolean) {
+            if (on) {
+                btnCueOn?.setBackgroundResource(R.drawable.bg_control_btn_active)
+                btnCueOn?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+                btnCueOff?.setBackgroundResource(R.drawable.bg_control_btn)
+                btnCueOff?.setTextColor(Color.WHITE)
+            } else {
+                btnCueOn?.setBackgroundResource(R.drawable.bg_control_btn)
+                btnCueOn?.setTextColor(Color.WHITE)
+                btnCueOff?.setBackgroundResource(R.drawable.bg_control_btn_active)
+                btnCueOff?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+            }
+        }
+        updateCueModeUI(prefsManager.getShowCueMode())
+        btnCueOn?.setOnClickListener {
+            canvasOverlayView?.setShowCueMode(true)
+            updateCueModeUI(true)
+            syncHandlesVisibility()
+            applyTableBoundedWindow()
+        }
+        btnCueOff?.setOnClickListener {
+            canvasOverlayView?.setShowCueMode(false)
+            updateCueModeUI(false)
+            syncHandlesVisibility()
+            applyTableBoundedWindow()
+        }
+
+        // Side Spin (English) & Top/Back Spin Sliders
+        val tvSpinX = controlView.findViewById<TextView>(R.id.tvSpinXValue)
+        val seekSpinX = controlView.findViewById<SeekBar>(R.id.seekSpinX)
+        val tvSpinY = controlView.findViewById<TextView>(R.id.tvSpinYValue)
+        val seekSpinY = controlView.findViewById<SeekBar>(R.id.seekSpinY)
+        val btnResetSpin = controlView.findViewById<TextView>(R.id.btnResetSpin)
+
+        fun formatSpinX(pct: Int): String = when {
+            pct < -2 -> "L ${-pct}%"
+            pct > 2 -> "R +$pct%"
+            else -> "Center (0%)"
+        }
+
+        fun formatSpinY(pct: Int): String = when {
+            pct < -2 -> "Draw ${-pct}%"
+            pct > 2 -> "Follow +$pct%"
+            else -> "Stun (0%)"
+        }
+
+        val initSpinXPct = (prefsManager.getSpinX() * 100f).roundToInt().coerceIn(-100, 100)
+        val initSpinYPct = (prefsManager.getSpinY() * 100f).roundToInt().coerceIn(-100, 100)
+        seekSpinX?.progress = initSpinXPct
+        seekSpinY?.progress = initSpinYPct
+        tvSpinX?.text = getString(R.string.label_spin_x, formatSpinX(initSpinXPct))
+        tvSpinY?.text = getString(R.string.label_spin_y, formatSpinY(initSpinYPct))
+
+        seekSpinX?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val pct = progress.coerceIn(-100, 100)
+                tvSpinX?.text = getString(R.string.label_spin_x, formatSpinX(pct))
+                if (fromUser) canvasOverlayView?.setSpinX(pct / 100f)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val pct = (seekBar?.progress ?: 0).coerceIn(-100, 100)
+                canvasOverlayView?.setSpinX(pct / 100f)
+            }
+        })
+
+        seekSpinY?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val pct = progress.coerceIn(-100, 100)
+                tvSpinY?.text = getString(R.string.label_spin_y, formatSpinY(pct))
+                if (fromUser) canvasOverlayView?.setSpinY(pct / 100f)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val pct = (seekBar?.progress ?: 0).coerceIn(-100, 100)
+                canvasOverlayView?.setSpinY(pct / 100f)
+            }
+        })
+
+        btnResetSpin?.setOnClickListener {
+            seekSpinX?.progress = 0
+            seekSpinY?.progress = 0
+            tvSpinX?.text = getString(R.string.label_spin_x, formatSpinX(0))
+            tvSpinY?.text = getString(R.string.label_spin_y, formatSpinY(0))
+            canvasOverlayView?.setSpinX(0f)
+            canvasOverlayView?.setSpinY(0f)
+        }
+
+        // Obstacle / Blocker Ball Mode Toggle (Handle O)
+        val btnObstacleOn = controlView.findViewById<TextView>(R.id.btnObstacleOn)
+        val btnObstacleOff = controlView.findViewById<TextView>(R.id.btnObstacleOff)
+        fun updateObstacleUI(on: Boolean) {
+            if (on) {
+                btnObstacleOn?.setBackgroundResource(R.drawable.bg_control_btn_active)
+                btnObstacleOn?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+                btnObstacleOff?.setBackgroundResource(R.drawable.bg_control_btn)
+                btnObstacleOff?.setTextColor(Color.WHITE)
+            } else {
+                btnObstacleOn?.setBackgroundResource(R.drawable.bg_control_btn)
+                btnObstacleOn?.setTextColor(Color.WHITE)
+                btnObstacleOff?.setBackgroundResource(R.drawable.bg_control_btn_active)
+                btnObstacleOff?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+            }
+        }
+        updateObstacleUI(prefsManager.getShowObstacle())
+        btnObstacleOn?.setOnClickListener {
+            canvasOverlayView?.setShowObstacle(true)
+            updateObstacleUI(true)
+            syncHandlesVisibility()
+            applyTableBoundedWindow()
+        }
+        btnObstacleOff?.setOnClickListener {
+            canvasOverlayView?.setShowObstacle(false)
+            updateObstacleUI(false)
+            syncHandlesVisibility()
+            applyTableBoundedWindow()
+        }
+
+        // 3-Cushion (Triple Bank) Toggle
+        val btnTripleBankOn = controlView.findViewById<TextView>(R.id.btnTripleBankOn)
+        val btnTripleBankOff = controlView.findViewById<TextView>(R.id.btnTripleBankOff)
+        fun updateTripleBankUI(on: Boolean) {
+            if (on) {
+                btnTripleBankOn?.setBackgroundResource(R.drawable.bg_control_btn_active)
+                btnTripleBankOn?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+                btnTripleBankOff?.setBackgroundResource(R.drawable.bg_control_btn)
+                btnTripleBankOff?.setTextColor(Color.WHITE)
+            } else {
+                btnTripleBankOn?.setBackgroundResource(R.drawable.bg_control_btn)
+                btnTripleBankOn?.setTextColor(Color.WHITE)
+                btnTripleBankOff?.setBackgroundResource(R.drawable.bg_control_btn_active)
+                btnTripleBankOff?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+            }
+        }
+        updateTripleBankUI(prefsManager.getShowTripleBank())
+        btnTripleBankOn?.setOnClickListener {
+            canvasOverlayView?.setShowTripleBank(true)
+            updateTripleBankUI(true)
+            applyTableBoundedWindow()
+        }
+        btnTripleBankOff?.setOnClickListener {
+            canvasOverlayView?.setShowTripleBank(false)
+            updateTripleBankUI(false)
+            applyTableBoundedWindow()
+        }
+
         // 8. Feature 2: Line Color Picker (Preset Swatches & Hue Spectrum Slider)
         val density = resources.displayMetrics.density
         val btnColorWhite = controlView.findViewById<View>(R.id.btnColorWhite)
@@ -1237,15 +1434,22 @@ class OverlayService : Service() {
     }
 
     private fun syncHandlesVisibility() {
+        val canvas = canvasOverlayView
         if (isCanvasHidden || isCalibrationActive) {
             handleViewB?.visibility = View.GONE
+            handleViewC?.visibility = View.GONE
+            handleViewO?.visibility = View.GONE
             return
         }
         handleViewB?.visibility = View.VISIBLE
+        handleViewC?.visibility = if (canvas?.showCueMode == true) View.VISIBLE else View.GONE
+        handleViewO?.visibility = if (canvas?.showObstacle == true) View.VISIBLE else View.GONE
     }
 
     private fun updateAllHandlesAlpha(alpha: Int) {
         handleViewB?.updateHandleAlpha(alpha)
+        handleViewC?.updateHandleAlpha(alpha)
+        handleViewO?.updateHandleAlpha(alpha)
     }
 
     private fun updateAllHandlesColor(color: Int) {
@@ -1254,20 +1458,42 @@ class OverlayService : Service() {
 
     private fun repositionHandlesToAimPoints() {
         val canvas = canvasOverlayView ?: return
-        val hB = handleViewB ?: return
 
-        val gripPosB = calculateGripFromAim(canvas.pointB, isOffsetInvertedB)
-
-        handleParamsB.x = (gripPosB.x - handleSizePx / 2f).roundToInt()
-        handleParamsB.y = (gripPosB.y - handleSizePx / 2f).roundToInt()
-
-        try {
-            windowManager.updateViewLayout(hB, handleParamsB)
-        } catch (e: Exception) {
-            e.printStackTrace()
+        handleViewB?.let { hB ->
+            val gripPosB = calculateGripFromAim(canvas.pointB, isOffsetInvertedB)
+            handleParamsB.x = (gripPosB.x - handleSizePx / 2f).roundToInt()
+            handleParamsB.y = (gripPosB.y - handleSizePx / 2f).roundToInt()
+            try {
+                windowManager.updateViewLayout(hB, handleParamsB)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            canvas.setPointB(canvas.pointB.x, canvas.pointB.y, gripPosB.x, gripPosB.y)
         }
 
-        canvas.setPointB(canvas.pointB.x, canvas.pointB.y, gripPosB.x, gripPosB.y)
+        handleViewC?.let { hC ->
+            val gripPosC = calculateGripFromAim(canvas.pointC, isOffsetInvertedC)
+            handleParamsC.x = (gripPosC.x - handleSizePx / 2f).roundToInt()
+            handleParamsC.y = (gripPosC.y - handleSizePx / 2f).roundToInt()
+            try {
+                windowManager.updateViewLayout(hC, handleParamsC)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            canvas.setPointC(canvas.pointC.x, canvas.pointC.y, gripPosC.x, gripPosC.y)
+        }
+
+        handleViewO?.let { hO ->
+            val gripPosO = calculateGripFromAim(canvas.pointO, isOffsetInvertedO)
+            handleParamsO.x = (gripPosO.x - handleSizePx / 2f).roundToInt()
+            handleParamsO.y = (gripPosO.y - handleSizePx / 2f).roundToInt()
+            try {
+                windowManager.updateViewLayout(hO, handleParamsO)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            canvas.setPointO(canvas.pointO.x, canvas.pointO.y, gripPosO.x, gripPosO.y)
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -1410,7 +1636,7 @@ class OverlayService : Service() {
             canvasOverlayView = null
         }
 
-        // Remove floating handle
+        // Remove floating handles
         handleViewB?.let {
             try {
                 windowManager.removeView(it)
@@ -1418,6 +1644,22 @@ class OverlayService : Service() {
                 e.printStackTrace()
             }
             handleViewB = null
+        }
+        handleViewC?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            handleViewC = null
+        }
+        handleViewO?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            handleViewO = null
         }
 
         // Remove control bar

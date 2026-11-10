@@ -32,6 +32,12 @@ class HandleView(
         strokeCap = Paint.Cap.ROUND
     }
 
+    private val badgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = 9.5f * density
+        isFakeBoldText = true
+    }
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val size = (42f * density).toInt()
         setMeasuredDimension(size, size)
@@ -44,6 +50,8 @@ class HandleView(
         val currentAlpha = plusPaint.alpha
         plusPaint.color = color
         plusPaint.alpha = currentAlpha
+        badgePaint.color = color
+        badgePaint.alpha = currentAlpha
         invalidate()
     }
 
@@ -52,7 +60,9 @@ class HandleView(
      * without creating expensive GPU offscreen alpha layers for the window.
      */
     fun updateHandleAlpha(alphaInt: Int) {
-        plusPaint.alpha = alphaInt.coerceIn(25, 255)
+        val clamped = alphaInt.coerceIn(25, 255)
+        plusPaint.alpha = clamped
+        badgePaint.alpha = clamped
         invalidate()
     }
 
@@ -66,5 +76,9 @@ class HandleView(
         val armLength = 10f * density
         canvas.drawLine(cx - armLength, cy, cx + armLength, cy, plusPaint)
         canvas.drawLine(cx, cy - armLength, cx, cy + armLength, plusPaint)
+
+        if (label.isNotEmpty() && label != "B") {
+            canvas.drawText(label, cx + 4.5f * density, cy - 4.5f * density, badgePaint)
+        }
     }
 }

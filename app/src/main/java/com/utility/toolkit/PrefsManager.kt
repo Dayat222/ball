@@ -209,6 +209,96 @@ class PrefsManager(context: Context) {
     }
 
     /**
+     * Save and retrieve Cue Ball (Point C) position and toggle for spin/deflection physics.
+     */
+    fun saveCuePoint(pointC: PointF) {
+        prefs.edit().apply {
+            putFloat(KEY_PT_C_X, pointC.x)
+            putFloat(KEY_PT_C_Y, pointC.y)
+            putBoolean(KEY_CUE_INITIALIZED, true)
+            apply()
+        }
+    }
+
+    fun getCuePoint(screenWidth: Float, screenHeight: Float): PointF {
+        val hasPoint = prefs.getBoolean(KEY_CUE_INITIALIZED, false)
+        if (hasPoint) {
+            val cx = prefs.getFloat(KEY_PT_C_X, screenWidth * 0.32f)
+            val cy = prefs.getFloat(KEY_PT_C_Y, screenHeight * 0.55f)
+            return PointF(cx, cy)
+        }
+        return PointF(screenWidth * 0.32f, screenHeight * 0.55f)
+    }
+
+    fun saveShowCueMode(show: Boolean) {
+        prefs.edit().putBoolean(KEY_SHOW_CUE_MODE, show).apply()
+    }
+
+    fun getShowCueMode(): Boolean {
+        return prefs.getBoolean(KEY_SHOW_CUE_MODE, false)
+    }
+
+    /**
+     * Save and retrieve Obstacle / Blocker Ball (Point O) position and toggle.
+     */
+    fun saveObstaclePoint(pointO: PointF) {
+        prefs.edit().apply {
+            putFloat(KEY_PT_O_X, pointO.x)
+            putFloat(KEY_PT_O_Y, pointO.y)
+            putBoolean(KEY_OBSTACLE_INITIALIZED, true)
+            apply()
+        }
+    }
+
+    fun getObstaclePoint(screenWidth: Float, screenHeight: Float): PointF {
+        val hasPoint = prefs.getBoolean(KEY_OBSTACLE_INITIALIZED, false)
+        if (hasPoint) {
+            val ox = prefs.getFloat(KEY_PT_O_X, screenWidth * 0.65f)
+            val oy = prefs.getFloat(KEY_PT_O_Y, screenHeight * 0.45f)
+            return PointF(ox, oy)
+        }
+        return PointF(screenWidth * 0.65f, screenHeight * 0.45f)
+    }
+
+    fun saveShowObstacle(show: Boolean) {
+        prefs.edit().putBoolean(KEY_SHOW_OBSTACLE, show).apply()
+    }
+
+    fun getShowObstacle(): Boolean {
+        return prefs.getBoolean(KEY_SHOW_OBSTACLE, false)
+    }
+
+    /**
+     * Save and retrieve 3-Cushion (Triple Bank) toggle.
+     */
+    fun saveShowTripleBank(show: Boolean) {
+        prefs.edit().putBoolean(KEY_SHOW_TRIPLE_BANK, show).apply()
+    }
+
+    fun getShowTripleBank(): Boolean {
+        return prefs.getBoolean(KEY_SHOW_TRIPLE_BANK, false)
+    }
+
+    /**
+     * Save and retrieve English / Spin values: spinX [-1..1], spinY [-1..1].
+     */
+    fun saveSpinX(value: Float) {
+        prefs.edit().putFloat(KEY_SPIN_X, value.coerceIn(-1f, 1f)).apply()
+    }
+
+    fun getSpinX(): Float {
+        return prefs.getFloat(KEY_SPIN_X, 0f).coerceIn(-1f, 1f)
+    }
+
+    fun saveSpinY(value: Float) {
+        prefs.edit().putFloat(KEY_SPIN_Y, value.coerceIn(-1f, 1f)).apply()
+    }
+
+    fun getSpinY(): Float {
+        return prefs.getFloat(KEY_SPIN_Y, 0f).coerceIn(-1f, 1f)
+    }
+
+    /**
      * Save and retrieve full length guideline toggle (panjang garis sampai ke 6 lubang).
      */
     fun saveFullLengthGuides(isFull: Boolean) {
@@ -259,5 +349,19 @@ class PrefsManager(context: Context) {
         private const val KEY_JAW_SCALE = "jaw_scale"
         private const val KEY_MOUTH_SCALE = "mouth_scale"
         private const val KEY_SHOW_GHOST = "show_ghost_ball"
+
+        private const val KEY_PT_C_X = "pt_c_x"
+        private const val KEY_PT_C_Y = "pt_c_y"
+        private const val KEY_CUE_INITIALIZED = "cue_initialized"
+        private const val KEY_SHOW_CUE_MODE = "show_cue_mode"
+
+        private const val KEY_PT_O_X = "pt_o_x"
+        private const val KEY_PT_O_Y = "pt_o_y"
+        private const val KEY_OBSTACLE_INITIALIZED = "obstacle_initialized"
+        private const val KEY_SHOW_OBSTACLE = "show_obstacle_mode"
+
+        private const val KEY_SHOW_TRIPLE_BANK = "show_triple_bank"
+        private const val KEY_SPIN_X = "cue_spin_x"
+        private const val KEY_SPIN_Y = "cue_spin_y"
     }
 }

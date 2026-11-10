@@ -69,6 +69,26 @@ class CanvasOverlayView @JvmOverloads constructor(
     var showGhostBall: Boolean = true
         private set
 
+    /** Cue-ball & Spin/Deflection guide mode (Handle C + tangent/spin curve). */
+    var showCueMode: Boolean = false
+        private set
+
+    /** Obstacle / Blocker Ball mode (Handle O + ray collision masking). */
+    var showObstacle: Boolean = false
+        private set
+
+    /** 3-Cushion (Triple Bank) guide toggle. */
+    var showTripleBank: Boolean = false
+        private set
+
+    /** Horizontal sidespin [-1..1] (-1 = Left English, +1 = Right English). */
+    var spinX: Float = 0f
+        private set
+
+    /** Vertical spin [-1..1] (-1 = Backspin/Draw, 0 = Stun, +1 = Topspin/Follow). */
+    var spinY: Float = 0f
+        private set
+
     /**
      * Ball radius in px, derived from the calibrated table scale and the
      * user's fine-tune. Recomputed from the current boundary box so callers
@@ -126,6 +146,18 @@ class CanvasOverlayView @JvmOverloads constructor(
         private set
     private var gripB = PointF()
     private var hasGripB = false
+
+    // Cue ball coordinate and its offset finger grip (Handle C)
+    var pointC = PointF()
+        private set
+    private var gripC = PointF()
+    private var hasGripC = false
+
+    // Obstacle / Blocker ball coordinate and its offset finger grip (Handle O)
+    var pointO = PointF()
+        private set
+    private var gripO = PointF()
+    private var hasGripO = false
 
     var boundaryBox = RectF()
         private set
@@ -298,6 +330,76 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     private val textBounds = Rect()
+    private val deflectionPath = Path()
+
+    // Paint: Cue Ball (Point C) Ring & Incoming Line
+    private val cueRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.parseColor("#00E676")
+        strokeWidth = 1.6f * density
+    }
+
+    private val cueIncomingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.parseColor("#B300E676")
+        strokeWidth = 2.0f * density
+        strokeCap = Paint.Cap.ROUND
+        pathEffect = DashPathEffect(floatArrayOf(8f * density, 5f * density), 0f)
+    }
+
+    // Paint: 90-degree Stun Tangent Line (dotted reference)
+    private val stunTangentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.parseColor("#99FFFFFF")
+        strokeWidth = 1.6f * density
+        strokeCap = Paint.Cap.ROUND
+        pathEffect = DashPathEffect(floatArrayOf(4f * density, 5f * density), 0f)
+    }
+
+    // Paint: Post-Impact Spin Curve (Follow / Draw deflection trajectory)
+    private val spinCurvePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.parseColor("#00E676")
+        strokeWidth = 2.8f * density
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    // Paint: Obstacle / Blocker Ball (Point O) Ring & Forbidden Zone
+    private val obstacleRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.parseColor("#FF1744")
+        strokeWidth = 2.0f * density
+    }
+
+    private val obstacleCollisionZonePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.parseColor("#66FF1744")
+        strokeWidth = 1.2f * density
+        pathEffect = DashPathEffect(floatArrayOf(5f * density, 5f * density), 0f)
+    }
+
+    // Paint: Blocked / Obstructed Ray (dimmed red dashed line)
+    private val blockedRayPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.parseColor("#88FF1744")
+        strokeWidth = 2.0f * density
+        strokeCap = Paint.Cap.ROUND
+        pathEffect = DashPathEffect(floatArrayOf(4f * density, 6f * density), 0f)
+    }
+
+    // Paint: 3-Cushion (Triple Bank) Ray
+    private val tripleBankPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.parseColor("#E040FB")
+        strokeWidth = 2.6f * density
+        strokeCap = Paint.Cap.ROUND
+        pathEffect = DashPathEffect(floatArrayOf(12f * density, 5f * density, 3f * density, 5f * density), 0f)
+    }
+
+    private val tripleBankDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.parseColor("#E040FB")
+    }
 
     init {
         // Stealth: keep the overlay out of the accessibility tree. Another app
@@ -310,6 +412,8 @@ class CanvasOverlayView @JvmOverloads constructor(
         clampBoundaryBox(landSize.x, landSize.y)
 
         pointB = prefsManager.getTargetPoint(landSize.x, landSize.y)
+        pointC = prefsManager.getCuePoint(landSize.x, landSize.y)
+        pointO = prefsManager.getObstaclePoint(landSize.x, landSize.y)
 
         currentLineColor = prefsManager.getLineColor()
         currentBankLineColor = prefsManager.getSecondaryRayColor()
@@ -326,6 +430,11 @@ class CanvasOverlayView @JvmOverloads constructor(
         jawScale = prefsManager.getJawScale()
         mouthScale = prefsManager.getMouthScale()
         showGhostBall = prefsManager.getShowGhostBall()
+        showCueMode = prefsManager.getShowCueMode()
+        showObstacle = prefsManager.getShowObstacle()
+        showTripleBank = prefsManager.getShowTripleBank()
+        spinX = prefsManager.getSpinX()
+        spinY = prefsManager.getSpinY()
     }
 
     override fun getAccessibilityClassName(): CharSequence = "android.view.View"
@@ -537,10 +646,54 @@ class CanvasOverlayView @JvmOverloads constructor(
         invalidate()
     }
 
+    fun setShowCueMode(show: Boolean) {
+        showCueMode = show
+        prefsManager.saveShowCueMode(show)
+        invalidate()
+    }
+
+    fun setShowObstacle(show: Boolean) {
+        showObstacle = show
+        prefsManager.saveShowObstacle(show)
+        invalidate()
+    }
+
+    fun setShowTripleBank(show: Boolean) {
+        showTripleBank = show
+        prefsManager.saveShowTripleBank(show)
+        invalidate()
+    }
+
+    fun setSpinX(value: Float) {
+        spinX = value.coerceIn(-1f, 1f)
+        prefsManager.saveSpinX(spinX)
+        invalidate()
+    }
+
+    fun setSpinY(value: Float) {
+        spinY = value.coerceIn(-1f, 1f)
+        prefsManager.saveSpinY(spinY)
+        invalidate()
+    }
+
     fun setPointB(aimX: Float, aimY: Float, gripX: Float = aimX, gripY: Float = aimY) {
         pointB.set(aimX, aimY)
         gripB.set(gripX, gripY)
         hasGripB = (GeometryUtils.distance(aimX, aimY, gripX, gripY) > 5f)
+        invalidate()
+    }
+
+    fun setPointC(aimX: Float, aimY: Float, gripX: Float = aimX, gripY: Float = aimY) {
+        pointC.set(aimX, aimY)
+        gripC.set(gripX, gripY)
+        hasGripC = (GeometryUtils.distance(aimX, aimY, gripX, gripY) > 5f)
+        invalidate()
+    }
+
+    fun setPointO(aimX: Float, aimY: Float, gripX: Float = aimX, gripY: Float = aimY) {
+        pointO.set(aimX, aimY)
+        gripO.set(gripX, gripY)
+        hasGripO = (GeometryUtils.distance(aimX, aimY, gripX, gripY) > 5f)
         invalidate()
     }
 
@@ -585,9 +738,15 @@ class CanvasOverlayView @JvmOverloads constructor(
             drawBoundaryBox(canvas)
             drawEightCalibrationHandles(canvas)
         } else {
-            // Single-point target mode: stem tether + ring + 6 direct rays + 10 bank rays
+            // Single/Multi-point target mode: stem tethers + rings + 6 direct rays + bank rays + spin curves
             if (hasGripB) {
                 canvas.drawLine(gripB.x, gripB.y, pointB.x, pointB.y, stemLinePaint)
+            }
+            if (showCueMode && hasGripC) {
+                canvas.drawLine(gripC.x, gripC.y, pointC.x, pointC.y, stemLinePaint)
+            }
+            if (showObstacle && hasGripO) {
+                canvas.drawLine(gripO.x, gripO.y, pointO.x, pointO.y, stemLinePaint)
             }
             drawTargetAndRadialGuides(canvas)
         }
@@ -758,6 +917,160 @@ class CanvasOverlayView @JvmOverloads constructor(
 
         // Two-cushion banks. Same unfolding maths, one extra rail per path.
         drawDoubleBanks(canvas, bx, by, ballR, startDist)
+
+        // Three-cushion banks when enabled.
+        if (showTripleBank) {
+            drawTripleBanks(canvas, bx, by, ballR, startDist)
+        }
+    }
+
+    /**
+     * Three-rail banks: long -> side -> opposite long, or long -> opposite long -> side,
+     * into the corner pockets.
+     */
+    private fun drawTripleBanks(
+        canvas: Canvas,
+        bx: Float,
+        by: Float,
+        ballR: Float,
+        startDist: Float
+    ) {
+        val l = boundaryBox.left
+        val r = boundaryBox.right
+        val t = boundaryBox.top
+        val b = boundaryBox.bottom
+        val cx = boundaryBox.centerX()
+        val jaw = aim.cornerJawPx.toFloat()
+        val mouth = aim.middleHalfPx.toFloat()
+
+        val longA0 = l + jaw + ballR
+        val longB1 = r - jaw - ballR
+        val side0 = t + jaw + ballR
+        val side1 = b - jaw - ballR
+
+        val topP = (t + ballR).toDouble()
+        val botP = (b - ballR).toDouble()
+        val leftP = (l + ballR).toDouble()
+        val rightP = (r - ballR).toDouble()
+
+        val triples = arrayOf(
+            // Top -> Right -> Bottom into Top corners
+            TripleRoute(
+                AimGeometry.Axis.HORIZONTAL, topP, longA0.toDouble(), longB1.toDouble(),
+                AimGeometry.Axis.VERTICAL, rightP, side0.toDouble(), side1.toDouble(),
+                AimGeometry.Axis.HORIZONTAL, botP, longA0.toDouble(), longB1.toDouble(),
+                TOP_END_POCKETS
+            ),
+            // Top -> Left -> Bottom into Top corners
+            TripleRoute(
+                AimGeometry.Axis.HORIZONTAL, topP, longA0.toDouble(), longB1.toDouble(),
+                AimGeometry.Axis.VERTICAL, leftP, side0.toDouble(), side1.toDouble(),
+                AimGeometry.Axis.HORIZONTAL, botP, longA0.toDouble(), longB1.toDouble(),
+                TOP_END_POCKETS
+            ),
+            // Bottom -> Right -> Top into Bottom corners
+            TripleRoute(
+                AimGeometry.Axis.HORIZONTAL, botP, longA0.toDouble(), longB1.toDouble(),
+                AimGeometry.Axis.VERTICAL, rightP, side0.toDouble(), side1.toDouble(),
+                AimGeometry.Axis.HORIZONTAL, topP, longA0.toDouble(), longB1.toDouble(),
+                BOTTOM_END_POCKETS
+            ),
+            // Bottom -> Left -> Top into Bottom corners
+            TripleRoute(
+                AimGeometry.Axis.HORIZONTAL, botP, longA0.toDouble(), longB1.toDouble(),
+                AimGeometry.Axis.VERTICAL, leftP, side0.toDouble(), side1.toDouble(),
+                AimGeometry.Axis.HORIZONTAL, topP, longA0.toDouble(), longB1.toDouble(),
+                BOTTOM_END_POCKETS
+            )
+        )
+
+        val midGapMin = (cx - mouth - ballR).toDouble()
+        val midGapMax = (cx + mouth + ballR).toDouble()
+
+        for (tr in triples) {
+            for (pocket in tr.pockets) {
+                aim.gate(pocket, bx.toDouble(), by.toDouble())
+                if (!aim.bankFrom3(
+                        bx.toDouble(), by.toDouble(),
+                        aim.targetX, aim.targetY,
+                        tr.axis1, tr.plane1, tr.min1, tr.max1,
+                        tr.axis2, tr.plane2, tr.min2, tr.max2,
+                        tr.axis3, tr.plane3, tr.min3, tr.max3
+                    )
+                ) continue
+
+                // Reject if a horizontal rail bounce lands inside the side-pocket mouth gap
+                if (tr.axis1 == AimGeometry.Axis.HORIZONTAL && aim.hitX in midGapMin..midGapMax) continue
+                if (tr.axis3 == AimGeometry.Axis.HORIZONTAL && aim.hit3X in midGapMin..midGapMax) continue
+
+                // Re-thread gate from 3rd cushion contact
+                aim.gate(pocket, aim.hit3X, aim.hit3Y)
+                if (!aim.bankFrom3(
+                        bx.toDouble(), by.toDouble(),
+                        aim.targetX, aim.targetY,
+                        tr.axis1, tr.plane1, tr.min1, tr.max1,
+                        tr.axis2, tr.plane2, tr.min2, tr.max2,
+                        tr.axis3, tr.plane3, tr.min3, tr.max3
+                    )
+                ) continue
+
+                if (tr.axis1 == AimGeometry.Axis.HORIZONTAL && aim.hitX in midGapMin..midGapMax) continue
+                if (tr.axis3 == AimGeometry.Axis.HORIZONTAL && aim.hit3X in midGapMin..midGapMax) continue
+
+                drawTripleBankPath(canvas, bx, by, startDist)
+            }
+        }
+    }
+
+    private class TripleRoute(
+        val axis1: AimGeometry.Axis, val plane1: Double, val min1: Double, val max1: Double,
+        val axis2: AimGeometry.Axis, val plane2: Double, val min2: Double, val max2: Double,
+        val axis3: AimGeometry.Axis, val plane3: Double, val min3: Double, val max3: Double,
+        val pockets: Array<AimGeometry.Pocket>
+    )
+
+    private fun drawTripleBankPath(
+        canvas: Canvas,
+        bx: Float,
+        by: Float,
+        startDist: Float
+    ) {
+        val h1x = aim.hitX.toFloat()
+        val h1y = aim.hitY.toFloat()
+        val h2x = aim.hit2X.toFloat()
+        val h2y = aim.hit2Y.toFloat()
+        val h3x = aim.hit3X.toFloat()
+        val h3y = aim.hit3Y.toFloat()
+        val gx = aim.targetX.toFloat()
+        val gy = aim.targetY.toFloat()
+
+        val blocked = showObstacle && (
+            aim.isPathObstructed(bx.toDouble(), by.toDouble(), h1x.toDouble(), h1y.toDouble(), pointO.x.toDouble(), pointO.y.toDouble()) ||
+            aim.isPathObstructed(h1x.toDouble(), h1y.toDouble(), h2x.toDouble(), h2y.toDouble(), pointO.x.toDouble(), pointO.y.toDouble()) ||
+            aim.isPathObstructed(h2x.toDouble(), h2y.toDouble(), h3x.toDouble(), h3y.toDouble(), pointO.x.toDouble(), pointO.y.toDouble()) ||
+            aim.isPathObstructed(h3x.toDouble(), h3y.toDouble(), gx.toDouble(), gy.toDouble(), pointO.x.toDouble(), pointO.y.toDouble())
+        )
+        val lineP = if (blocked) blockedRayPaint else tripleBankPaint
+
+        val d1 = hypot(h1x - bx, h1y - by)
+        if (d1 < 1f) return
+
+        val ux = (h1x - bx) / d1
+        val uy = (h1y - by) / d1
+        val fromX = if (d1 > startDist) bx + ux * startDist else bx
+        val fromY = if (d1 > startDist) by + uy * startDist else by
+
+        bankRayPath.reset()
+        bankRayPath.moveTo(fromX, fromY)
+        bankRayPath.lineTo(h1x, h1y)
+        bankRayPath.lineTo(h2x, h2y)
+        bankRayPath.lineTo(h3x, h3y)
+        bankRayPath.lineTo(gx, gy)
+        canvas.drawPath(bankRayPath, lineP)
+
+        canvas.drawCircle(h1x, h1y, 3f * density, tripleBankDotPaint)
+        canvas.drawCircle(h2x, h2y, 2.5f * density, tripleBankDotPaint)
+        canvas.drawCircle(h3x, h3y, 2.5f * density, tripleBankDotPaint)
     }
 
     /**
@@ -849,6 +1162,13 @@ class CanvasOverlayView @JvmOverloads constructor(
         val gx = aim.targetX.toFloat()
         val gy = aim.targetY.toFloat()
 
+        val blocked = showObstacle && (
+            aim.isPathObstructed(bx.toDouble(), by.toDouble(), h1x.toDouble(), h1y.toDouble(), pointO.x.toDouble(), pointO.y.toDouble()) ||
+            aim.isPathObstructed(h1x.toDouble(), h1y.toDouble(), h2x.toDouble(), h2y.toDouble(), pointO.x.toDouble(), pointO.y.toDouble()) ||
+            aim.isPathObstructed(h2x.toDouble(), h2y.toDouble(), gx.toDouble(), gy.toDouble(), pointO.x.toDouble(), pointO.y.toDouble())
+        )
+        val lineP = if (blocked) blockedRayPaint else bankLinePaint
+
         val d1 = hypot(h1x - bx, h1y - by)
         if (d1 < 1f) return
 
@@ -862,7 +1182,7 @@ class CanvasOverlayView @JvmOverloads constructor(
         bankRayPath.lineTo(h1x, h1y)
         bankRayPath.lineTo(h2x, h2y)
         bankRayPath.lineTo(gx, gy)
-        canvas.drawPath(bankRayPath, bankLinePaint)
+        canvas.drawPath(bankRayPath, lineP)
 
         canvas.drawCircle(h1x, h1y, 3f * density, bankDotPaint)
         canvas.drawCircle(h2x, h2y, 2.5f * density, bankDotPaint)
@@ -957,6 +1277,13 @@ class CanvasOverlayView @JvmOverloads constructor(
         val dist2 = hypot(dx2, dy2)
         if (dist2 < 1f) return
 
+        val leg1Blocked = showObstacle &&
+            aim.isPathObstructed(bx.toDouble(), by.toDouble(), hx.toDouble(), hy.toDouble(), pointO.x.toDouble(), pointO.y.toDouble())
+        val leg2Blocked = showObstacle &&
+            aim.isPathObstructed(hx.toDouble(), hy.toDouble(), gateX.toDouble(), gateY.toDouble(), pointO.x.toDouble(), pointO.y.toDouble())
+        val lineP1 = if (leg1Blocked || leg2Blocked) blockedRayPaint else bankLinePaint
+        val lineP2 = if (leg1Blocked || leg2Blocked) blockedRayPaint else bankLinePaint
+
         if (isFullLengthGuides) {
             if (dist1 > startDist) {
                 val ux1 = dx1 / dist1
@@ -964,12 +1291,12 @@ class CanvasOverlayView @JvmOverloads constructor(
                 bankRayPath.reset()
                 bankRayPath.moveTo(bx + ux1 * startDist, by + uy1 * startDist)
                 bankRayPath.lineTo(hx, hy)
-                canvas.drawPath(bankRayPath, bankLinePaint)
+                canvas.drawPath(bankRayPath, lineP1)
             } else if (dist1 > 1f) {
                 bankRayPath.reset()
                 bankRayPath.moveTo(bx, by)
                 bankRayPath.lineTo(hx, hy)
-                canvas.drawPath(bankRayPath, bankLinePaint)
+                canvas.drawPath(bankRayPath, lineP1)
             }
 
             canvas.drawCircle(hx, hy, 3.5f * density, bankDotPaint)
@@ -980,16 +1307,8 @@ class CanvasOverlayView @JvmOverloads constructor(
             bankRayPath.reset()
             bankRayPath.moveTo(hx, hy)
             bankRayPath.lineTo(gateX + ux2 * extend, gateY + uy2 * extend)
-            canvas.drawPath(bankRayPath, bankLinePaint)
+            canvas.drawPath(bankRayPath, lineP2)
         } else {
-            // Short mode must not shorten the reflected leg.
-            //
-            // Near a cushion the incoming leg is only a few dp long (the bounce
-            // point sits next to the ball), so capping the whole path at the
-            // short length collapsed the bank guide into a stub that could not
-            // be used as an alignment reference. The reflection therefore always
-            // runs the full short length from the contact point, independent of
-            // how close the ball is to the cushion.
             val ux2 = dx2 / dist2
             val uy2 = dy2 / dist2
             val outgoing = shortLen.coerceAtMost(dist2)
@@ -1002,7 +1321,7 @@ class CanvasOverlayView @JvmOverloads constructor(
                     bankRayPath.reset()
                     bankRayPath.moveTo(bx + ux1 * startDist, by + uy1 * startDist)
                     bankRayPath.lineTo(bx + ux1 * shortLen, by + uy1 * shortLen)
-                    canvas.drawPath(bankRayPath, bankLinePaint)
+                    canvas.drawPath(bankRayPath, lineP1)
                 }
             } else {
                 // Bounce inside the short reach: full path, fixed-length reflection.
@@ -1012,7 +1331,7 @@ class CanvasOverlayView @JvmOverloads constructor(
                     bankRayPath.reset()
                     bankRayPath.moveTo(bx + ux1 * startDist, by + uy1 * startDist)
                     bankRayPath.lineTo(hx, hy)
-                    canvas.drawPath(bankRayPath, bankLinePaint)
+                    canvas.drawPath(bankRayPath, lineP1)
                 }
 
                 canvas.drawCircle(hx, hy, 3.5f * density, bankDotPaint)
@@ -1020,16 +1339,15 @@ class CanvasOverlayView @JvmOverloads constructor(
                 bankRayPath.reset()
                 bankRayPath.moveTo(hx, hy)
                 bankRayPath.lineTo(hx + ux2 * outgoing, hy + uy2 * outgoing)
-                canvas.drawPath(bankRayPath, bankLinePaint)
+                canvas.drawPath(bankRayPath, lineP2)
             }
         }
     }
 
     /**
-     * Target mode render: ball-fit ring, 6 direct pocket rays, 10 cushion banks.
-     * Direct rays and banks share one gate solver, so both agree on where the
-     * mouth really is (the old fixed 9.0dp / 11.2dp inset did not match the
-     * vertex-targeted bank rays).
+     * Target mode render: ball-fit ring, 6 direct pocket rays, 10 cushion banks,
+     * plus advanced table physics (Spin/English CIT+SIT, Post-Impact Cue Ball
+     * Deflection trajectory, Obstacle collision masking, and 3-Cushion banks).
      */
     private fun drawTargetAndRadialGuides(canvas: Canvas) {
         val bx = pointB.x
@@ -1038,6 +1356,8 @@ class CanvasOverlayView @JvmOverloads constructor(
         aim.rebound = bankRebound.toDouble()
         aim.jawScale = jawScale.toDouble()
         aim.mouthScale = mouthScale.toDouble()
+        aim.spinX = spinX.toDouble()
+        aim.spinY = spinY.toDouble()
         aim.configure(
             boundaryBox.left, boundaryBox.top,
             boundaryBox.right, boundaryBox.bottom,
@@ -1045,17 +1365,98 @@ class CanvasOverlayView @JvmOverloads constructor(
         )
         val ringRadius = aim.ballRadius.toFloat()
 
-        // 1. Ghost Ball (rendered FIRST underneath target so target ring & crosshair stay 100% crisp on top)
-        if (showGhostBall) {
-            val bestPocket = findBestPocket(bx, by)
-            if (bestPocket != null) {
-                aim.gate(bestPocket, bx.toDouble(), by.toDouble())
-                if (aim.gateFeasible) {
-                    val (gx, gy) = aim.ghostBall(bx, by, targetAimX = aim.targetX, targetAimY = aim.targetY)
+        // 0. Obstacle / Blocker Ball (Point O)
+        if (showObstacle) {
+            val ox = pointO.x
+            val oy = pointO.y
+            // 2R collision exclusion zone around the obstacle ball
+            canvas.drawCircle(ox, oy, ringRadius * 2f, obstacleCollisionZonePaint)
+            canvas.drawCircle(ox, oy, ringRadius, aimShadowPaint)
+            canvas.drawCircle(ox, oy, ringRadius, obstacleRingPaint)
+            val xArm = ringRadius * 0.45f
+            canvas.drawLine(ox - xArm, oy - xArm, ox + xArm, oy + xArm, obstacleRingPaint)
+            canvas.drawLine(ox - xArm, oy + xArm, ox + xArm, oy - xArm, obstacleRingPaint)
+        }
+
+        // 1. Ghost Ball & Cue-Ball Post-Impact Deflection (Spin/English Physics)
+        val bestPocket = findBestPocket(bx, by)
+        if (bestPocket != null) {
+            aim.gate(bestPocket, bx.toDouble(), by.toDouble())
+            if (aim.gateFeasible) {
+                val cueX = if (showCueMode) pointC.x else null
+                val cueY = if (showCueMode) pointC.y else null
+                val (gx, gy) = aim.ghostBall(bx, by, cueX, cueY, targetAimX = aim.targetX, targetAimY = aim.targetY)
+
+                if (showGhostBall) {
                     canvas.drawCircle(gx, gy, ringRadius, ghostShadowPaint)
                     canvas.drawCircle(gx, gy, ringRadius, ghostRingPaint)
                 }
+
+                if (showCueMode) {
+                    val cx = pointC.x
+                    val cy = pointC.y
+                    // Draw Cue Ball ring
+                    canvas.drawCircle(cx, cy, ringRadius, aimShadowPaint)
+                    canvas.drawCircle(cx, cy, ringRadius, cueRingPaint)
+
+                    // Draw spin contact dot inside Cue Ball ring
+                    val spinDotX = cx + spinX * (ringRadius * 0.65f)
+                    val spinDotY = cy - spinY * (ringRadius * 0.65f)
+                    canvas.drawCircle(spinDotX, spinDotY, 3.0f * density, aimCenterShadowPaint)
+                    canvas.drawCircle(spinDotX, spinDotY, 2.2f * density, bankDotPaint)
+
+                    // Incoming cue->ghost line (checked against obstacle ball if active)
+                    val incomingBlocked = showObstacle &&
+                        aim.isPathObstructed(cx.toDouble(), cy.toDouble(), gx.toDouble(), gy.toDouble(), pointO.x.toDouble(), pointO.y.toDouble())
+                    val inPaint = if (incomingBlocked) blockedRayPaint else cueIncomingPaint
+                    canvas.drawLine(cx, cy, gx, gy, inPaint)
+
+                    // Solve and render 90-degree stun tangent + post-impact follow/draw curve
+                    val guideLen = if (isFullLengthGuides) ringRadius * 9.0 else ringRadius * 5.5
+                    if (aim.solveCueDeflection(
+                            bx.toDouble(), by.toDouble(),
+                            cx.toDouble(), cy.toDouble(),
+                            aim.targetX, aim.targetY,
+                            guideLen
+                        )
+                    ) {
+                        // Stun tangent reference line
+                        canvas.drawLine(
+                            aim.deflectStartX.toFloat(),
+                            aim.deflectStartY.toFloat(),
+                            aim.deflectTangentEndX.toFloat(),
+                            aim.deflectTangentEndY.toFloat(),
+                            stunTangentPaint
+                        )
+                        // Actual spin-adjusted post-impact trajectory (Quadratic Bezier)
+                        deflectionPath.reset()
+                        deflectionPath.moveTo(aim.deflectStartX.toFloat(), aim.deflectStartY.toFloat())
+                        deflectionPath.quadTo(
+                            aim.deflectCtrlX.toFloat(),
+                            aim.deflectCtrlY.toFloat(),
+                            aim.deflectEndX.toFloat(),
+                            aim.deflectEndY.toFloat()
+                        )
+                        canvas.drawPath(deflectionPath, spinCurvePaint)
+                        canvas.drawCircle(
+                            aim.deflectEndX.toFloat(),
+                            aim.deflectEndY.toFloat(),
+                            3.0f * density,
+                            cueRingPaint
+                        )
+                    }
+                }
             }
+        } else if (showCueMode) {
+            // Even when no pocket is feasible, still draw the Cue Ball reticle & spin dot
+            val cx = pointC.x
+            val cy = pointC.y
+            canvas.drawCircle(cx, cy, ringRadius, aimShadowPaint)
+            canvas.drawCircle(cx, cy, ringRadius, cueRingPaint)
+            val spinDotX = cx + spinX * (ringRadius * 0.65f)
+            val spinDotY = cy - spinY * (ringRadius * 0.65f)
+            canvas.drawCircle(spinDotX, spinDotY, 3.0f * density, aimCenterShadowPaint)
+            canvas.drawCircle(spinDotX, spinDotY, 2.2f * density, bankDotPaint)
         }
 
         // 2. Ball-Fit Ring: high-contrast hollow reticle matching ball size
@@ -1085,14 +1486,20 @@ class CanvasOverlayView @JvmOverloads constructor(
         val startDist = ringRadius + (3f * density)
         val shortLen = 85f * density
 
-        // 5. Six direct pocket rays
+        // 5. Six direct pocket rays (with obstacle collision masking)
         for (pocket in allPockets) {
             aim.gate(pocket, bx.toDouble(), by.toDouble())
             if (!aim.gateFeasible) continue
-            drawDirectRay(canvas, bx, by, startDist, shortLen, sixLinePaint)
+            val isBlocked = showObstacle && aim.isPathObstructed(
+                bx.toDouble(), by.toDouble(),
+                aim.targetX, aim.targetY,
+                pointO.x.toDouble(), pointO.y.toDouble()
+            )
+            val rayPaint = if (isBlocked) blockedRayPaint else sixLinePaint
+            drawDirectRay(canvas, bx, by, startDist, shortLen, rayPaint)
         }
 
-        // 4. Ten cushion bank rays
+        // 6. Cushion bank rays (1-rail, 2-rail, and 3-rail)
         if (showBankGuides) {
             drawBankGuides(canvas, bx, by, ringRadius, startDist, shortLen)
         }

@@ -40,6 +40,11 @@
     <string name="label_jaw">Corner Jaw: %1$d%%</string>
     <string name="label_mouth">Side Mouth: %1$d%%</string>
     <string name="label_rebound">Bank Rebound: %1$d%%</string>
+    <string name="label_spin_x">Side Spin (English): %1$s</string>
+    <string name="label_spin_y">Top/Back Spin: %1$s</string>
+    <string name="label_cue_mode">Cue Ball &amp; Deflection (Handle C)</string>
+    <string name="label_obstacle_mode">Obstacle / Blocker (Handle O)</string>
+    <string name="label_triple_bank">3-Cushion Banks (3-Rail)</string>
     <string name="label_line_color">Line Color</string>
     <string name="label_bank_line_color">Bank Ray Color</string>
     <string name="label_hue">Spectrum Hue: %1$d°</string>

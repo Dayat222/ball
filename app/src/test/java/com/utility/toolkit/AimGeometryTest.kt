@@ -45,8 +45,8 @@ class AimGeometryTest {
         assertEquals(AimGeometry.BALL_RADIUS_MM * 1.2, big.ballRadius, 1e-3)
 
         val clamped = table(5f)
-        assertEquals(1.5, clamped.scaleCorrection, 1e-9)
-        assertEquals(AimGeometry.BALL_RADIUS_MM * 1.5, clamped.ballRadius, 1e-3)
+        assertEquals(1.6, clamped.scaleCorrection, 1e-9)
+        assertEquals(AimGeometry.BALL_RADIUS_MM * 1.6, clamped.ballRadius, 1e-3)
     }
 
     // ----------------------------------------------------------------- gate
@@ -312,5 +312,87 @@ class AimGeometryTest {
         // Straight shot directly right -> ghost ball should sit exactly 2R to the left
         assertEquals(1270f - 2f * g.ballRadius.toFloat(), gx, 1e-3f)
         assertEquals(635f, gy, 1e-3f)
+    }
+
+    @Test
+    fun spinInducedThrowShiftsGhostBallLateral() {
+        val g = table()
+        val (gx0, gy0) = g.ghostBall(1270f, 635f, targetAimX = 2540.0, targetAimY = 635.0)
+
+        g.spinX = 1.0 // Full right English
+        val (_, gyRight) = g.ghostBall(1270f, 635f, targetAimX = 2540.0, targetAimY = 635.0)
+        assertTrue("Right English must shift ghost ball laterally", abs(gyRight - gy0) > 0.5f)
+        assertEquals(gx0, 1270f - 2f * g.ballRadius.toFloat(), 0.5f)
+    }
+
+    @Test
+    fun sideSpinShiftsOneCushionBankContactPoint() {
+        val g = table()
+        val plane = (AimGeometry.TABLE_WIDTH_MM - AimGeometry.BALL_RADIUS_MM).toFloat()
+
+        g.spinX = 0.0
+        assertTrue(g.bankFrom(1000.0, 400.0, 2000.0, 400.0, AimGeometry.Axis.HORIZONTAL, plane, -1, 0.0, 2540.0))
+        val centerHitX = g.hitX
+
+        g.spinX = 1.0 // Right English
+        assertTrue(g.bankFrom(1000.0, 400.0, 2000.0, 400.0, AimGeometry.Axis.HORIZONTAL, plane, -1, 0.0, 2540.0))
+        val rightSpinHitX = g.hitX
+
+        g.spinX = -1.0 // Left English
+        assertTrue(g.bankFrom(1000.0, 400.0, 2000.0, 400.0, AimGeometry.Axis.HORIZONTAL, plane, -1, 0.0, 2540.0))
+        val leftSpinHitX = g.hitX
+
+        assertTrue("Right and Left English must shift cushion contact in opposite directions",
+            (rightSpinHitX - centerHitX) * (leftSpinHitX - centerHitX) < 0.0)
+    }
+
+    @Test
+    fun tripleBankSatisfiesMirrorInvariantAtAllThreeContacts() {
+        val g = table()
+        val r = AimGeometry.BALL_RADIUS_MM
+        val top = r
+        val bottom = AimGeometry.TABLE_WIDTH_MM - r
+        val right = AimGeometry.TABLE_LENGTH_MM - r
+
+        g.gate(AimGeometry.Pocket.TOP_LEFT, 600.0, 500.0)
+        val ok = g.bankFrom3(
+            bx = 600.0, by = 500.0,
+            pocketX = g.targetX, pocketY = g.targetY,
+            axis1 = AimGeometry.Axis.HORIZONTAL, plane1 = top, railMin1 = 0.0, railMax1 = 2540.0,
+            axis2 = AimGeometry.Axis.VERTICAL, plane2 = right, railMin2 = 0.0, railMax2 = 1270.0,
+            axis3 = AimGeometry.Axis.HORIZONTAL, plane3 = bottom, railMin3 = 0.0, railMax3 = 2540.0
+        )
+        assertTrue("Triple bank should find a valid 3-rail unfolded path", ok)
+        assertEquals(top, g.hitY, 1e-6)
+        assertEquals(right, g.hit2X, 1e-6)
+        assertEquals(bottom, g.hit3Y, 1e-6)
+    }
+
+    @Test
+    fun obstacleMaskingDetectsCollisionAlongSegment() {
+        val g = table()
+        // Ball path from (500, 635) to (2000, 635)
+        // Obstacle directly on the line at (1200, 635) -> obstructed
+        assertTrue(g.isPathObstructed(500.0, 635.0, 2000.0, 635.0, 1200.0, 635.0))
+        // Obstacle 1.5 radii off the line (< 2R) -> still obstructed
+        assertTrue(g.isPathObstructed(500.0, 635.0, 2000.0, 635.0, 1200.0, 635.0 + g.ballRadius * 1.5))
+        // Obstacle 3 radii off the line (> 2R) -> clear
+        assertFalse(g.isPathObstructed(500.0, 635.0, 2000.0, 635.0, 1200.0, 635.0 + g.ballRadius * 3.0))
+    }
+
+    @Test
+    fun cueDeflectionFollowVersusDrawDivergesFromTangent() {
+        val g = table()
+        // Cut shot: Cue at (800, 800), Target at (1200, 635), Pocket at (2540, 635)
+        g.spinY = 1.0 // Full Topspin (Follow)
+        assertTrue(g.solveCueDeflection(1200.0, 635.0, 800.0, 800.0, 2540.0, 635.0))
+        val followEndX = g.deflectEndX
+
+        g.spinY = -1.0 // Full Backspin (Draw)
+        assertTrue(g.solveCueDeflection(1200.0, 635.0, 800.0, 800.0, 2540.0, 635.0))
+        val drawEndX = g.deflectEndX
+
+        // Target is potted toward +X (2540), so topspin carries the cue ball further in +X than draw
+        assertTrue("Topspin must carry further forward (+X) than backspin", followEndX > drawEndX + 20.0)
     }
 }

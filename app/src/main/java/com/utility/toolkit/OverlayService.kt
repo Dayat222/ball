@@ -105,6 +105,12 @@ class OverlayService : Service() {
     private var btnAutoVisionOff: TextView? = null
     private var visionPixelBuffer: IntArray = IntArray(0)
     private var visionRowBytes: ByteArray = ByteArray(0)
+    @Volatile
+    private var isVisionFrameBusy = false
+    private val isMainUpdatePending = java.util.concurrent.atomic.AtomicBoolean(false)
+    private var visionScale = 1.0f
+    private var lastCapW = 0
+    private var lastCapH = 0
 
     private fun isSecureCaptureActive(): Boolean = stealthHideCapture || isAutoVisionActive
 
@@ -1593,39 +1599,60 @@ class OverlayService : Service() {
 
     private fun repositionHandlesToAimPoints() {
         val canvas = canvasOverlayView ?: return
+        updateHandleBPositionOnly(canvas)
+        updateHandleCPositionOnly(canvas)
+        updateHandleOPositionOnly(canvas)
+    }
 
+    private fun updateHandleBPositionOnly(canvas: CanvasOverlayView) {
         handleViewB?.let { hB ->
             val gripPosB = calculateGripFromAim(canvas.pointB, isOffsetInvertedB)
-            handleParamsB.x = (gripPosB.x - handleSizePx / 2f).roundToInt()
-            handleParamsB.y = (gripPosB.y - handleSizePx / 2f).roundToInt()
-            try {
-                windowManager.updateViewLayout(hB, handleParamsB)
-            } catch (e: Exception) {
-                e.printStackTrace()
+            val newX = (gripPosB.x - handleSizePx / 2f).roundToInt()
+            val newY = (gripPosB.y - handleSizePx / 2f).roundToInt()
+            if (abs(handleParamsB.x - newX) >= 1 || abs(handleParamsB.y - newY) >= 1) {
+                handleParamsB.x = newX
+                handleParamsB.y = newY
+                try {
+                    windowManager.updateViewLayout(hB, handleParamsB)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
             canvas.setPointB(canvas.pointB.x, canvas.pointB.y, gripPosB.x, gripPosB.y)
         }
+    }
 
+    private fun updateHandleCPositionOnly(canvas: CanvasOverlayView) {
         handleViewC?.let { hC ->
             val gripPosC = calculateGripFromAim(canvas.pointC, isOffsetInvertedC)
-            handleParamsC.x = (gripPosC.x - handleSizePx / 2f).roundToInt()
-            handleParamsC.y = (gripPosC.y - handleSizePx / 2f).roundToInt()
-            try {
-                windowManager.updateViewLayout(hC, handleParamsC)
-            } catch (e: Exception) {
-                e.printStackTrace()
+            val newX = (gripPosC.x - handleSizePx / 2f).roundToInt()
+            val newY = (gripPosC.y - handleSizePx / 2f).roundToInt()
+            if (abs(handleParamsC.x - newX) >= 1 || abs(handleParamsC.y - newY) >= 1) {
+                handleParamsC.x = newX
+                handleParamsC.y = newY
+                try {
+                    windowManager.updateViewLayout(hC, handleParamsC)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
             canvas.setPointC(canvas.pointC.x, canvas.pointC.y, gripPosC.x, gripPosC.y)
         }
+    }
 
+    private fun updateHandleOPositionOnly(canvas: CanvasOverlayView) {
         handleViewO?.let { hO ->
             val gripPosO = calculateGripFromAim(canvas.pointO, isOffsetInvertedO)
-            handleParamsO.x = (gripPosO.x - handleSizePx / 2f).roundToInt()
-            handleParamsO.y = (gripPosO.y - handleSizePx / 2f).roundToInt()
-            try {
-                windowManager.updateViewLayout(hO, handleParamsO)
-            } catch (e: Exception) {
-                e.printStackTrace()
+            val newX = (gripPosO.x - handleSizePx / 2f).roundToInt()
+            val newY = (gripPosO.y - handleSizePx / 2f).roundToInt()
+            if (abs(handleParamsO.x - newX) >= 1 || abs(handleParamsO.y - newY) >= 1) {
+                handleParamsO.x = newX
+                handleParamsO.y = newY
+                try {
+                    windowManager.updateViewLayout(hO, handleParamsO)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
             canvas.setPointO(canvas.pointO.x, canvas.pointO.y, gripPosO.x, gripPosO.y)
         }
@@ -1635,6 +1662,9 @@ class OverlayService : Service() {
         super.onConfigurationChanged(newConfig)
         applyTableBoundedWindow()
         repositionHandlesToAimPoints()
+        if (isAutoVisionActive) {
+            reconfigureVisionDisplay()
+        }
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -1789,10 +1819,54 @@ class OverlayService : Service() {
             if (!isAutoVisionActive) return
             try {
                 processLatestVisionFrame()
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 e.printStackTrace()
             }
-            visionHandler?.postDelayed(this, 85L)
+            visionHandler?.postDelayed(this, 140L)
+        }
+    }
+
+    private fun reconfigureVisionDisplay() {
+        val proj = mediaProjection ?: return
+        val handler = visionHandler ?: return
+        try {
+            val realSize = getRealScreenSize()
+            val screenW = kotlin.math.max(realSize.x, realSize.y)
+            val screenH = kotlin.math.min(realSize.x, realSize.y)
+            val densityDpi = resources.displayMetrics.densityDpi
+
+            val maxDim = 960f
+            visionScale = if (screenW > maxDim) maxDim / screenW else 1.0f
+            val capW = (((screenW * visionScale).roundToInt() / 2) * 2).coerceAtLeast(64)
+            val capH = (((screenH * visionScale).roundToInt() / 2) * 2).coerceAtLeast(64)
+
+            if (capW == lastCapW && capH == lastCapH && virtualDisplay != null) return
+
+            lastCapW = capW
+            lastCapH = capH
+
+            try {
+                virtualDisplay?.release()
+            } catch (_: Throwable) {}
+            try {
+                imageReader?.close()
+            } catch (_: Throwable) {}
+
+            val reader = ImageReader.newInstance(capW, capH, PixelFormat.RGBA_8888, 2)
+            imageReader = reader
+
+            virtualDisplay = proj.createVirtualDisplay(
+                "ToolkitVisionDisplay",
+                capW,
+                capH,
+                densityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                reader.surface,
+                null,
+                handler
+            )
+        } catch (e: Throwable) {
+            e.printStackTrace()
         }
     }
 
@@ -1814,18 +1888,25 @@ class OverlayService : Service() {
             val screenH = kotlin.math.min(realSize.x, realSize.y)
             val densityDpi = resources.displayMetrics.densityDpi
 
+            val maxDim = 960f
+            visionScale = if (screenW > maxDim) maxDim / screenW else 1.0f
+            val capW = (((screenW * visionScale).roundToInt() / 2) * 2).coerceAtLeast(64)
+            val capH = (((screenH * visionScale).roundToInt() / 2) * 2).coerceAtLeast(64)
+            lastCapW = capW
+            lastCapH = capH
+
             val thread = HandlerThread("BallVisionWorker").apply { start() }
             visionThread = thread
             val handler = Handler(thread.looper)
             visionHandler = handler
 
-            val reader = ImageReader.newInstance(screenW, screenH, PixelFormat.RGBA_8888, 2)
+            val reader = ImageReader.newInstance(capW, capH, PixelFormat.RGBA_8888, 2)
             imageReader = reader
 
             virtualDisplay = projection.createVirtualDisplay(
                 "ToolkitVisionDisplay",
-                screenW,
-                screenH,
+                capW,
+                capH,
                 densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 reader.surface,
@@ -1834,11 +1915,13 @@ class OverlayService : Service() {
             )
 
             isAutoVisionActive = true
+            isVisionFrameBusy = false
+            isMainUpdatePending.set(false)
             prefsManager.saveAutoSnapEnabled(true)
             updateAutoVisionUI(true)
             applyStealthFlagsToAllWindows()
 
-            handler.postDelayed(visionScanTick, 120L)
+            handler.postDelayed(visionScanTick, 140L)
             Toast.makeText(this, "Auto-Ball Vision: ON (High-Precision Snap aktif)", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             e.printStackTrace()
@@ -1849,26 +1932,34 @@ class OverlayService : Service() {
 
     private fun stopAutoVisionPipeline() {
         isAutoVisionActive = false
+        isVisionFrameBusy = false
+        isMainUpdatePending.set(false)
         prefsManager.saveAutoSnapEnabled(false)
         visionHandler?.removeCallbacksAndMessages(null)
         try {
             virtualDisplay?.release()
-        } catch (_: Exception) {}
+        } catch (_: Throwable) {}
         virtualDisplay = null
 
         try {
             imageReader?.close()
-        } catch (_: Exception) {}
+        } catch (_: Throwable) {}
         imageReader = null
 
         try {
             mediaProjection?.stop()
-        } catch (_: Exception) {}
+        } catch (_: Throwable) {}
         mediaProjection = null
 
         visionThread?.quitSafely()
         visionThread = null
         visionHandler = null
+        lastCapW = 0
+        lastCapH = 0
+
+        try {
+            startForegroundServiceWithNotification(withMediaProjection = false)
+        } catch (_: Throwable) {}
 
         mainHandler.post {
             canvasOverlayView?.setDetectedBalls(emptyList())
@@ -1882,7 +1973,18 @@ class OverlayService : Service() {
         if (isCanvasHidden || isCalibrationActive || isHandleDragging) return
         val reader = imageReader ?: return
 
-        val image = reader.acquireLatestImage() ?: return
+        if (isVisionFrameBusy) return
+        isVisionFrameBusy = true
+
+        val image = try {
+            reader.acquireLatestImage()
+        } catch (_: Throwable) {
+            null
+        } ?: run {
+            isVisionFrameBusy = false
+            return
+        }
+
         try {
             val plane = image.planes.firstOrNull() ?: return
             val buffer = plane.buffer
@@ -1892,11 +1994,13 @@ class OverlayService : Service() {
             val box = canvas.boundaryBox
             val imgW = image.width
             val imgH = image.height
+            val scale = visionScale
+            val invScale = if (scale > 0f) 1f / scale else 1f
 
-            val left = box.left.roundToInt().coerceIn(0, imgW - 1)
-            val top = box.top.roundToInt().coerceIn(0, imgH - 1)
-            val right = box.right.roundToInt().coerceIn(left + 1, imgW)
-            val bottom = box.bottom.roundToInt().coerceIn(top + 1, imgH)
+            val left = (box.left * scale).roundToInt().coerceIn(0, imgW - 1)
+            val top = (box.top * scale).roundToInt().coerceIn(0, imgH - 1)
+            val right = (box.right * scale).roundToInt().coerceIn(left + 1, imgW)
+            val bottom = (box.bottom * scale).roundToInt().coerceIn(top + 1, imgH)
             val cropW = right - left
             val cropH = bottom - top
             if (cropW < 32 || cropH < 32) return
@@ -1932,11 +2036,11 @@ class OverlayService : Service() {
                 }
             }
 
-            val ballR = canvas.ballRadiusPx
-            val curBX = canvas.pointB.x
-            val curBY = canvas.pointB.y
-            val curCX = if (canvas.showCueMode) canvas.pointC.x else null
-            val curCY = if (canvas.showCueMode) canvas.pointC.y else null
+            val ballR = canvas.ballRadiusPx * scale
+            val curBX = canvas.pointB.x * scale
+            val curBY = canvas.pointB.y * scale
+            val curCX = if (canvas.showCueMode) canvas.pointC.x * scale else null
+            val curCY = if (canvas.showCueMode) canvas.pointC.y * scale else null
 
             val result = BallVisionDetector.detectBalls(
                 pixels = visionPixelBuffer,
@@ -1951,47 +2055,95 @@ class OverlayService : Service() {
                 currentCueY = curCY
             )
 
-            mainHandler.post {
-                if (!isAutoVisionActive || isHandleDragging) return@post
-                canvas.setDetectedBalls(result.allBalls)
+            // Map detected ball coordinates back to full screen space
+            val mappedBalls = result.allBalls.map { b ->
+                BallVisionDetector.DetectedBall(
+                    x = b.x * invScale,
+                    y = b.y * invScale,
+                    score = b.score,
+                    isCueCandidate = b.isCueCandidate
+                )
+            }
+            val mappedTarget = result.targetBall?.let { tb ->
+                BallVisionDetector.DetectedBall(
+                    x = tb.x * invScale,
+                    y = tb.y * invScale,
+                    score = tb.score,
+                    isCueCandidate = tb.isCueCandidate
+                )
+            }
+            val mappedCue = result.cueBall?.let { cb ->
+                BallVisionDetector.DetectedBall(
+                    x = cb.x * invScale,
+                    y = cb.y * invScale,
+                    score = cb.score,
+                    isCueCandidate = cb.isCueCandidate
+                )
+            }
 
-                // Magnetic snap Target Ball (Point B) with adaptive damping + zero-jitter lock
-                result.targetBall?.let { tb ->
-                    val dist = hypot(tb.x - canvas.pointB.x, tb.y - canvas.pointB.y)
-                    if (dist <= ballR * 5.0f) {
-                        if (dist <= 1.2f) {
-                            canvas.pointB.set(tb.x, tb.y)
-                        } else {
-                            val ratio = if (dist < ballR * 1.5f) 0.72f else 0.50f
-                            val snapX = canvas.pointB.x + (tb.x - canvas.pointB.x) * ratio
-                            val snapY = canvas.pointB.y + (tb.y - canvas.pointB.y) * ratio
-                            canvas.pointB.set(snapX, snapY)
-                        }
-                        repositionHandlesToAimPoints()
-                        applyTableBoundedWindow()
-                    }
-                }
+            if (isMainUpdatePending.compareAndSet(false, true)) {
+                mainHandler.post {
+                    try {
+                        if (!isAutoVisionActive || isHandleDragging) return@post
+                        canvas.setDetectedBalls(mappedBalls)
 
-                // Magnetic snap Cue Ball (Point C) when Cue Mode is active
-                if (canvas.showCueMode) {
-                    result.cueBall?.let { cb ->
-                        val distC = hypot(cb.x - canvas.pointC.x, cb.y - canvas.pointC.y)
-                        if (distC <= ballR * 6.0f) {
-                            if (distC <= 1.2f) {
-                                canvas.pointC.set(cb.x, cb.y)
-                            } else {
-                                val ratioC = if (distC < ballR * 1.5f) 0.72f else 0.50f
-                                val snapCX = canvas.pointC.x + (cb.x - canvas.pointC.x) * ratioC
-                                val snapCY = canvas.pointC.y + (cb.y - canvas.pointC.y) * ratioC
-                                canvas.pointC.set(snapCX, snapCY)
+                        val fullBallR = canvas.ballRadiusPx
+                        var movedB = false
+                        var movedC = false
+
+                        // Magnetic snap Target Ball (Point B) with adaptive damping + zero-jitter lock
+                        mappedTarget?.let { tb ->
+                            val dist = hypot(tb.x - canvas.pointB.x, tb.y - canvas.pointB.y)
+                            if (dist <= fullBallR * 5.0f && dist > 0.05f) {
+                                if (dist <= 1.2f) {
+                                    canvas.pointB.set(tb.x, tb.y)
+                                } else {
+                                    val ratio = if (dist < fullBallR * 1.5f) 0.72f else 0.50f
+                                    val snapX = canvas.pointB.x + (tb.x - canvas.pointB.x) * ratio
+                                    val snapY = canvas.pointB.y + (tb.y - canvas.pointB.y) * ratio
+                                    canvas.pointB.set(snapX, snapY)
+                                }
+                                movedB = true
                             }
-                            repositionHandlesToAimPoints()
                         }
+
+                        // Magnetic snap Cue Ball (Point C) when Cue Mode is active
+                        if (canvas.showCueMode) {
+                            mappedCue?.let { cb ->
+                                val distC = hypot(cb.x - canvas.pointC.x, cb.y - canvas.pointC.y)
+                                if (distC <= fullBallR * 6.0f && distC > 0.05f) {
+                                    if (distC <= 1.2f) {
+                                        canvas.pointC.set(cb.x, cb.y)
+                                    } else {
+                                        val ratioC = if (distC < fullBallR * 1.5f) 0.72f else 0.50f
+                                        val snapCX = canvas.pointC.x + (cb.x - canvas.pointC.x) * ratioC
+                                        val snapCY = canvas.pointC.y + (cb.y - canvas.pointC.y) * ratioC
+                                        canvas.pointC.set(snapCX, snapCY)
+                                    }
+                                    movedC = true
+                                }
+                            }
+                        }
+
+                        if (movedB) {
+                            updateHandleBPositionOnly(canvas)
+                            applyTableBoundedWindow()
+                        }
+                        if (movedC) {
+                            updateHandleCPositionOnly(canvas)
+                        }
+                    } finally {
+                        isMainUpdatePending.set(false)
                     }
                 }
             }
+        } catch (t: Throwable) {
+            t.printStackTrace()
         } finally {
-            image.close()
+            try {
+                image.close()
+            } catch (_: Throwable) {}
+            isVisionFrameBusy = false
         }
     }
 

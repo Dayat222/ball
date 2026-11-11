@@ -717,6 +717,7 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     fun setDetectedBalls(balls: List<BallVisionDetector.DetectedBall>) {
+        if (detectedBalls == balls) return
         detectedBalls = balls
         invalidate()
     }

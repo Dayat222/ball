@@ -1,7 +1,7 @@
 {
-  "versionCode": 31,
-  "versionName": "4.1.0",
+  "versionCode": 32,
+  "versionName": "4.2.0",
   "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-latest.apk",
-  "sha256": "e4b51251a59cf449ea609fb7c7d93d3f34785ada6aaa53a1f05187fecd26c5ab",
-  "changelog": "Versi 4.1.0 — High-Precision Auto-Ball Vision v2:\n- 16-Point Trimmed Radial & 3-Tap Perimeter Sampling: tahan bola belang (stripes), bola menempel ban (cushion-frozen), kluster rapat, dan bayangan stik.\n- Deteksi Tone-on-Tone & Klasifikasi Cue Ball Anti-Stripe: mendeteksi bola hijau/biru senada karpet melalui highlight specular, serta memisahkan bola putih dari bola belang secara akurat.\n- Pipeline 12Hz Bulk Row Transfer & Adaptive Lock: transfer memori per-baris yang jauh lebih cepat, snap adaptif bebas jitter, dan FLAG_SECURE otomatis selama vision aktif."
+  "sha256": "",
+  "changelog": "Versi 4.2.0 — Hardening Stabilitas & Anti-Crash:\n- Downscaled Capture Buffer: batas resolusi virtual display 960px menghemat 80% RAM & GPU footprint, konsumsi CPU < 5%, mencegah thermal throttling & force close oleh LMK/battery manager.\n- Binder IPC Deduplication: pembaruan layout handle hanya dikirim saat koordinat bergeser >= 1px, mencegah spam updateViewLayout & freeze/ANR pada main thread.\n- Android 14+ MediaProjection Race Fix: mitigasi SecurityException pada API 34 dengan menahan lifecycle activity saat inisialisasi capture token.\n- Dynamic Orientation Sync: rekonfigurasi otomatis VirtualDisplay & ImageReader saat rotasi layar tanpa merusak buffer queue."
 }

@@ -48,7 +48,12 @@ class MainActivity : AppCompatActivity() {
                 putExtra(OverlayService.EXTRA_RESULT_DATA, result.data)
             }
             ContextCompat.startForegroundService(this, serviceIntent)
-            finish()
+            // Keep Activity visible briefly on Android 14+ so MediaProjection binds before finish()
+            window.decorView.postDelayed({
+                if (!isFinishing && !isDestroyed) {
+                    finish()
+                }
+            }, 350L)
         } else {
             Toast.makeText(this, "Izin tangkapan layar dibatalkan", Toast.LENGTH_SHORT).show()
         }

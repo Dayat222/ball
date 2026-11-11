@@ -413,6 +413,13 @@ class CanvasOverlayView @JvmOverloads constructor(
         pathEffect = DashPathEffect(floatArrayOf(3f * density, 4f * density), 0f)
     }
 
+    private val visionCueCandidatePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.parseColor("#AA00E676")
+        strokeWidth = 1.3f * density
+        pathEffect = DashPathEffect(floatArrayOf(4f * density, 3f * density), 0f)
+    }
+
     init {
         // Stealth: keep the overlay out of the accessibility tree. Another app
         // holding AccessibilityService can enumerate overlay windows and would
@@ -1384,9 +1391,14 @@ class CanvasOverlayView @JvmOverloads constructor(
 
         // 0a. Vision-detected ball markers (subtle radar rings on detected balls)
         if (detectedBalls.isNotEmpty()) {
+            val cueX = if (showCueMode) pointC.x else -9999f
+            val cueY = if (showCueMode) pointC.y else -9999f
             for (db in detectedBalls) {
-                if (hypot(db.x - bx, db.y - by) > ringRadius * 0.6f) {
-                    canvas.drawCircle(db.x, db.y, ringRadius * 0.88f, visionCandidatePaint)
+                val isUnderHandleB = hypot(db.x - bx, db.y - by) <= ringRadius * 0.6f
+                val isUnderHandleC = hypot(db.x - cueX, db.y - cueY) <= ringRadius * 0.6f
+                if (!isUnderHandleB && !isUnderHandleC) {
+                    val paint = if (db.isCueCandidate) visionCueCandidatePaint else visionCandidatePaint
+                    canvas.drawCircle(db.x, db.y, ringRadius * 0.88f, paint)
                 }
             }
         }

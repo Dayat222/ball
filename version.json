@@ -2,6 +2,6 @@
   "versionCode": 32,
   "versionName": "4.2.0",
   "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-latest.apk",
-  "sha256": "",
+  "sha256": "921b0f3428a6ced39c9d38a38a06a7b633d9decb03224e63d9e7fb32f0ffab06",
   "changelog": "Versi 4.2.0 — Hardening Stabilitas & Anti-Crash:\n- Downscaled Capture Buffer: batas resolusi virtual display 960px menghemat 80% RAM & GPU footprint, konsumsi CPU < 5%, mencegah thermal throttling & force close oleh LMK/battery manager.\n- Binder IPC Deduplication: pembaruan layout handle hanya dikirim saat koordinat bergeser >= 1px, mencegah spam updateViewLayout & freeze/ANR pada main thread.\n- Android 14+ MediaProjection Race Fix: mitigasi SecurityException pada API 34 dengan menahan lifecycle activity saat inisialisasi capture token.\n- Dynamic Orientation Sync: rekonfigurasi otomatis VirtualDisplay & ImageReader saat rotasi layar tanpa merusak buffer queue."
 }

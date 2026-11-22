@@ -34,10 +34,16 @@ class CanvasOverlayView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
-    private enum class DragTarget {
-        NONE,
-        CORNER_TOP_LEFT, CORNER_TOP_RIGHT, CORNER_BOTTOM_LEFT, CORNER_BOTTOM_RIGHT,
-        HANDLE_TOP_CENTER, HANDLE_BOTTOM_CENTER, HANDLE_LEFT_CENTER, HANDLE_RIGHT_CENTER
+    enum class CalibTarget(val isCorner: Boolean) {
+        CORNER_TL(true),
+        CORNER_TR(true),
+        CORNER_BL(true),
+        CORNER_BR(true),
+        EDGE_LEFT(false),
+        EDGE_RIGHT(false),
+        EDGE_TOP(false),
+        EDGE_BOTTOM(false),
+        CENTER_MOVE(false)
     }
 
     /** Which dimension drives the 2:1 lock during calibration. */
@@ -47,6 +53,8 @@ class CanvasOverlayView @JvmOverloads constructor(
 
     // Calibration
     var isCalibrating: Boolean = false
+        private set
+    var isCalibRatioLocked: Boolean = prefsManager.isCalibRatioLocked()
         private set
 
     // Target Ring Radius & Bank Ray Toggle
@@ -166,13 +174,8 @@ class CanvasOverlayView @JvmOverloads constructor(
     var boundaryBox = RectF()
         private set
 
-    // Touch Dragging State for Calibration
-    private var activeDragTarget = DragTarget.NONE
-    private var touchOffset = PointF(0f, 0f)
-
     // Density scaled dimensions
     private val density = resources.displayMetrics.density
-    private val edgeHandleRadius = 14f * density
 
     /** Playing-surface aspect: 1270 / 2540 mm. Height is half the width. */
     private val TABLE_HEIGHT_PER_WIDTH = 0.5f
@@ -288,7 +291,15 @@ class CanvasOverlayView @JvmOverloads constructor(
     private val boundaryCalibPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#FFE082")
         style = Paint.Style.STROKE
-        strokeWidth = 3f * density
+        strokeWidth = 2.6f * density
+    }
+
+    // Paint: Subtle Center Gridlines in Calibration Mode
+    private val calibGridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#8800E5FF")
+        style = Paint.Style.STROKE
+        strokeWidth = 1.2f * density
+        pathEffect = DashPathEffect(floatArrayOf(6f * density, 6f * density), 0f)
     }
 
     // Feature 1: 6 Vertex Calibration Rings (Vertex Guides in Calibration Mode)
@@ -303,23 +314,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         style = Paint.Style.STROKE
         strokeWidth = 1.5f * density
         strokeCap = Paint.Cap.ROUND
-    }
-
-    // Paint: 8 Handles in Calibration Mode
-    private val handleOuterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#E6FFE082")
-        style = Paint.Style.FILL
-    }
-
-    private val handleStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#FFB300")
-        style = Paint.Style.STROKE
-        strokeWidth = 2f * density
-    }
-
-    private val handleCenterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        style = Paint.Style.FILL
     }
 
     // Paint: Calibration label text
@@ -492,24 +486,204 @@ class CanvasOverlayView @JvmOverloads constructor(
      */
     fun clampBoundaryBox(w: Float, h: Float) {
         if (w <= 0 || h <= 0) return
-        val minMargin = 20f * density
-        val minWidth = 80f * density
-        val minHeight = 80f * density
+        val minMargin = 4f * density
+        val minWidth = 100f * density
+        val minHeight = 50f * density
 
-        var l = boundaryBox.left.coerceIn(minMargin, (w * 0.45f).coerceAtLeast(minMargin))
-        var t = boundaryBox.top.coerceIn(minMargin, (h * 0.45f).coerceAtLeast(minMargin))
-        var r = boundaryBox.right.coerceIn((w * 0.55f).coerceAtMost(w - minMargin), w - minMargin)
-        var b = boundaryBox.bottom.coerceIn((h * 0.55f).coerceAtMost(h - minMargin), h - minMargin)
+        var l = boundaryBox.left.coerceIn(minMargin, (w - minMargin - minWidth).coerceAtLeast(minMargin))
+        var t = boundaryBox.top.coerceIn(minMargin, (h - minMargin - minHeight).coerceAtLeast(minMargin))
+        var r = boundaryBox.right.coerceIn(l + minWidth, (w - minMargin).coerceAtLeast(l + minWidth))
+        var b = boundaryBox.bottom.coerceIn(t + minHeight, (h - minMargin).coerceAtLeast(t + minHeight))
 
         if (r <= l + minWidth) {
             l = minMargin
-            r = w - minMargin
+            r = (w - minMargin).coerceAtLeast(l + minWidth)
         }
         if (b <= t + minHeight) {
             t = minMargin
-            b = h - minMargin
+            b = (h - minMargin).coerceAtLeast(t + minHeight)
         }
         boundaryBox.set(l, t, r, b)
+    }
+
+    fun setCalibRatioLocked(locked: Boolean) {
+        isCalibRatioLocked = locked
+        prefsManager.saveCalibRatioLocked(locked)
+        if (locked) {
+            val landSize = getLandscapeScreenSize()
+            enforceTableRatio(landSize.x.coerceAtLeast(200f), landSize.y.coerceAtLeast(200f), Axis.WIDTH)
+            prefsManager.saveBoundaryBox(boundaryBox.left, boundaryBox.top, boundaryBox.right, boundaryBox.bottom)
+        }
+        invalidate()
+    }
+
+    fun centerBoundaryBoxHorizontally() {
+        val landSize = getLandscapeScreenSize()
+        val screenW = landSize.x.coerceAtLeast(200f)
+        val screenH = landSize.y.coerceAtLeast(200f)
+        val w = boundaryBox.width()
+        val newLeft = ((screenW - w) * 0.5f).coerceIn(4f * density, (screenW - w - 4f * density).coerceAtLeast(4f * density))
+        boundaryBox.left = newLeft
+        boundaryBox.right = newLeft + w
+        clampBoundaryBox(screenW, screenH)
+        prefsManager.saveBoundaryBox(boundaryBox.left, boundaryBox.top, boundaryBox.right, boundaryBox.bottom)
+        invalidate()
+    }
+
+    fun getCalibTargetPosition(target: CalibTarget): PointF {
+        val cx = boundaryBox.centerX()
+        val cy = boundaryBox.centerY()
+        return when (target) {
+            CalibTarget.CORNER_TL -> PointF(boundaryBox.left, boundaryBox.top)
+            CalibTarget.CORNER_TR -> PointF(boundaryBox.right, boundaryBox.top)
+            CalibTarget.CORNER_BL -> PointF(boundaryBox.left, boundaryBox.bottom)
+            CalibTarget.CORNER_BR -> PointF(boundaryBox.right, boundaryBox.bottom)
+            CalibTarget.EDGE_LEFT -> PointF(boundaryBox.left, cy)
+            CalibTarget.EDGE_RIGHT -> PointF(boundaryBox.right, cy)
+            CalibTarget.EDGE_TOP -> PointF(cx, boundaryBox.top)
+            CalibTarget.EDGE_BOTTOM -> PointF(cx, boundaryBox.bottom)
+            CalibTarget.CENTER_MOVE -> PointF(cx, cy)
+        }
+    }
+
+    /**
+     * Applies interactive drag on a specific calibration handle.
+     * Corners lock the opposite corner stationary so alignment only needs two corner drags.
+     */
+    fun applyCalibDrag(target: CalibTarget, newX: Float, newY: Float, dx: Float, dy: Float) {
+        val landSize = getLandscapeScreenSize()
+        val screenW = landSize.x.coerceAtLeast(200f)
+        val screenH = landSize.y.coerceAtLeast(200f)
+        val minMargin = 4f * density
+        val minW = 120f * density
+        val minH = 60f * density
+
+        if (target == CalibTarget.CENTER_MOVE) {
+            val boxW = boundaryBox.width()
+            val boxH = boundaryBox.height()
+            val maxL = (screenW - minMargin - boxW).coerceAtLeast(minMargin)
+            val maxT = (screenH - minMargin - boxH).coerceAtLeast(minMargin)
+            val nextL = (boundaryBox.left + dx).coerceIn(minMargin, maxL)
+            val nextT = (boundaryBox.top + dy).coerceIn(minMargin, maxT)
+            boundaryBox.set(nextL, nextT, nextL + boxW, nextT + boxH)
+            invalidate()
+            return
+        }
+
+        val cx = newX.coerceIn(minMargin, screenW - minMargin)
+        val cy = newY.coerceIn(minMargin, screenH - minMargin)
+
+        if (target.isCorner) {
+            val oldW = boundaryBox.width()
+            when (target) {
+                CalibTarget.CORNER_BR -> {
+                    val anchorL = boundaryBox.left
+                    val anchorT = boundaryBox.top
+                    if (isCalibRatioLocked) {
+                        val maxW = kotlin.math.min(
+                            screenW - minMargin - anchorL,
+                            (screenH - minMargin - anchorT) / TABLE_HEIGHT_PER_WIDTH
+                        ).coerceAtLeast(minW)
+                        val wFromX = (cx - anchorL).coerceAtLeast(minW)
+                        val wFromY = ((cy - anchorT) / TABLE_HEIGHT_PER_WIDTH).coerceAtLeast(minW)
+                        val chosenW = if (kotlin.math.abs(wFromX - oldW) >= kotlin.math.abs(wFromY - oldW)) wFromX else wFromY
+                        val w = chosenW.coerceIn(minW, maxW)
+                        boundaryBox.right = anchorL + w
+                        boundaryBox.bottom = anchorT + w * TABLE_HEIGHT_PER_WIDTH
+                    } else {
+                        boundaryBox.right = cx.coerceAtLeast(anchorL + minW)
+                        boundaryBox.bottom = cy.coerceAtLeast(anchorT + minH)
+                    }
+                }
+                CalibTarget.CORNER_TL -> {
+                    val anchorR = boundaryBox.right
+                    val anchorB = boundaryBox.bottom
+                    if (isCalibRatioLocked) {
+                        val maxW = kotlin.math.min(
+                            anchorR - minMargin,
+                            (anchorB - minMargin) / TABLE_HEIGHT_PER_WIDTH
+                        ).coerceAtLeast(minW)
+                        val wFromX = (anchorR - cx).coerceAtLeast(minW)
+                        val wFromY = ((anchorB - cy) / TABLE_HEIGHT_PER_WIDTH).coerceAtLeast(minW)
+                        val chosenW = if (kotlin.math.abs(wFromX - oldW) >= kotlin.math.abs(wFromY - oldW)) wFromX else wFromY
+                        val w = chosenW.coerceIn(minW, maxW)
+                        boundaryBox.left = anchorR - w
+                        boundaryBox.top = anchorB - w * TABLE_HEIGHT_PER_WIDTH
+                    } else {
+                        boundaryBox.left = cx.coerceAtMost(anchorR - minW)
+                        boundaryBox.top = cy.coerceAtMost(anchorB - minH)
+                    }
+                }
+                CalibTarget.CORNER_TR -> {
+                    val anchorL = boundaryBox.left
+                    val anchorB = boundaryBox.bottom
+                    if (isCalibRatioLocked) {
+                        val maxW = kotlin.math.min(
+                            screenW - minMargin - anchorL,
+                            (anchorB - minMargin) / TABLE_HEIGHT_PER_WIDTH
+                        ).coerceAtLeast(minW)
+                        val wFromX = (cx - anchorL).coerceAtLeast(minW)
+                        val wFromY = ((anchorB - cy) / TABLE_HEIGHT_PER_WIDTH).coerceAtLeast(minW)
+                        val chosenW = if (kotlin.math.abs(wFromX - oldW) >= kotlin.math.abs(wFromY - oldW)) wFromX else wFromY
+                        val w = chosenW.coerceIn(minW, maxW)
+                        boundaryBox.right = anchorL + w
+                        boundaryBox.top = anchorB - w * TABLE_HEIGHT_PER_WIDTH
+                    } else {
+                        boundaryBox.right = cx.coerceAtLeast(anchorL + minW)
+                        boundaryBox.top = cy.coerceAtMost(anchorB - minH)
+                    }
+                }
+                CalibTarget.CORNER_BL -> {
+                    val anchorR = boundaryBox.right
+                    val anchorT = boundaryBox.top
+                    if (isCalibRatioLocked) {
+                        val maxW = kotlin.math.min(
+                            anchorR - minMargin,
+                            (screenH - minMargin - anchorT) / TABLE_HEIGHT_PER_WIDTH
+                        ).coerceAtLeast(minW)
+                        val wFromX = (anchorR - cx).coerceAtLeast(minW)
+                        val wFromY = ((cy - anchorT) / TABLE_HEIGHT_PER_WIDTH).coerceAtLeast(minW)
+                        val chosenW = if (kotlin.math.abs(wFromX - oldW) >= kotlin.math.abs(wFromY - oldW)) wFromX else wFromY
+                        val w = chosenW.coerceIn(minW, maxW)
+                        boundaryBox.left = anchorR - w
+                        boundaryBox.bottom = anchorT + w * TABLE_HEIGHT_PER_WIDTH
+                    } else {
+                        boundaryBox.left = cx.coerceAtMost(anchorR - minW)
+                        boundaryBox.bottom = cy.coerceAtLeast(anchorT + minH)
+                    }
+                }
+                else -> Unit
+            }
+            clampBoundaryBox(screenW, screenH)
+            invalidate()
+            return
+        }
+
+        when (target) {
+            CalibTarget.EDGE_LEFT -> {
+                boundaryBox.left = cx.coerceAtMost(boundaryBox.right - minW)
+                if (isCalibRatioLocked) enforceTableRatio(screenW, screenH, Axis.WIDTH)
+            }
+            CalibTarget.EDGE_RIGHT -> {
+                boundaryBox.right = cx.coerceAtLeast(boundaryBox.left + minW)
+                if (isCalibRatioLocked) enforceTableRatio(screenW, screenH, Axis.WIDTH)
+            }
+            CalibTarget.EDGE_TOP -> {
+                boundaryBox.top = cy.coerceAtMost(boundaryBox.bottom - minH)
+                if (isCalibRatioLocked) enforceTableRatio(screenW, screenH, Axis.HEIGHT)
+            }
+            CalibTarget.EDGE_BOTTOM -> {
+                boundaryBox.bottom = cy.coerceAtLeast(boundaryBox.top + minH)
+                if (isCalibRatioLocked) enforceTableRatio(screenW, screenH, Axis.HEIGHT)
+            }
+            else -> Unit
+        }
+        clampBoundaryBox(screenW, screenH)
+        invalidate()
+    }
+
+    fun persistBoundaryBox() {
+        prefsManager.saveBoundaryBox(boundaryBox.left, boundaryBox.top, boundaryBox.right, boundaryBox.bottom)
     }
 
     /**
@@ -726,7 +900,6 @@ class CanvasOverlayView @JvmOverloads constructor(
         isCalibrating = calibrating
         if (!calibrating) {
             prefsManager.saveBoundaryBox(boundaryBox.left, boundaryBox.top, boundaryBox.right, boundaryBox.bottom)
-            activeDragTarget = DragTarget.NONE
         }
         invalidate()
     }
@@ -758,10 +931,9 @@ class CanvasOverlayView @JvmOverloads constructor(
             canvas.translate(-windowOffsetX, -windowOffsetY)
         }
 
-        // Requirement 1: Clean View. ONLY draw boundary box and handles when isCalibrating == true
+        // Requirement 1: Clean View. ONLY draw boundary box and guides when isCalibrating == true
         if (isCalibrating) {
             drawBoundaryBox(canvas)
-            drawEightCalibrationHandles(canvas)
         } else {
             // Single/Multi-point target mode: stem tethers + rings + 6 direct rays + bank rays + spin curves
             if (hasGripB) {
@@ -1545,19 +1717,29 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     private fun drawBoundaryBox(canvas: Canvas) {
-        canvas.drawRect(boundaryBox, boundaryCalibPaint)
-
-        // Feature 1: 6 Pocket Mouth Target Rings (Jaw Guides in Calibration Mode)
         val l = boundaryBox.left
         val r = boundaryBox.right
         val t = boundaryBox.top
         val b = boundaryBox.bottom
         val cx = boundaryBox.centerX()
+        val cy = boundaryBox.centerY()
 
-        // Same mouth model the live rays use, so calibration and play agree.
+        // 1. Center alignment crosshairs (helps line up with table middle diamonds & foot spot)
+        canvas.drawLine(cx, t, cx, b, calibGridPaint)
+        canvas.drawLine(l, cy, r, cy, calibGridPaint)
+        // Quarter reference lines (break line / foot spot region)
+        val qLeft = l + (r - l) * 0.25f
+        val qRight = l + (r - l) * 0.75f
+        canvas.drawLine(qLeft, t, qLeft, b, calibGridPaint)
+        canvas.drawLine(qRight, t, qRight, b, calibGridPaint)
+
+        // 2. Main table boundary rectangle
+        canvas.drawRect(boundaryBox, boundaryCalibPaint)
+
+        // 3. 6 Pocket Mouth Target Rings (Jaw Guides in Calibration Mode)
         aim.jawScale = jawScale.toDouble()
         aim.mouthScale = mouthScale.toDouble()
-        aim.configure(boundaryBox.left, boundaryBox.top, boundaryBox.right, boundaryBox.bottom, ballScaleCorrection)
+        aim.configure(l, t, r, b, ballScaleCorrection)
         val cornerMouthInset = aim.cornerJawPx.toFloat() * 0.5f
 
         drawVertexGuideRing(canvas, l + cornerMouthInset, t + cornerMouthInset)   // Top-Left
@@ -1567,10 +1749,11 @@ class CanvasOverlayView @JvmOverloads constructor(
         drawVertexGuideRing(canvas, cx, b)                                        // Bottom-Center
         drawVertexGuideRing(canvas, r - cornerMouthInset, b - cornerMouthInset)   // Bottom-Right
 
-        val label = "Calibration: Drag 8 handles to align target bounds"
+        val ratioText = if (isCalibRatioLocked) "2:1 Lock" else "Bebas"
+        val label = "Kalibrasi ($ratioText): Geser [+] atau Tarik Sudut/Sisi • Tap Simpan"
         textPaint.getTextBounds(label, 0, label.length, textBounds)
-        val textX = boundaryBox.left + 16f * density
-        val textY = (boundaryBox.top - 12f * density).coerceAtLeast(36f * density)
+        val textX = (l + 16f * density).coerceIn(12f * density, (width - textBounds.width() - 24f * density).coerceAtLeast(12f * density))
+        val textY = if (t > 44f * density) t - 12f * density else b + textBounds.height() + 14f * density
         val padding = 6f * density
         canvas.drawRect(
             textX - padding,
@@ -1583,178 +1766,17 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     private fun drawVertexGuideRing(canvas: Canvas, px: Float, py: Float) {
-        val ringRadius = 12f * density
+        val ringRadius = 11f * density
         canvas.drawCircle(px, py, ringRadius, vertexRingPaint)
         val crossArm = 4f * density
         canvas.drawLine(px - crossArm, py, px + crossArm, py, vertexCrossPaint)
         canvas.drawLine(px, py - crossArm, px, py + crossArm, vertexCrossPaint)
     }
 
-    /**
-     * Requirement 2: Render side-rail calibration handles (left and right edges)
-     * and top/bottom center indicators.
-     * The 6 pocket positions are clearly indicated by the 6 cyan jaw target rings.
-     */
-    private fun drawEightCalibrationHandles(canvas: Canvas) {
-        val cx = boundaryBox.centerX()
-        val cy = boundaryBox.centerY()
-        val sideRadius = edgeHandleRadius * 0.75f
-
-        // 2 Side Edge Centers (Left & Right rail resize handles)
-        drawHandlePin(canvas, boundaryBox.left, cy, edgeHandleRadius)
-        drawHandlePin(canvas, boundaryBox.right, cy, edgeHandleRadius)
-
-        // Top & Bottom Edge Centers (Resize indicators)
-        drawHandlePin(canvas, cx, boundaryBox.top, sideRadius)
-        drawHandlePin(canvas, cx, boundaryBox.bottom, sideRadius)
-    }
-
-    private fun drawHandlePin(canvas: Canvas, cx: Float, cy: Float, radius: Float) {
-        canvas.drawCircle(cx, cy, radius, handleOuterPaint)
-        canvas.drawCircle(cx, cy, radius, handleStrokePaint)
-        canvas.drawCircle(cx, cy, 4f * density, handleCenterPaint)
-    }
-
-    /**
-     * Requirement 2: 8-Handle touch dragging in calibration mode.
-     */
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (!isCalibrating) {
-            return false
-        }
-
-        val touchX = event.x
-        val touchY = event.y
-
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                activeDragTarget = findTouchedCalibrationTarget(touchX, touchY)
-                if (activeDragTarget != DragTarget.NONE) {
-                    val targetPos = getTargetPos(activeDragTarget)
-                    touchOffset.set(touchX - targetPos.x, touchY - targetPos.y)
-                    return true
-                }
-                return false
-            }
-
-            MotionEvent.ACTION_MOVE -> {
-                if (activeDragTarget != DragTarget.NONE) {
-                    val minSize = 60f * density
-                    val landSize = getLandscapeScreenSize()
-                    val screenW = landSize.x
-                    val screenH = landSize.y
-
-                    val curX = (touchX - touchOffset.x).coerceIn(0f, screenW)
-                    val curY = (touchY - touchOffset.y).coerceIn(0f, screenH)
-
-                    when (activeDragTarget) {
-                        DragTarget.CORNER_TOP_LEFT -> {
-                            boundaryBox.left = curX.coerceAtMost(boundaryBox.right - minSize)
-                            boundaryBox.top = curY.coerceAtMost(boundaryBox.bottom - minSize)
-                        }
-                        DragTarget.CORNER_TOP_RIGHT -> {
-                            boundaryBox.right = curX.coerceAtLeast(boundaryBox.left + minSize)
-                            boundaryBox.top = curY.coerceAtMost(boundaryBox.bottom - minSize)
-                        }
-                        DragTarget.CORNER_BOTTOM_LEFT -> {
-                            boundaryBox.left = curX.coerceAtMost(boundaryBox.right - minSize)
-                            boundaryBox.bottom = curY.coerceAtLeast(boundaryBox.top + minSize)
-                        }
-                        DragTarget.CORNER_BOTTOM_RIGHT -> {
-                            boundaryBox.right = curX.coerceAtLeast(boundaryBox.left + minSize)
-                            boundaryBox.bottom = curY.coerceAtLeast(boundaryBox.top + minSize)
-                        }
-                        DragTarget.HANDLE_TOP_CENTER -> {
-                            boundaryBox.top = curY.coerceAtMost(boundaryBox.bottom - minSize)
-                        }
-                        DragTarget.HANDLE_BOTTOM_CENTER -> {
-                            boundaryBox.bottom = curY.coerceAtLeast(boundaryBox.top + minSize)
-                        }
-                        DragTarget.HANDLE_LEFT_CENTER -> {
-                            boundaryBox.left = curX.coerceAtMost(boundaryBox.right - minSize)
-                        }
-                        DragTarget.HANDLE_RIGHT_CENTER -> {
-                            boundaryBox.right = curX.coerceAtLeast(boundaryBox.left + minSize)
-                        }
-                        DragTarget.NONE -> Unit
-                    }
-                    // Keep the calibrated rectangle on the real 2:1 surface.
-                    val lock = when (activeDragTarget) {
-                        DragTarget.HANDLE_TOP_CENTER, DragTarget.HANDLE_BOTTOM_CENTER ->
-                            Axis.HEIGHT
-                        else -> Axis.WIDTH
-                    }
-                    enforceTableRatio(screenW, screenH, lock)
-                    invalidate()
-                    return true
-                }
-            }
-
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (activeDragTarget != DragTarget.NONE) {
-                    activeDragTarget = DragTarget.NONE
-                    prefsManager.saveBoundaryBox(boundaryBox.left, boundaryBox.top, boundaryBox.right, boundaryBox.bottom)
-                    invalidate()
-                    return true
-                }
-            }
-        }
-
-        return super.onTouchEvent(event)
-    }
-
-    private fun findTouchedCalibrationTarget(x: Float, y: Float): DragTarget {
-        val cornerThreshold = 40f * density
-        val edgeThreshold = 36f * density
-
-        val cx = boundaryBox.centerX()
-        val cy = boundaryBox.centerY()
-
-        // 1. Check 4 Corners
-        if (GeometryUtils.distance(x, y, boundaryBox.left, boundaryBox.top) <= cornerThreshold) {
-            return DragTarget.CORNER_TOP_LEFT
-        }
-        if (GeometryUtils.distance(x, y, boundaryBox.right, boundaryBox.top) <= cornerThreshold) {
-            return DragTarget.CORNER_TOP_RIGHT
-        }
-        if (GeometryUtils.distance(x, y, boundaryBox.left, boundaryBox.bottom) <= cornerThreshold) {
-            return DragTarget.CORNER_BOTTOM_LEFT
-        }
-        if (GeometryUtils.distance(x, y, boundaryBox.right, boundaryBox.bottom) <= cornerThreshold) {
-            return DragTarget.CORNER_BOTTOM_RIGHT
-        }
-
-        // 2. Check 4 Edge Centers
-        if (GeometryUtils.distance(x, y, cx, boundaryBox.top) <= edgeThreshold) {
-            return DragTarget.HANDLE_TOP_CENTER
-        }
-        if (GeometryUtils.distance(x, y, cx, boundaryBox.bottom) <= edgeThreshold) {
-            return DragTarget.HANDLE_BOTTOM_CENTER
-        }
-        if (GeometryUtils.distance(x, y, boundaryBox.left, cy) <= edgeThreshold) {
-            return DragTarget.HANDLE_LEFT_CENTER
-        }
-        if (GeometryUtils.distance(x, y, boundaryBox.right, cy) <= edgeThreshold) {
-            return DragTarget.HANDLE_RIGHT_CENTER
-        }
-
-        return DragTarget.NONE
-    }
-
-    private fun getTargetPos(target: DragTarget): PointF {
-        val cx = boundaryBox.centerX()
-        val cy = boundaryBox.centerY()
-        return when (target) {
-            DragTarget.CORNER_TOP_LEFT -> PointF(boundaryBox.left, boundaryBox.top)
-            DragTarget.CORNER_TOP_RIGHT -> PointF(boundaryBox.right, boundaryBox.top)
-            DragTarget.CORNER_BOTTOM_LEFT -> PointF(boundaryBox.left, boundaryBox.bottom)
-            DragTarget.CORNER_BOTTOM_RIGHT -> PointF(boundaryBox.right, boundaryBox.bottom)
-            DragTarget.HANDLE_TOP_CENTER -> PointF(cx, boundaryBox.top)
-            DragTarget.HANDLE_BOTTOM_CENTER -> PointF(cx, boundaryBox.bottom)
-            DragTarget.HANDLE_LEFT_CENTER -> PointF(boundaryBox.left, cy)
-            DragTarget.HANDLE_RIGHT_CENTER -> PointF(boundaryBox.right, cy)
-            DragTarget.NONE -> PointF(0f, 0f)
-        }
+        // Touches are handled exclusively by independent CalibHandleView windows so
+        // the canvas overlay stays FLAG_NOT_TOUCHABLE and can never freeze the screen.
+        return false
     }
 }

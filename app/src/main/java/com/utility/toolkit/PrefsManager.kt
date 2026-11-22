@@ -49,11 +49,12 @@ class PrefsManager(context: Context) {
             val bottom = prefs.getFloat(KEY_BOUND_BOTTOM, landH * 0.921f)
 
             // Sanity check to avoid inverted or collapsed rectangles and auto-clamp to screen
-            val minMargin = 20f
-            val clampedL = left.coerceIn(minMargin, landW * 0.45f)
-            val clampedT = top.coerceIn(minMargin, landH * 0.45f)
-            val clampedR = right.coerceIn(landW * 0.55f, landW - minMargin)
-            val clampedB = bottom.coerceIn(landH * 0.55f, landH - minMargin)
+            val minMargin = 4f
+            val minSize = 100f
+            val clampedL = left.coerceIn(minMargin, (landW - minMargin - minSize).coerceAtLeast(minMargin))
+            val clampedT = top.coerceIn(minMargin, (landH - minMargin - minSize).coerceAtLeast(minMargin))
+            val clampedR = right.coerceIn(clampedL + minSize, (landW - minMargin).coerceAtLeast(clampedL + minSize))
+            val clampedB = bottom.coerceIn(clampedT + minSize, (landH - minMargin).coerceAtLeast(clampedT + minSize))
 
             if (clampedR > clampedL + 50f && clampedB > clampedT + 50f) {
                 return RectF(clampedL, clampedT, clampedR, clampedB)
@@ -376,6 +377,14 @@ class PrefsManager(context: Context) {
         return prefs.getBoolean(KEY_SHOW_BANK_GUIDES, true)
     }
 
+    fun saveCalibRatioLocked(locked: Boolean) {
+        prefs.edit().putBoolean(KEY_CALIB_RATIO_LOCKED, locked).apply()
+    }
+
+    fun isCalibRatioLocked(): Boolean {
+        return prefs.getBoolean(KEY_CALIB_RATIO_LOCKED, true)
+    }
+
     companion object {
         private const val PREFS_NAME = "toolkit_prefs"
         const val DEFAULT_LINE_COLOR = 0xFF00E5FF.toInt() // Cyan #00E5FF
@@ -424,5 +433,6 @@ class PrefsManager(context: Context) {
         private const val KEY_LAUNCHER_DISGUISE = "launcher_disguise_mode"
         private const val KEY_STEALTH_WIN_TOKEN = "stealth_win_token"
         private const val KEY_AUTO_SNAP_ENABLED = "auto_snap_vision_enabled"
+        private const val KEY_CALIB_RATIO_LOCKED = "calib_ratio_locked"
     }
 }

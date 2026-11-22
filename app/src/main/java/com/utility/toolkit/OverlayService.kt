@@ -82,6 +82,12 @@ class OverlayService : Service() {
     private var btnCalibrate: TextView? = null
     private var btnSettings: TextView? = null
     private var panelSettings: View? = null
+    private var panelCalibration: View? = null
+    private var btnCalibRatioToggle: TextView? = null
+    private var btnCalibCenter: TextView? = null
+    private var btnCalibReset: TextView? = null
+    private var btnCalibSave: TextView? = null
+    private val calibHandles = mutableListOf<Pair<CalibHandleView, WindowManager.LayoutParams>>()
 
     // State Tracking
     private var isCanvasHidden = false
@@ -302,7 +308,8 @@ class OverlayService : Service() {
         val secureBit = if (isSecureCaptureActive()) WindowManager.LayoutParams.FLAG_SECURE else 0
 
         if (isCalibrationActive) {
-            // Saat kalibrasi aktif, gunakan layar penuh agar pengguna bebas menarik 8 titik kalibrasi
+            // Saat kalibrasi aktif, kanvas TETAP FLAG_NOT_TOUCHABLE agar tidak pernah mengunci layar.
+            // Interaksi drag ditangani oleh 9 floating CalibHandleView independen.
             canvasLayoutParams.width = WindowManager.LayoutParams.MATCH_PARENT
             canvasLayoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
             canvasLayoutParams.x = 0
@@ -310,6 +317,7 @@ class OverlayService : Service() {
             canvasLayoutParams.alpha = 1.0f
             canvasLayoutParams.gravity = Gravity.TOP or Gravity.LEFT
             canvasLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                     secureBit
@@ -418,6 +426,7 @@ class OverlayService : Service() {
         try {
             if (canvas.parent == null) {
                 windowManager.addView(canvas, canvasLayoutParams)
+                mainHandler.post { bringControlBarToFront() }
             } else {
                 windowManager.updateViewLayout(canvas, canvasLayoutParams)
             }
@@ -426,21 +435,182 @@ class OverlayService : Service() {
         }
     }
 
+    /** Ensures the floating control toolbar (and Save button) always stays at top Z-order. */
+    private fun bringControlBarToFront() {
+        val ctrl = floatingControlView ?: return
+        if (ctrl.parent == null) return
+        try {
+            windowManager.removeViewImmediate(ctrl)
+            windowManager.addView(ctrl, controlLayoutParams)
+        } catch (_: Exception) {
+            try {
+                windowManager.removeView(ctrl)
+                windowManager.addView(ctrl, controlLayoutParams)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    private fun updateCalibRatioButtonUI(locked: Boolean) {
+        if (locked) {
+            btnCalibRatioToggle?.text = "2:1 Lock"
+            btnCalibRatioToggle?.setBackgroundResource(R.drawable.bg_control_btn_active)
+            btnCalibRatioToggle?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+        } else {
+            btnCalibRatioToggle?.text = "Bebas"
+            btnCalibRatioToggle?.setBackgroundResource(R.drawable.bg_control_btn)
+            btnCalibRatioToggle?.setTextColor(ContextCompat.getColor(this, R.color.yellow_accent))
+        }
+    }
+
+    private fun calibHandleSizePx(target: CanvasOverlayView.CalibTarget): Int {
+        val dp = if (target == CanvasOverlayView.CalibTarget.CENTER_MOVE) 44f else 40f
+        return (dp * resources.displayMetrics.density).roundToInt()
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun showCalibrationHandles() {
+        hideCalibrationHandles()
+        val canvas = canvasOverlayView ?: return
+        val secureBit = if (isSecureCaptureActive()) WindowManager.LayoutParams.FLAG_SECURE else 0
+
+        for (target in CanvasOverlayView.CalibTarget.values()) {
+            val view = CalibHandleView(this, target)
+            val sizePx = calibHandleSizePx(target)
+            val pos = canvas.getCalibTargetPosition(target)
+            val params = WindowManager.LayoutParams(
+                sizePx,
+                sizePx,
+                getOverlayWindowType(),
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                        secureBit,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.LEFT
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
+                x = (pos.x - sizePx / 2f).roundToInt()
+                y = (pos.y - sizePx / 2f).roundToInt()
+                setTitle(activeWindowTitle)
+            }
+
+            var lastRawX = 0f
+            var lastRawY = 0f
+            view.setOnTouchListener { _, event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        isHandleDragging = true
+                        lastRawX = event.rawX
+                        lastRawY = event.rawY
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val rawDx = event.rawX - lastRawX
+                        val rawDy = event.rawY - lastRawY
+                        lastRawX = event.rawX
+                        lastRawY = event.rawY
+
+                        val speed = hypot(rawDx, rawDy)
+                        if (speed < 0.25f) return@setOnTouchListener true
+
+                        val gain = if (speed < 2.2f) 0.45f else 1.0f
+                        val stepDx = rawDx * gain
+                        val stepDy = rawDy * gain
+
+                        val curPos = canvas.getCalibTargetPosition(target)
+                        canvas.applyCalibDrag(target, curPos.x + stepDx, curPos.y + stepDy, stepDx, stepDy)
+                        syncCalibrationHandlePositions()
+                        true
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        isHandleDragging = false
+                        canvas.persistBoundaryBox()
+                        syncCalibrationHandlePositions()
+                        true
+                    }
+                    else -> false
+                }
+            }
+
+            try {
+                windowManager.addView(view, params)
+                calibHandles.add(view to params)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    private fun hideCalibrationHandles() {
+        for ((view, _) in calibHandles) {
+            try {
+                if (view.parent != null) {
+                    windowManager.removeView(view)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        calibHandles.clear()
+    }
+
+    private fun syncCalibrationHandlePositions() {
+        val canvas = canvasOverlayView ?: return
+        for ((view, params) in calibHandles) {
+            val sizePx = calibHandleSizePx(view.target)
+            val pos = canvas.getCalibTargetPosition(view.target)
+            val newX = (pos.x - sizePx / 2f).roundToInt()
+            val newY = (pos.y - sizePx / 2f).roundToInt()
+            if (abs(params.x - newX) >= 1 || abs(params.y - newY) >= 1) {
+                params.x = newX
+                params.y = newY
+                try {
+                    if (view.parent != null) {
+                        windowManager.updateViewLayout(view, params)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+    }
+
     /**
-     * Calibration Mode: Enable touch on canvas and hide handles.
+     * Calibration Mode: Keep canvas touch pass-through and show lightweight independent
+     * calibration handles + quick-save bar so screen can never freeze.
      */
     private fun setCalibrationMode(enabled: Boolean) {
         val canvas = canvasOverlayView ?: return
         isCalibrationActive = enabled
 
         if (enabled) {
+            if (minimizedCapsule?.visibility == View.VISIBLE) {
+                expandToolbar()
+            }
+            panelSettings?.visibility = View.GONE
+            btnSettings?.setBackgroundResource(R.drawable.bg_control_btn)
+
+            panelCalibration?.visibility = View.VISIBLE
+            updateCalibRatioButtonUI(canvas.isCalibRatioLocked)
+
             canvas.setCalibrating(true)
             syncHandlesVisibility()
 
             btnCalibrate?.text = getString(R.string.control_save_bound)
             btnCalibrate?.setBackgroundResource(R.drawable.bg_control_btn_active)
             btnCalibrate?.setTextColor(ContextCompat.getColor(this, R.color.green_status))
+
+            applyTableBoundedWindow()
+            showCalibrationHandles()
+            mainHandler.post { if (isCalibrationActive) bringControlBarToFront() }
         } else {
+            hideCalibrationHandles()
+            panelCalibration?.visibility = View.GONE
+
             canvas.setCalibrating(false)
             syncHandlesVisibility()
 
@@ -448,10 +618,12 @@ class OverlayService : Service() {
             btnCalibrate?.setBackgroundResource(R.drawable.bg_control_btn)
             btnCalibrate?.setTextColor(Color.WHITE)
 
+            applyTableBoundedWindow()
+            repositionHandlesToAimPoints()
+            mainHandler.post { bringControlBarToFront() }
+
             Toast.makeText(this, R.string.toast_calib_saved, Toast.LENGTH_SHORT).show()
         }
-
-        applyTableBoundedWindow()
     }
 
     /**
@@ -758,6 +930,35 @@ class OverlayService : Service() {
         val btnClose = controlView.findViewById<TextView>(R.id.btnCloseOverlay)
 
         panelSettings = controlView.findViewById(R.id.panelSettings)
+        panelCalibration = controlView.findViewById(R.id.panelCalibration)
+        btnCalibRatioToggle = controlView.findViewById(R.id.btnCalibRatioToggle)
+        btnCalibCenter = controlView.findViewById(R.id.btnCalibCenter)
+        btnCalibReset = controlView.findViewById(R.id.btnCalibReset)
+        btnCalibSave = controlView.findViewById(R.id.btnCalibSave)
+
+        btnCalibRatioToggle?.setOnClickListener {
+            val canvas = canvasOverlayView ?: return@setOnClickListener
+            val next = !canvas.isCalibRatioLocked
+            canvas.setCalibRatioLocked(next)
+            updateCalibRatioButtonUI(next)
+            syncCalibrationHandlePositions()
+        }
+
+        btnCalibCenter?.setOnClickListener {
+            canvasOverlayView?.centerBoundaryBoxHorizontally()
+            syncCalibrationHandlePositions()
+        }
+
+        btnCalibReset?.setOnClickListener {
+            canvasOverlayView?.resetToProportionalCenter()
+            syncCalibrationHandlePositions()
+        }
+
+        btnCalibSave?.setOnClickListener {
+            if (isCalibrationActive) {
+                setCalibrationMode(false)
+            }
+        }
         val tvThickness = controlView.findViewById<TextView>(R.id.tvThicknessValue)
         val seekThickness = controlView.findViewById<SeekBar>(R.id.seekThickness)
         val tvOpacity = controlView.findViewById<TextView>(R.id.tvOpacityValue)
@@ -1594,6 +1795,9 @@ class OverlayService : Service() {
         updateWindow(handleViewB, handleParamsB)
         updateWindow(handleViewC, handleParamsC)
         updateWindow(handleViewO, handleParamsO)
+        for ((calibView, calibParams) in calibHandles) {
+            updateWindow(calibView, calibParams)
+        }
         updateWindow(floatingControlView, controlLayoutParams)
     }
 
@@ -1662,6 +1866,9 @@ class OverlayService : Service() {
         super.onConfigurationChanged(newConfig)
         applyTableBoundedWindow()
         repositionHandlesToAimPoints()
+        if (isCalibrationActive) {
+            syncCalibrationHandlePositions()
+        }
         if (isAutoVisionActive) {
             reconfigureVisionDisplay()
         }
@@ -2158,6 +2365,7 @@ class OverlayService : Service() {
             isCalibrationActive = false
             canvasOverlayView?.setCalibrating(false)
         }
+        hideCalibrationHandles()
 
         // Remove canvas view
         canvasOverlayView?.let {

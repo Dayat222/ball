@@ -180,6 +180,22 @@ class PrefsManager(context: Context) {
         return prefs.getFloat(KEY_BANK_REBOUND, 1.0f)
     }
 
+    fun saveCushionInsetPx(px: Float) {
+        prefs.edit().putFloat(KEY_CUSHION_INSET_PX, px.coerceIn(-30f, 40f)).apply()
+    }
+
+    fun getCushionInsetPx(): Float {
+        return prefs.getFloat(KEY_CUSHION_INSET_PX, 0f).coerceIn(-30f, 40f)
+    }
+
+    fun saveGamePreset(preset: Int) {
+        prefs.edit().putInt(KEY_GAME_PRESET, preset).apply()
+    }
+
+    fun getGamePreset(): Int {
+        return prefs.getInt(KEY_GAME_PRESET, 0)
+    }
+
     /**
      * Pocket-mouth tuning against the hard-coded 9 ft table.
      * 1.0 = real table proportions.
@@ -434,5 +450,7 @@ class PrefsManager(context: Context) {
         private const val KEY_STEALTH_WIN_TOKEN = "stealth_win_token"
         private const val KEY_AUTO_SNAP_ENABLED = "auto_snap_vision_enabled"
         private const val KEY_CALIB_RATIO_LOCKED = "calib_ratio_locked"
+        private const val KEY_CUSHION_INSET_PX = "cushion_inset_px"
+        private const val KEY_GAME_PRESET = "game_physics_preset"
     }
 }

@@ -28,8 +28,8 @@ android {
         applicationId = customAppId
         minSdk = 26
         targetSdk = 34
-        versionCode = 33
-        versionName = "4.3.0"
+        versionCode = 34
+        versionName = "4.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

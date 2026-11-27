@@ -395,4 +395,108 @@ class AimGeometryTest {
         // Target is potted toward +X (2540), so topspin carries the cue ball further in +X than draw
         assertTrue("Topspin must carry further forward (+X) than backspin", followEndX > drawEndX + 20.0)
     }
+
+    // --------------------------------------------------- Pool Empire tangent restitution
+
+    @Test
+    fun wideReboundAboveOneMovesBounceEarlierAndObeysTangentLaw() {
+        val g = table()
+        val plane = (AimGeometry.TABLE_WIDTH_MM - AimGeometry.BALL_RADIUS_MM).toFloat()
+
+        g.rebound = 1.0
+        assertTrue(g.bankFrom(1000.0, 400.0, 2000.0, 400.0, AimGeometry.Axis.HORIZONTAL, plane, -1, 0.0, 2540.0))
+        val specularHitX = g.hitX
+
+        g.rebound = 1.2
+        assertTrue(g.bankFrom(1000.0, 400.0, 2000.0, 400.0, AimGeometry.Axis.HORIZONTAL, plane, -1, 0.0, 2540.0))
+        val wideHitX = g.hitX
+        assertTrue("Wide rebound (>1.0) must strike the cushion earlier than specular mirror", wideHitX < specularHitX - 1.0)
+
+        val dy = plane.toDouble() - 400.0
+        val tanIn = abs(wideHitX - 1000.0) / dy
+        val tanOut = abs(2000.0 - wideHitX) / dy
+        assertEquals(1.2, tanOut / tanIn, 1e-3)
+    }
+
+    @Test
+    fun doubleBankRespectsNonUnitReboundAtBothContacts() {
+        val r = AimGeometry.BALL_RADIUS_MM
+        val bottom = AimGeometry.TABLE_WIDTH_MM - r
+        val right = AimGeometry.TABLE_LENGTH_MM - r
+
+        for (k in doubleArrayOf(1.18, 0.88)) {
+            val gSpec = table()
+            val gK = table().apply { rebound = k }
+
+            gSpec.gate(AimGeometry.Pocket.TOP_RIGHT, 1200.0, 400.0)
+            val gx = gSpec.targetX
+            val gy = gSpec.targetY
+
+            assertTrue(
+                "Specular double bank should solve cleanly",
+                gSpec.bankFrom2(
+                    1200.0, 400.0, gx, gy,
+                    AimGeometry.Axis.HORIZONTAL, bottom, 0.0, 2540.0,
+                    AimGeometry.Axis.VERTICAL, right, 0.0, 1270.0
+                )
+            )
+            assertTrue(
+                "Restitution double bank with k=$k should solve cleanly",
+                gK.bankFrom2(
+                    1200.0, 400.0, gx, gy,
+                    AimGeometry.Axis.HORIZONTAL, bottom, 0.0, 2540.0,
+                    AimGeometry.Axis.VERTICAL, right, 0.0, 1270.0
+                )
+            )
+
+            // Contact 1 vs horizontal bottom rail: tanOut / tanIn == k
+            val tan1In = abs(gK.hitX - 1200.0) / abs(gK.hitY - 400.0)
+            val tan1Out = abs(gK.hit2X - gK.hitX) / abs(gK.hit2Y - gK.hitY)
+            assertEquals(k, tan1Out / tan1In, 5e-3)
+
+            // Contact 2 vs vertical right rail: tanOut / tanIn == k
+            val tan2In = abs(gK.hit2Y - gK.hitY) / abs(gK.hit2X - gK.hitX)
+            val tan2Out = abs(gy - gK.hit2Y) / abs(gx - gK.hit2X)
+            assertEquals(k, tan2Out / tan2In, 5e-3)
+
+            assertTrue(
+                "Non-unit restitution k=$k must shift contact point away from specular solution",
+                abs(gK.hitX - gSpec.hitX) > 10.0
+            )
+        }
+    }
+
+    @Test
+    fun tripleBankRespectsNonUnitRebound() {
+        val gSpec = table()
+        val gWide = table().apply { rebound = 1.15 }
+        val r = AimGeometry.BALL_RADIUS_MM
+        val top = r
+        val bottom = AimGeometry.TABLE_WIDTH_MM - r
+        val right = AimGeometry.TABLE_LENGTH_MM - r
+
+        gSpec.gate(AimGeometry.Pocket.TOP_LEFT, 600.0, 500.0)
+        assertTrue(
+            gSpec.bankFrom3(
+                600.0, 500.0, gSpec.targetX, gSpec.targetY,
+                AimGeometry.Axis.HORIZONTAL, top, 0.0, 2540.0,
+                AimGeometry.Axis.VERTICAL, right, 0.0, 1270.0,
+                AimGeometry.Axis.HORIZONTAL, bottom, 0.0, 2540.0
+            )
+        )
+        assertTrue(
+            "Triple bank with rebound=1.15 should converge cleanly",
+            gWide.bankFrom3(
+                600.0, 500.0, gSpec.targetX, gSpec.targetY,
+                AimGeometry.Axis.HORIZONTAL, top, 0.0, 2540.0,
+                AimGeometry.Axis.VERTICAL, right, 0.0, 1270.0,
+                AimGeometry.Axis.HORIZONTAL, bottom, 0.0, 2540.0
+            )
+        )
+
+        val tan1In = abs(gWide.hitX - 600.0) / abs(gWide.hitY - 500.0)
+        val tan1Out = abs(gWide.hit2X - gWide.hitX) / abs(gWide.hit2Y - gWide.hitY)
+        assertEquals(1.15, tan1Out / tan1In, 5e-3)
+        assertTrue(abs(gWide.hitX - gSpec.hitX) > 1.0)
+    }
 }

@@ -116,8 +116,12 @@ class CanvasOverlayView @JvmOverloads constructor(
             return aim.ballRadius.toFloat()
         }
 
-    // Cushion rebound ratio: 1.0 = pure specular mirror, 0.90 = real cloth "short" bank.
+    // Cushion rebound ratio: 1.0 = pure specular mirror, <1.0 = short bank, >1.0 = wide bank.
     var bankRebound: Float = 1f
+        private set
+
+    // Extra inward (+) / outward (-) shift on cushion bounce planes in px.
+    var cushionInsetPx: Float = 0f
         private set
 
     // Window Offset for Table-Bounded Window Cropping
@@ -440,6 +444,7 @@ class CanvasOverlayView @JvmOverloads constructor(
         isFullLengthGuides = prefsManager.isFullLengthGuides()
         ballScaleCorrection = prefsManager.getBallScaleCorrection()
         bankRebound = prefsManager.getBankRebound()
+        cushionInsetPx = prefsManager.getCushionInsetPx()
         jawScale = prefsManager.getJawScale()
         mouthScale = prefsManager.getMouthScale()
         showGhostBall = prefsManager.getShowGhostBall()
@@ -811,12 +816,19 @@ class CanvasOverlayView @JvmOverloads constructor(
     }
 
     /**
-     * Cushion restitution as an angle ratio. 1.0 keeps exact mirror geometry;
-     * lower values make every bank roll short the way a real cloth does.
+     * Cushion restitution tangent ratio: 1.0 = pure specular mirror,
+     * < 1.0 = steeper "short" bounce, > 1.0 = flatter "wide" bounce.
      */
     fun setBankRebound(ratio: Float) {
-        bankRebound = ratio.coerceIn(0.70f, 1.0f)
+        bankRebound = ratio.coerceIn(0.70f, 1.40f)
         prefsManager.saveBankRebound(bankRebound)
+        invalidate()
+    }
+
+    /** Extra cushion bounce plane inset/outset offset in pixels. */
+    fun setCushionInsetPx(px: Float) {
+        cushionInsetPx = px.coerceIn(-30f, 40f)
+        prefsManager.saveCushionInsetPx(cushionInsetPx)
         invalidate()
     }
 
@@ -1083,30 +1095,31 @@ class CanvasOverlayView @JvmOverloads constructor(
 
         val sideSeg0 = t + jaw + ballR
         val sideSeg1 = b - jaw - ballR
+        val planeOff = (ballR + cushionInsetPx).coerceAtLeast(1f)
 
         drawBankSet(
-            canvas, bx, by, AimGeometry.Axis.HORIZONTAL, t + ballR, 1,
+            canvas, bx, by, AimGeometry.Axis.HORIZONTAL, t + planeOff, 1,
             topCushionPockets,
             topSegA0, topSegA1, topSegB0, topSegB1,
             startDist, shortLen
         )
 
         drawBankSet(
-            canvas, bx, by, AimGeometry.Axis.HORIZONTAL, b - ballR, -1,
+            canvas, bx, by, AimGeometry.Axis.HORIZONTAL, b - planeOff, -1,
             bottomCushionPockets,
             topSegA0, topSegA1, topSegB0, topSegB1,
             startDist, shortLen
         )
 
         drawBankSet(
-            canvas, bx, by, AimGeometry.Axis.VERTICAL, r - ballR, -1,
+            canvas, bx, by, AimGeometry.Axis.VERTICAL, r - planeOff, -1,
             rightCushionPockets,
             sideSeg0, sideSeg1, Float.NaN, Float.NaN,
             startDist, shortLen
         )
 
         drawBankSet(
-            canvas, bx, by, AimGeometry.Axis.VERTICAL, l + ballR, 1,
+            canvas, bx, by, AimGeometry.Axis.VERTICAL, l + planeOff, 1,
             leftCushionPockets,
             sideSeg0, sideSeg1, Float.NaN, Float.NaN,
             startDist, shortLen
@@ -1145,10 +1158,11 @@ class CanvasOverlayView @JvmOverloads constructor(
         val side0 = t + jaw + ballR
         val side1 = b - jaw - ballR
 
-        val topP = (t + ballR).toDouble()
-        val botP = (b - ballR).toDouble()
-        val leftP = (l + ballR).toDouble()
-        val rightP = (r - ballR).toDouble()
+        val planeOff = (ballR + cushionInsetPx).coerceAtLeast(1f)
+        val topP = (t + planeOff).toDouble()
+        val botP = (b - planeOff).toDouble()
+        val leftP = (l + planeOff).toDouble()
+        val rightP = (r - planeOff).toDouble()
 
         val triples = arrayOf(
             // Top -> Right -> Bottom into Top corners
@@ -1297,12 +1311,14 @@ class CanvasOverlayView @JvmOverloads constructor(
         val side0 = t + jaw + ballR
         val side1 = b - jaw - ballR
 
+        val planeOff = (ballR + cushionInsetPx).coerceAtLeast(1f)
+
         // (long rail plane, side rail plane, target pockets on the far end)
         val pairs = arrayOf(
-            DoublePair(t + ballR, r - ballR, longA0, longA1, side0, side1, TOP_END_POCKETS),
-            DoublePair(t + ballR, l + ballR, longB0, longB1, side0, side1, TOP_END_POCKETS),
-            DoublePair(b - ballR, r - ballR, longA0, longA1, side0, side1, BOTTOM_END_POCKETS),
-            DoublePair(b - ballR, l + ballR, longB0, longB1, side0, side1, BOTTOM_END_POCKETS)
+            DoublePair(t + planeOff, r - planeOff, longA0, longA1, side0, side1, TOP_END_POCKETS),
+            DoublePair(t + planeOff, l + planeOff, longB0, longB1, side0, side1, TOP_END_POCKETS),
+            DoublePair(b - planeOff, r - planeOff, longA0, longA1, side0, side1, BOTTOM_END_POCKETS),
+            DoublePair(b - planeOff, l + planeOff, longB0, longB1, side0, side1, BOTTOM_END_POCKETS)
         )
 
         for (p in pairs) {
@@ -1750,7 +1766,7 @@ class CanvasOverlayView @JvmOverloads constructor(
         drawVertexGuideRing(canvas, r - cornerMouthInset, b - cornerMouthInset)   // Bottom-Right
 
         val ratioText = if (isCalibRatioLocked) "2:1 Lock" else "Bebas"
-        val label = "Kalibrasi ($ratioText): Geser [+] atau Tarik Sudut/Sisi • Tap Simpan"
+        val label = "Kalibrasi ($ratioText): Pas-kan garis kuning ke TEPI DALAM BAN • Geser [+] / Sudut"
         textPaint.getTextBounds(label, 0, label.length, textBounds)
         val textX = (l + 16f * density).coerceIn(12f * density, (width - textBounds.width() - 24f * density).coerceAtLeast(12f * density))
         val textY = if (t > 44f * density) t - 12f * density else b + textBounds.height() + 14f * density

@@ -441,12 +441,17 @@ class AimGeometry {
                 val signedSpinShift = sigma * spinShiftAlong
 
                 fun outAngle(theta: Double): Double =
-                    (rebound * theta + signedSpinShift).coerceIn(-MAX_OUT_ANGLE_RAD, MAX_OUT_ANGLE_RAD)
+                    (atan(rebound * tan(theta)) + signedSpinShift).coerceIn(-MAX_OUT_ANGLE_RAD, MAX_OUT_ANGLE_RAD)
 
                 // theta = incidence angle measured from the cushion normal.
                 // f(theta) = remaining horizontal travel - tan(outAngle(theta)) term.
                 var lo = 0.0
                 var hi = atan(flat / offset)
+                val fLo = flat - (nPocket - c) * tan(outAngle(lo))
+                if (fLo <= 0.0) {
+                    hitValid = false
+                    return false
+                }
                 val fHi = flat - offset * tan(hi) - (nPocket - c) * tan(outAngle(hi))
                 if (fHi >= 0.0) {
                     // Outgoing angle crosses the tangent asymptote before the flat
@@ -483,18 +488,167 @@ class AimGeometry {
     fun mouthDepthPxFor(scale: Float): Float = mouthDepthPx.toFloat() * scale
 
     /**
+     * Exact 2D velocity-ratio cushion reflection obeying tan(theta_out) = k * tan(theta_in).
+     */
+    private fun reflectByRestitution(
+        dx: Double,
+        dy: Double,
+        axis: Axis,
+        k: Double
+    ): Pair<Double, Double> =
+        if (axis == Axis.HORIZONTAL) Pair(dx * k, -dy) else Pair(-dx, dy * k)
+
+    private fun evalMultiRail(
+        bx: Double,
+        by: Double,
+        pocketX: Double,
+        pocketY: Double,
+        axes: Array<Axis>,
+        planes: DoubleArray,
+        count: Int,
+        along1: Double,
+        outPts: DoubleArray,
+        outDir: DoubleArray? = null
+    ): Double? {
+        val p1x = if (axes[0] == Axis.HORIZONTAL) along1 else planes[0]
+        val p1y = if (axes[0] == Axis.HORIZONTAL) planes[0] else along1
+        outPts[0] = p1x
+        outPts[1] = p1y
+
+        var vx = p1x - bx
+        var vy = p1y - by
+        if (hypot(vx, vy) < 1e-6) return null
+        if (axes[0] == Axis.HORIZONTAL && abs(vy) < 1e-9) return null
+        if (axes[0] == Axis.VERTICAL && abs(vx) < 1e-9) return null
+
+        val r0 = reflectByRestitution(vx, vy, axes[0], rebound)
+        vx = r0.first
+        vy = r0.second
+        var curX = p1x
+        var curY = p1y
+
+        for (idx in 1 until count) {
+            val ax = axes[idx]
+            val pl = planes[idx]
+            val denom = if (ax == Axis.HORIZONTAL) vy else vx
+            if (abs(denom) < 1e-12) return null
+            val t = if (ax == Axis.HORIZONTAL) (pl - curY) / denom else (pl - curX) / denom
+            if (t <= 1e-6) return null
+
+            val nx = if (ax == Axis.VERTICAL) pl else curX + vx * t
+            val ny = if (ax == Axis.HORIZONTAL) pl else curY + vy * t
+
+            outPts[idx * 2] = nx
+            outPts[idx * 2 + 1] = ny
+            curX = nx
+            curY = ny
+
+            val rn = reflectByRestitution(vx, vy, ax, rebound)
+            vx = rn.first
+            vy = rn.second
+        }
+
+        val px = pocketX - curX
+        val py = pocketY - curY
+        val vLen = hypot(vx, vy)
+        if (vLen < 1e-9) return null
+        if (outDir != null) {
+            outDir[0] = px * vx + py * vy
+        }
+        return (px * vy - py * vx) / vLen
+    }
+
+    private fun solveMultiRailWithRestitution(
+        bx: Double,
+        by: Double,
+        pocketX: Double,
+        pocketY: Double,
+        axes: Array<Axis>,
+        planes: DoubleArray,
+        mins: DoubleArray,
+        maxs: DoubleArray,
+        count: Int,
+        scanSteps: Int
+    ): Boolean {
+        val bAlong = if (axes[0] == Axis.HORIZONTAL) bx else by
+        var scanMin = mins[0]
+        var scanMax = maxs[0]
+        if (axes[0] != axes[1]) {
+            val p2 = planes[1]
+            if (bAlong < p2) {
+                scanMax = min(scanMax, p2 - 1e-3)
+            } else if (bAlong > p2) {
+                scanMin = max(scanMin, p2 + 1e-3)
+            }
+        }
+        val span = scanMax - scanMin
+        if (span <= 1e-6 || rebound <= 0.0) return false
+        val pts = DoubleArray(count * 2)
+        val dirCheck = DoubleArray(1)
+
+        fun acceptIfInRails(resPts: DoubleArray): Boolean {
+            if (dirCheck[0] <= 0.0) return false
+            for (idx in 0 until count) {
+                val along = if (axes[idx] == Axis.HORIZONTAL) resPts[idx * 2] else resPts[idx * 2 + 1]
+                if (along < mins[idx] || along > maxs[idx]) return false
+            }
+            hitX = resPts[0]; hitY = resPts[1]
+            hit2X = resPts[2]; hit2Y = resPts[3]
+            if (count == 3) { hit3X = resPts[4]; hit3Y = resPts[5] }
+            hitValid = true
+            return true
+        }
+
+        var prevAlong = scanMin
+        var prevErr = evalMultiRail(bx, by, pocketX, pocketY, axes, planes, count, prevAlong, pts, dirCheck)
+        if (prevErr != null && abs(prevErr) < 1e-3 && acceptIfInRails(pts)) {
+            return true
+        }
+
+        for (s in 1..scanSteps) {
+            val curAlong = scanMin + span * s.toDouble() / scanSteps
+            val curErr = evalMultiRail(bx, by, pocketX, pocketY, axes, planes, count, curAlong, pts, dirCheck)
+            if (curErr != null && abs(curErr) < 1e-3 && acceptIfInRails(pts)) {
+                return true
+            }
+            if (prevErr != null && curErr != null && prevErr * curErr < 0.0) {
+                var lo = prevAlong
+                var hi = curAlong
+                var eLo: Double = prevErr
+                var valid = true
+                for (iter in 0 until 36) {
+                    val mid = (lo + hi) * 0.5
+                    val eMid = evalMultiRail(bx, by, pocketX, pocketY, axes, planes, count, mid, pts)
+                    if (eMid == null) {
+                        valid = false
+                        break
+                    }
+                    if (eLo * eMid <= 0.0) {
+                        hi = mid
+                    } else {
+                        lo = mid
+                        eLo = eMid
+                    }
+                }
+                if (valid) {
+                    val best = (lo + hi) * 0.5
+                    val finalErr = evalMultiRail(bx, by, pocketX, pocketY, axes, planes, count, best, pts, dirCheck)
+                    if (finalErr != null && abs(finalErr) < 2.0 && acceptIfInRails(pts)) {
+                        return true
+                    }
+                }
+            }
+            prevAlong = curAlong
+            prevErr = curErr
+        }
+        return false
+    }
+
+    /**
      * Two-cushion bank: ball -> [axis1] rail -> [axis2] rail -> gate.
      *
-     * Classic billiard unfolding. Reflecting the gate across rail2 and then
-     * that image across rail1 turns the double bounce into a single straight
-     * line, so both contact points are plane crossings of that line. Because
-     * the second crossing happens in a space already reflected across rail1,
-     * its real contact is the crossing point reflected back across rail1.
-     *
-     * This is exact equal-angle geometry. [rebound] (the cloth "short" ratio)
-     * is deliberately ignored here: a two-rail path already accumulates its own
-     * error and mixing a non-unit mirror with unfolding needs an iterative
-     * solve that is not worth it for a secondary guide.
+     * Uses exact equal-angle unfolding when [rebound] is 1.0, and tangent-law
+     * 2D restitution search across [railMin1]..[railMax1] otherwise.
      *
      * Results: [hitX]/[hitY] first contact, [hit2X]/[hit2Y] second contact.
      */
@@ -513,8 +667,20 @@ class AimGeometry {
         railMax2: Double
     ): Boolean {
         hitValid = false
-        if (!frameValid) return false
+        if (!frameValid || rebound <= 0.0) return false
         if (axis1 == axis2 && abs(plane1 - plane2) < 1e-6) return false
+
+        if (abs(rebound - 1.0) >= 1e-6) {
+            return solveMultiRailWithRestitution(
+                bx, by, pocketX, pocketY,
+                arrayOf(axis1, axis2),
+                doubleArrayOf(plane1, plane2),
+                doubleArrayOf(railMin1, railMin2),
+                doubleArrayOf(railMax1, railMax2),
+                count = 2,
+                scanSteps = 48
+            )
+        }
 
         // Unfold: mirror the gate across rail2, then across rail1.
         var gx = pocketX
@@ -587,9 +753,21 @@ class AimGeometry {
         railMax3: Double
     ): Boolean {
         hitValid = false
-        if (!frameValid) return false
+        if (!frameValid || rebound <= 0.0) return false
         if (axis1 == axis2 && abs(plane1 - plane2) < 1e-6) return false
         if (axis2 == axis3 && abs(plane2 - plane3) < 1e-6) return false
+
+        if (abs(rebound - 1.0) >= 1e-6) {
+            return solveMultiRailWithRestitution(
+                bx, by, pocketX, pocketY,
+                arrayOf(axis1, axis2, axis3),
+                doubleArrayOf(plane1, plane2, plane3),
+                doubleArrayOf(railMin1, railMin2, railMin3),
+                doubleArrayOf(railMax1, railMax2, railMax3),
+                count = 3,
+                scanSteps = 64
+            )
+        }
 
         // Unfold: mirror gate across rail3 -> rail2 -> rail1.
         var gx = pocketX

@@ -971,6 +971,11 @@ class OverlayService : Service() {
         val seekMouth = controlView.findViewById<SeekBar>(R.id.seekMouth)
         val tvRebound = controlView.findViewById<TextView>(R.id.tvReboundValue)
         val seekRebound = controlView.findViewById<SeekBar>(R.id.seekRebound)
+        val tvCushionInset = controlView.findViewById<TextView>(R.id.tvCushionInsetValue)
+        val seekCushionInset = controlView.findViewById<SeekBar>(R.id.seekCushionInset)
+        val btnPreset8BP = controlView.findViewById<TextView>(R.id.btnPreset8BP)
+        val btnPresetPoolEmpire = controlView.findViewById<TextView>(R.id.btnPresetPoolEmpire)
+        val btnPresetSnooker = controlView.findViewById<TextView>(R.id.btnPresetSnooker)
 
         // 1. Dragging toolbar
         setupDraggableBar(btnDrag, controlView)
@@ -1144,6 +1149,29 @@ class OverlayService : Service() {
             }
         })
 
+        val presetButtonsMap = mapOf(
+            0 to btnPreset8BP,
+            1 to btnPresetPoolEmpire,
+            2 to btnPresetSnooker
+        )
+
+        fun updatePresetUI(activePreset: Int) {
+            for ((id, btn) in presetButtonsMap) {
+                if (id == activePreset) {
+                    btn?.setBackgroundResource(R.drawable.bg_control_btn_active)
+                    btn?.setTextColor(ContextCompat.getColor(this, R.color.cyan_accent))
+                } else {
+                    btn?.setBackgroundResource(R.drawable.bg_control_btn)
+                    btn?.setTextColor(Color.WHITE)
+                }
+            }
+        }
+
+        fun markCustomPreset() {
+            prefsManager.saveGamePreset(3)
+            updatePresetUI(3)
+        }
+
         // Ball Scale Correction Slider Setup (percent of the table-derived ball)
         val initialScalePct = (prefsManager.getBallScaleCorrection() * 100f)
             .roundToInt().coerceIn(50, 160)
@@ -1155,6 +1183,7 @@ class OverlayService : Service() {
                 val pct = progress.coerceIn(50, 160)
                 tvBallSize.text = getString(R.string.label_ball_size, pct)
                 if (fromUser) {
+                    markCustomPreset()
                     canvasOverlayView?.setBallScaleCorrection(pct / 100f)
                     applyTableBoundedWindow()
                 }
@@ -1200,18 +1229,84 @@ class OverlayService : Service() {
             }
         })
 
-        // Cushion rebound (outgoing angle = k * incoming); 100% = mirror
-        val reboundPct = (prefsManager.getBankRebound() * 100f).roundToInt().coerceIn(70, 100)
+        fun formatReboundLabel(pct: Int): String = when {
+            pct < 99 -> "Bank Rebound: $pct% (Short)"
+            pct > 101 -> "Bank Rebound: $pct% (Wide)"
+            else -> "Bank Rebound: $pct% (Mirror)"
+        }
+
+        fun formatCushionInsetLabel(px: Int): String =
+            "Cushion Offset: ${if (px > 0) "+$px" else "$px"} px"
+
+        fun applyPhysicsPreset(presetId: Int, ballScalePct: Int, reboundPct: Int, insetPx: Int, toastMsg: String) {
+            prefsManager.saveGamePreset(presetId)
+            updatePresetUI(presetId)
+
+            seekBallSize.progress = ballScalePct
+            tvBallSize.text = getString(R.string.label_ball_size, ballScalePct)
+            prefsManager.saveBallScaleCorrection(ballScalePct / 100f)
+            canvasOverlayView?.setBallScaleCorrection(ballScalePct / 100f)
+
+            seekRebound.progress = reboundPct
+            tvRebound.text = formatReboundLabel(reboundPct)
+            canvasOverlayView?.setBankRebound(reboundPct / 100f)
+
+            seekCushionInset?.progress = insetPx
+            tvCushionInset?.text = formatCushionInsetLabel(insetPx)
+            canvasOverlayView?.setCushionInsetPx(insetPx.toFloat())
+
+            applyTableBoundedWindow()
+            Toast.makeText(this, toastMsg, Toast.LENGTH_SHORT).show()
+        }
+
+        updatePresetUI(prefsManager.getGamePreset())
+        btnPreset8BP?.setOnClickListener {
+            applyPhysicsPreset(0, 100, 100, 0, "Preset: 8 Ball Pool (100% Ball, 100% Mirror)")
+        }
+        btnPresetPoolEmpire?.setOnClickListener {
+            applyPhysicsPreset(1, 109, 112, 0, "Preset: Pool Empire (109% Ball, 112% Wide)")
+        }
+        btnPresetSnooker?.setOnClickListener {
+            applyPhysicsPreset(2, 100, 108, 0, "Preset: Pool Empire Snooker (100% Ball, 108% Wide)")
+        }
+
+        // Cushion rebound tangent restitution (70% Short .. 100% Mirror .. 140% Wide)
+        val reboundPct = (prefsManager.getBankRebound() * 100f).roundToInt().coerceIn(70, 140)
         seekRebound.progress = reboundPct
-        tvRebound.text = getString(R.string.label_rebound, reboundPct)
+        tvRebound.text = formatReboundLabel(reboundPct)
         seekRebound.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                tvRebound.text = getString(R.string.label_rebound, progress)
-                if (fromUser) canvasOverlayView?.setBankRebound(progress / 100f)
+                val pct = progress.coerceIn(70, 140)
+                tvRebound.text = formatReboundLabel(pct)
+                if (fromUser) {
+                    markCustomPreset()
+                    canvasOverlayView?.setBankRebound(pct / 100f)
+                }
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                canvasOverlayView?.setBankRebound((seekBar?.progress ?: 100) / 100f)
+                val pct = (seekBar?.progress ?: 100).coerceIn(70, 140)
+                canvasOverlayView?.setBankRebound(pct / 100f)
+            }
+        })
+
+        // Cushion bounce plane offset (-30 .. +40 px)
+        val initInsetPx = prefsManager.getCushionInsetPx().roundToInt().coerceIn(-30, 40)
+        seekCushionInset?.progress = initInsetPx
+        tvCushionInset?.text = formatCushionInsetLabel(initInsetPx)
+        seekCushionInset?.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val px = progress.coerceIn(-30, 40)
+                tvCushionInset?.text = formatCushionInsetLabel(px)
+                if (fromUser) {
+                    markCustomPreset()
+                    canvasOverlayView?.setCushionInsetPx(px.toFloat())
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                val px = (seekBar?.progress ?: 0).coerceIn(-30, 40)
+                canvasOverlayView?.setCushionInsetPx(px.toFloat())
             }
         })
 

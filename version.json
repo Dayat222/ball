@@ -1,7 +1,7 @@
 {
-  "versionCode": 33,
-  "versionName": "4.3.0",
+  "versionCode": 34,
+  "versionName": "4.4.0",
   "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-latest.apk",
-  "sha256": "409ac1d625fa024ed0296052ffdf7c27f079a653330954c546389d0212abdce4",
-  "changelog": "Versi 4.3.0 — Perbaikan Mode Kalibrasi Anti-Freeze & Kemudahan Kalibrasi Meja:\n- Anti-Freeze Permanen: kanvas overlay selalu tembus sentuhan (FLAG_NOT_TOUCHABLE) dan toolbar selalu di lapisan teratas agar tombol Simpan & sistem UI tidak pernah terkunci.\n- 9 Handle Kalibrasi Independen: 4 sudut (kunci sudut seberang), 4 tepi sisi, dan tombol tengah [+] untuk menggeser seluruh kotak meja sekaligus.\n- Bar Kontrol Cepat Kalibrasi: tombol langsung 2:1 Lock / Bebas, Tengahkan Meja, Reset, dan Simpan + grid bantu tengah meja."
+  "sha256": "",
+  "changelog": "Versi 4.4.0 — Engine Pantulan 2D & Preset Pool Empire:\n- Hukum Restitusi Tangen 2D (tan θ_out = k · tan θ_in): kalkulasi sudut pantul fisik untuk 1-ban, 2-ban, dan 3-ban sekaligus.\n- Rentang Bank Rebound Diperluas (70%–140%) & Cushion Offset (-30..+40 px): mendukung pantulan tajam (Short) hingga melebar (Wide) serta koreksi tepi ban tanpa kalibrasi ulang.\n- Preset Fisika Game: tombol cepat 8 Ball Pool, Pool Empire (109% Ball / 112% Wide), dan PE Snooker (100% Ball / 108% Wide) di panel Pengaturan."
 }

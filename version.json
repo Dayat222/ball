@@ -2,6 +2,6 @@
   "versionCode": 34,
   "versionName": "4.4.0",
   "downloadUrl": "https://github.com/Dayat222/ball/releases/download/latest/app-latest.apk",
-  "sha256": "",
+  "sha256": "68013c788350d876018f8add690411a1bbb3e2d2df3698619c3163a71eab58b3",
   "changelog": "Versi 4.4.0 — Engine Pantulan 2D & Preset Pool Empire:\n- Hukum Restitusi Tangen 2D (tan θ_out = k · tan θ_in): kalkulasi sudut pantul fisik untuk 1-ban, 2-ban, dan 3-ban sekaligus.\n- Rentang Bank Rebound Diperluas (70%–140%) & Cushion Offset (-30..+40 px): mendukung pantulan tajam (Short) hingga melebar (Wide) serta koreksi tepi ban tanpa kalibrasi ulang.\n- Preset Fisika Game: tombol cepat 8 Ball Pool, Pool Empire (109% Ball / 112% Wide), dan PE Snooker (100% Ball / 108% Wide) di panel Pengaturan."
 }
